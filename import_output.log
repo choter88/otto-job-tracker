@@ -1,0 +1,56 @@
+============================================================
+OTTO TRACKER - PRODUCTION DATA IMPORT
+============================================================
+
+⚠️  WARNING: This will DELETE all existing job data!
+Started at: 2025-11-09T21:36:38.144Z
+
+=== CURRENT DATA COUNT ===
+  jobs: 57 rows
+  archived_jobs: 66 rows
+  job_comments: 0 rows
+  job_status_history: 0 rows
+  notifications: 0 rows
+  job_flags: 0 rows
+
+=== CLEARING EXISTING JOB DATA ===
+⚠️  WARNING: This will permanently delete all job data!
+✓ Deleted all rows from notifications
+✓ Deleted all rows from job_status_history
+✓ Deleted all rows from job_comments
+✓ Deleted all rows from job_flags
+✓ Deleted all rows from archived_jobs
+✓ Deleted all rows from jobs
+
+=== IMPORTING ACTIVE JOBS ===
+  Warning: Job 425aa7b4-6495-4745-9192-e6ba0cf7f71d references archived original job 85ef5dc4-33c3-4b36-a503-3c1702a20435, setting to NULL
+  Warning: Job 5e4b0e1f-04e4-4c3b-beaa-f416d076ffae references archived original job 545c0ab0-f780-4a25-bcfa-ae4577c3e733, setting to NULL
+✓ Imported 57 active jobs
+
+=== IMPORTING ARCHIVED JOBS ===
+
+✗ ERROR during import: NeonDbError: invalid input syntax for type uuid: "Zeiss lenses ordered 8/13,2025-08-15 07:00:00+00,2025-09-25 17:20:49.577137+00,,,2025-09-25 17:20:49.577137+00,,2025-09-26 22:27:32.2901+00,,Migrated existing completed job,false,,{},"
+    at execute (file:///home/runner/workspace/node_modules/@neondatabase/serverless/index.mjs:1556:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async importArchivedJobs (/home/runner/workspace/import-jobs-production.ts:197:5)
+    at async main (/home/runner/workspace/import-jobs-production.ts:342:27) {
+  severity: 'ERROR',
+  code: '22P02',
+  detail: undefined,
+  hint: undefined,
+  position: undefined,
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: "unnamed portal parameter $1 = '...'",
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'uuid.c',
+  line: '133',
+  routine: 'string_to_uuid',
+  sourceError: undefined
+}
+
+Import failed. Database may be in inconsistent state.

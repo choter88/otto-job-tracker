@@ -1,0 +1,135 @@
+Otto Database: Concise Table Summary for AI Replication
+Core Business Tables (Critical)
+
+1. offices (4 rows)
+
+Purpose: Dental practice/lab locations
+Key Fields: id, name, address, phone, email, sms_enabled, settings (JSONB), sms_default_templates (JSONB)
+Notes: settings contains custom job types/statuses per office. Multi-tenant architecture - each office is isolated.
+2. profiles (5 rows)
+
+Purpose: User accounts linked to auth.users
+Key Fields: id (FK to auth.users), email, first_name, last_name, office_id (FK), role (enum: owner/manager/staff/super_admin)
+Notes: Created automatically via trigger when user signs up. Role determines permissions.
+3. jobs (58 rows)
+
+Purpose: Active work orders for dental lab
+Key Fields: id, order_id (ORD-YYYYMMDD-0001), patient_first_initial, patient_last_name, phone, job_type (enum: rx/contacts/sun/sunrx), status, office_id, created_by, assigned_to, custom_column_values (JSONB)
+Notes: Patient data is anonymized (first initial only). Auto-archived when status = completed/cancelled via PostgreSQL trigger.
+4. archived_jobs (44 rows)
+
+Purpose: Historical completed/cancelled jobs
+Key Fields: Same as jobs + archived_at, archived_by, archive_reason
+Notes: Jobs automatically move here via trigger when marked completed/cancelled. Used for historical reporting.
+Communication & Tracking Tables
+
+5. job_comments (34 rows)
+
+Purpose: Internal team comments on jobs
+Key Fields: job_id (FK), user_id (FK), comment, created_at
+Notes: Real-time collaboration feature. No FK to jobs (allows comments on archived jobs).
+6. job_status_history (476 rows)
+
+Purpose: Audit trail of all job status changes
+Key Fields: job_id, old_status, new_status, changed_by, changed_at
+Notes: Created automatically via trigger on jobs UPDATE. No FK constraint (performance optimization).
+7. notifications (30 rows)
+
+Purpose: In-app alerts for users
+Key Fields: office_id, job_id, type, title, message, severity (info/warning/error), read, metadata (JSONB)
+Notes: Created by Edge Function check-overdue-jobs or system events.
+8. notification_rules (8 rows)
+
+Purpose: Configure when/how to alert users about overdue jobs
+Key Fields: office_id, status, max_days, enabled, sms_enabled, notify_roles (array), sms_template
+Notes: Rules like "Alert after 5 days in 'ordered' status". Processed by cron job.
+9. sms_logs (0 rows)
+
+Purpose: Track all SMS messages sent via Twilio
+Key Fields: job_id, phone, message, status, provider_response (JSONB), sent_at
+Notes: Created by Edge Function send-sms. Currently unused (no SMS sent yet).
+10. sms_opt_ins (0 rows)
+
+Purpose: Patient consent for SMS notifications (TCPA compliance)
+Key Fields: office_id, phone, consented_at, ip_address, user_agent
+Notes: Required before sending SMS. Public route for patients to opt-in.
+Analytics Tables
+
+11. job_analytics (0 rows)
+
+Purpose: Daily aggregated metrics per office
+Key Fields: office_id, date, job_type, status, count, avg_processing_time_hours
+Notes: Populated by scheduled function. Powers dashboard charts.
+12. platform_analytics (0 rows)
+
+Purpose: Global metrics for super admin
+Key Fields: date, total_practices, active_practices, total_jobs, jobs_by_type (JSONB), jobs_by_status (JSONB)
+Notes: Only visible to super_admin role.
+13. practice_summary (0 rows)
+
+Purpose: Per-office performance summaries
+Key Fields: office_id, date, practice_size_category, jobs_processed, efficiency_score, status_distribution (JSONB)
+Notes: Used for benchmarking between practices.
+14. office_analytics_summary (0 rows)
+
+Purpose: Pre-aggregated summaries by period
+Key Fields: office_id, period_start, period_end, period_type, total_jobs, completed_jobs, job_type_breakdown (JSONB)
+Notes: Optimized for fast dashboard loading.
+Security & Admin Tables
+
+15. admin_2fa_secrets (0 rows)
+
+Purpose: Store TOTP secrets for 2FA authentication
+Key Fields: user_id, secret, is_enabled, backup_codes (array)
+Notes: Encrypted at rest. Required for super_admin access.
+16. admin_ip_whitelist (0 rows)
+
+Purpose: Restrict super admin access by IP
+Key Fields: ip_address, description, is_active, created_by
+Notes: Checked via verify_super_admin_access() function.
+17. admin_access_logs (0 rows)
+
+Purpose: Audit all admin portal access attempts
+Key Fields: user_id, ip_address, action, success, user_agent, metadata (JSONB)
+Notes: Created by log_admin_access() function.
+18. audit_logs (0 rows)
+
+Purpose: Comprehensive audit trail for all data changes
+Key Fields: office_id, user_id, action_type, table_name, record_id, old_values (JSONB), new_values (JSONB)
+Notes: Created automatically via triggers on jobs/offices/profiles tables.
+Miscellaneous Tables
+
+19. join_requests (0 rows)
+
+Purpose: Staff requests to join an office
+Key Fields: requester_id, owner_email, office_id, status (pending/approved/rejected), message
+Notes: Used during onboarding. Owner approves via approve_join_request() function.
+20. comment_reads (0 rows)
+
+Purpose: Track which comments each user has read
+Key Fields: user_id, job_id, last_read_at
+Notes: Powers "unread comments" badge. Updated via trigger.
+Critical Implementation Notes for AI Agent
+
+Enums to Create:
+
+
+CREATE TYPE user_role AS ENUM ('owner', 'manager', 'staff', 'super_admin');
+CREATE TYPE job_type AS ENUM ('rx', 'contacts', 'sun', 'sunrx');
+Key Triggers:
+
+trg_10_log_job_status_change - Logs status changes BEFORE archival
+trg_90_archive_completed_job - Moves completed/cancelled jobs to archive
+on_auth_user_created - Creates profile when user signs up
+Key Functions:
+
+generate_order_id() - Creates unique ORD-YYYYMMDD-0001 IDs
+get_current_user_office_id() - Used in RLS policies
+get_current_user_role() - Used in RLS policies
+restore_archived_job() - Moves job back to active
+RLS Pattern: All tables use RLS with office-based isolation. Users can only see data for their office_id. Super admins bypass some restrictions.
+
+Edge Functions:
+
+check-overdue-jobs - Cron job that creates notifications
+send-sms - Sends SMS via Twilio with template substitution
