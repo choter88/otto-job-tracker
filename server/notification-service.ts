@@ -2,6 +2,12 @@ import type { Job, User, JobComment, NotificationRule } from "@shared/schema";
 import type { IStorage } from "./storage";
 import { broadcastToUser } from "./websocket";
 
+function debugLog(message: string): void {
+  if (process.env.OTTO_DEBUG === "true") {
+    console.log(message);
+  }
+}
+
 export async function notifyJobStatusChange(
   job: Job,
   oldStatus: string,
@@ -9,24 +15,19 @@ export async function notifyJobStatusChange(
   storage: IStorage
 ): Promise<void> {
   try {
-    console.log(`[notifyJobStatusChange] Starting notification for job ${job.id} (${job.orderId})`);
-    console.log(`[notifyJobStatusChange] Status change: ${oldStatus} → ${job.status}`);
-    console.log(`[notifyJobStatusChange] Changed by: ${changedBy.email}`);
+    debugLog(`[notifyJobStatusChange] jobId=${job.id} status=${oldStatus}→${job.status}`);
     
     const officeUsers = await storage.getUsersInOffice(job.officeId);
-    console.log(`[notifyJobStatusChange] Found ${officeUsers.length} users in office`);
     
     const recipients = officeUsers.filter(user => user.id !== changedBy.id);
-    console.log(`[notifyJobStatusChange] Sending to ${recipients.length} recipients (excluding ${changedBy.email})`);
+    debugLog(`[notifyJobStatusChange] recipients=${recipients.length}`);
     
     if (recipients.length === 0) {
-      console.log(`[notifyJobStatusChange] No recipients to notify, skipping`);
       return;
     }
     
     const notifications = await Promise.all(
       recipients.map(async (user) => {
-        console.log(`[notifyJobStatusChange] Creating notification for user ${user.email}`);
         return storage.createNotification({
           userId: user.id,
           type: "status_change",
@@ -44,7 +45,7 @@ export async function notifyJobStatusChange(
       })
     );
     
-    console.log(`[notifyJobStatusChange] Created ${notifications.length} notifications successfully`);
+    debugLog(`[notifyJobStatusChange] created=${notifications.length}`);
     
     notifications.forEach(notification => {
       try {
@@ -57,7 +58,6 @@ export async function notifyJobStatusChange(
       }
     });
     
-    console.log(`[notifyJobStatusChange] Notification process completed`);
   } catch (error) {
     console.error("Error sending job status change notifications:", error);
     // Re-throw the error so the route handler knows notification failed

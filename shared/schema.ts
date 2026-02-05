@@ -1,256 +1,292 @@
-import { sql, relations } from "drizzle-orm";
-import { pgTable, varchar, text, timestamp, boolean, jsonb, integer, uuid, pgEnum, foreignKey } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
-// Enums
-export const userRoleEnum = pgEnum("user_role", ["owner", "manager", "staff", "view_only", "super_admin"]);
-export const jobStatusEnum = pgEnum("job_status", ["job_created", "ordered", "in_progress", "quality_check", "ready_for_pickup", "completed", "cancelled"]);
-export const jobTypeEnum = pgEnum("job_type", ["contacts", "glasses", "sunglasses", "prescription"]);
-export const notificationTypeEnum = pgEnum("notification_type", ["status_change", "comment", "overdue_alert", "team_update"]);
+const userRoleValues = ["owner", "manager", "staff", "view_only", "super_admin"] as const;
+const notificationTypeValues = ["status_change", "comment", "overdue_alert", "team_update"] as const;
+
+function tsMsNowSql() {
+  return sql`(unixepoch() * 1000)`;
+}
 
 // Users table
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email", { length: 255 }).notNull().unique(),
-  password: text("password").notNull(),
-  firstName: varchar("first_name", { length: 100 }).notNull(),
-  lastName: varchar("last_name", { length: 100 }).notNull(),
-  role: userRoleEnum("role").default("staff").notNull(),
-  officeId: uuid("office_id").references(() => offices.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    password: text("password").notNull(),
+    firstName: text("first_name").notNull(),
+    lastName: text("last_name").notNull(),
+    role: text("role", { enum: userRoleValues }).default("staff").notNull(),
+    officeId: text("office_id").references(() => offices.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    emailIdx: uniqueIndex("users_email_unique").on(table.email),
+  }),
+);
 
 // Offices table
-export const offices = pgTable("offices", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name", { length: 255 }).notNull(),
+export const offices = sqliteTable("offices", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
   address: text("address"),
-  phone: varchar("phone", { length: 20 }),
-  email: varchar("email", { length: 255 }),
-  enabled: boolean("enabled").default(true).notNull(),
-  settings: jsonb("settings").default({}).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  phone: text("phone"),
+  email: text("email"),
+  enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
+  settings: text("settings", { mode: "json" }).$type<Record<string, any>>().default({}).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Jobs table
-export const jobs = pgTable("jobs", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  orderId: varchar("order_id", { length: 50 }).notNull().unique(),
-  patientFirstInitial: varchar("patient_first_initial", { length: 1 }).notNull(),
-  patientLastName: varchar("patient_last_name", { length: 100 }).notNull(),
-  trayNumber: varchar("tray_number", { length: 50 }),
-  phone: varchar("phone", { length: 20 }),
-  jobType: varchar("job_type", { length: 50 }).notNull(),
-  status: varchar("status", { length: 50 }).default("job_created").notNull(),
-  orderDestination: varchar("order_destination", { length: 255 }).notNull(),
-  officeId: uuid("office_id").references(() => offices.id).notNull(),
-  createdBy: uuid("created_by").references(() => users.id),
-  statusChangedAt: timestamp("status_changed_at").defaultNow().notNull(),
-  customColumnValues: jsonb("custom_column_values").default({}).notNull(),
-  isRedoJob: boolean("is_redo_job").default(false).notNull(),
-  originalJobId: uuid("original_job_id"),
-  notes: text("notes"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => ({
-  originalJobFk: foreignKey({
-    columns: [table.originalJobId],
-    foreignColumns: [table.id]
-  }).onDelete('set null')
-}));
+export const jobs = sqliteTable(
+  "jobs",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull(),
+    patientFirstInitial: text("patient_first_initial").notNull(),
+    patientLastName: text("patient_last_name").notNull(),
+    trayNumber: text("tray_number"),
+    phone: text("phone"),
+    jobType: text("job_type").notNull(),
+    status: text("status").default("job_created").notNull(),
+    orderDestination: text("order_destination").notNull(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    statusChangedAt: integer("status_changed_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+    customColumnValues: text("custom_column_values", { mode: "json" })
+      .$type<Record<string, any>>()
+      .default({})
+      .notNull(),
+    isRedoJob: integer("is_redo_job", { mode: "boolean" }).default(false).notNull(),
+    originalJobId: text("original_job_id").references(() => jobs.id, { onDelete: "set null" }),
+    notes: text("notes"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    orderIdIdx: uniqueIndex("jobs_order_id_unique").on(table.orderId),
+  }),
+);
 
 // Archived jobs table
-export const archivedJobs = pgTable("archived_jobs", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  orderId: varchar("order_id", { length: 50 }).notNull(),
-  patientFirstInitial: varchar("patient_first_initial", { length: 1 }).notNull(),
-  patientLastName: varchar("patient_last_name", { length: 100 }).notNull(),
-  trayNumber: varchar("tray_number", { length: 50 }),
-  phone: varchar("phone", { length: 20 }),
-  jobType: varchar("job_type", { length: 50 }).notNull(),
-  finalStatus: varchar("final_status", { length: 50 }).notNull(),
-  previousStatus: varchar("previous_status", { length: 50 }),
-  orderDestination: varchar("order_destination", { length: 255 }).notNull(),
-  officeId: uuid("office_id").references(() => offices.id).notNull(),
-  createdBy: uuid("created_by").references(() => users.id),
-  originalCreatedAt: timestamp("original_created_at").notNull(),
-  archivedAt: timestamp("archived_at").defaultNow().notNull(),
-  customColumnValues: jsonb("custom_column_values").default({}).notNull(),
-  isRedoJob: boolean("is_redo_job").default(false).notNull(),
-  originalJobId: uuid("original_job_id"),
+export const archivedJobs = sqliteTable("archived_jobs", {
+  id: text("id").primaryKey(),
+  orderId: text("order_id").notNull(),
+  patientFirstInitial: text("patient_first_initial").notNull(),
+  patientLastName: text("patient_last_name").notNull(),
+  trayNumber: text("tray_number"),
+  phone: text("phone"),
+  jobType: text("job_type").notNull(),
+  finalStatus: text("final_status").notNull(),
+  previousStatus: text("previous_status"),
+  orderDestination: text("order_destination").notNull(),
+  officeId: text("office_id").references(() => offices.id).notNull(),
+  createdBy: text("created_by").references(() => users.id),
+  originalCreatedAt: integer("original_created_at", { mode: "timestamp_ms" }).notNull(),
+  archivedAt: integer("archived_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  customColumnValues: text("custom_column_values", { mode: "json" })
+    .$type<Record<string, any>>()
+    .default({})
+    .notNull(),
+  isRedoJob: integer("is_redo_job", { mode: "boolean" }).default(false).notNull(),
+  originalJobId: text("original_job_id"),
   notes: text("notes"),
 });
 
 // Join requests table
-export const joinRequests = pgTable("join_requests", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  requesterId: uuid("requester_id").references(() => users.id).notNull(),
-  officeId: uuid("office_id").references(() => offices.id).notNull(),
+export const joinRequests = sqliteTable("join_requests", {
+  id: text("id").primaryKey(),
+  requesterId: text("requester_id").references(() => users.id).notNull(),
+  officeId: text("office_id").references(() => offices.id).notNull(),
   message: text("message"),
-  status: varchar("status", { length: 20 }).default("pending").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  status: text("status").default("pending").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Invitations table
-export const invitations = pgTable("invitations", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email", { length: 255 }).notNull(),
-  role: userRoleEnum("role").notNull(),
-  officeId: uuid("office_id").references(() => offices.id).notNull(),
-  invitedBy: uuid("invited_by").references(() => users.id).notNull(),
-  token: varchar("token", { length: 255 }).notNull().unique(),
-  message: text("message"),
-  status: varchar("status", { length: 20 }).default("pending").notNull(),
-  expiresAt: timestamp("expires_at").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const invitations = sqliteTable(
+  "invitations",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    role: text("role", { enum: userRoleValues }).notNull(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    invitedBy: text("invited_by").references(() => users.id).notNull(),
+    token: text("token").notNull(),
+    message: text("message"),
+    status: text("status").default("pending").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    tokenIdx: uniqueIndex("invitations_token_unique").on(table.token),
+  }),
+);
 
 // Job comments table
-export const jobComments = pgTable("job_comments", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  jobId: uuid("job_id").references(() => jobs.id, { onDelete: 'cascade' }).notNull(),
-  authorId: uuid("author_id").references(() => users.id).notNull(),
+export const jobComments = sqliteTable("job_comments", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id").references(() => jobs.id, { onDelete: "cascade" }).notNull(),
+  authorId: text("author_id").references(() => users.id).notNull(),
   content: text("content").notNull(),
-  isOverdueComment: boolean("is_overdue_comment").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  isOverdueComment: integer("is_overdue_comment", { mode: "boolean" }).default(false).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Comment reads table
-export const commentReads = pgTable("comment_reads", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").references(() => users.id).notNull(),
-  jobId: uuid("job_id").references(() => jobs.id, { onDelete: 'cascade' }).notNull(),
-  lastReadAt: timestamp("last_read_at").defaultNow().notNull(),
-});
+export const commentReads = sqliteTable(
+  "comment_reads",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").references(() => users.id).notNull(),
+    jobId: text("job_id").references(() => jobs.id, { onDelete: "cascade" }).notNull(),
+    lastReadAt: integer("last_read_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    userJobIdx: uniqueIndex("comment_reads_user_job_unique").on(table.userId, table.jobId),
+  }),
+);
 
 // Job flags table (for marking jobs as important)
-export const jobFlags = pgTable("job_flags", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").references(() => users.id).notNull(),
-  jobId: uuid("job_id").references(() => jobs.id, { onDelete: 'cascade' }).notNull(),
-  summary: text("summary"),
-  summaryGeneratedAt: timestamp("summary_generated_at"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const jobFlags = sqliteTable(
+  "job_flags",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").references(() => users.id).notNull(),
+    jobId: text("job_id").references(() => jobs.id, { onDelete: "cascade" }).notNull(),
+    summary: text("summary"),
+    summaryGeneratedAt: integer("summary_generated_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    userJobIdx: uniqueIndex("job_flags_user_job_unique").on(table.userId, table.jobId),
+  }),
+);
 
 // Job status history table
-export const jobStatusHistory = pgTable("job_status_history", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  jobId: uuid("job_id").references(() => jobs.id, { onDelete: 'cascade' }).notNull(),
-  oldStatus: varchar("old_status", { length: 50 }),
-  newStatus: varchar("new_status", { length: 50 }).notNull(),
-  changedBy: uuid("changed_by").references(() => users.id).notNull(),
-  changedAt: timestamp("changed_at").defaultNow().notNull(),
+export const jobStatusHistory = sqliteTable("job_status_history", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id").references(() => jobs.id, { onDelete: "cascade" }).notNull(),
+  oldStatus: text("old_status"),
+  newStatus: text("new_status").notNull(),
+  changedBy: text("changed_by").references(() => users.id).notNull(),
+  changedAt: integer("changed_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Notification rules table
-export const notificationRules = pgTable("notification_rules", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  officeId: uuid("office_id").references(() => offices.id).notNull(),
-  status: varchar("status", { length: 50 }).notNull(),
+export const notificationRules = sqliteTable("notification_rules", {
+  id: text("id").primaryKey(),
+  officeId: text("office_id").references(() => offices.id).notNull(),
+  status: text("status").notNull(),
   maxDays: integer("max_days").notNull(),
-  enabled: boolean("enabled").default(true).notNull(),
-  smsEnabled: boolean("sms_enabled").default(false).notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
+  smsEnabled: integer("sms_enabled", { mode: "boolean" }).default(false).notNull(),
   smsTemplate: text("sms_template"),
-  notifyRoles: jsonb("notify_roles").default([]).notNull(),
-  notifyUsers: jsonb("notify_users").default([]).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  notifyRoles: text("notify_roles", { mode: "json" }).$type<string[]>().default([]).notNull(),
+  notifyUsers: text("notify_users", { mode: "json" }).$type<string[]>().default([]).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Notifications table
-export const notifications = pgTable("notifications", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").references(() => users.id).notNull(),
-  actorId: uuid("actor_id").references(() => users.id),
-  type: notificationTypeEnum("type").notNull(),
-  jobId: uuid("job_id").references(() => jobs.id, { onDelete: 'cascade' }),
-  title: text("title").notNull(),
-  message: text("message").notNull(),
-  metadata: jsonb("metadata"),
-  linkTo: text("link_to"),
-  readAt: timestamp("read_at"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  userIdReadAtIdx: sql`CREATE INDEX IF NOT EXISTS notifications_user_id_read_at_idx ON notifications (user_id, read_at)`,
-}));
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").references(() => users.id).notNull(),
+    actorId: text("actor_id").references(() => users.id),
+    type: text("type", { enum: notificationTypeValues }).notNull(),
+    jobId: text("job_id").references(() => jobs.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    message: text("message").notNull(),
+    metadata: text("metadata", { mode: "json" }).$type<Record<string, any> | null>(),
+    linkTo: text("link_to"),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    userIdReadAtIdx: index("notifications_user_id_read_at_idx").on(table.userId, table.readAt),
+  }),
+);
 
 // SMS opt-ins table
-export const smsOptIns = pgTable("sms_opt_ins", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  phone: varchar("phone", { length: 20 }).notNull(),
-  officeId: uuid("office_id").references(() => offices.id).notNull(),
-  ipAddress: varchar("ip_address", { length: 45 }),
+export const smsOptIns = sqliteTable("sms_opt_ins", {
+  id: text("id").primaryKey(),
+  phone: text("phone").notNull(),
+  officeId: text("office_id").references(() => offices.id).notNull(),
+  ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
   sourceUrl: text("source_url"),
-  consentedAt: timestamp("consented_at").defaultNow().notNull(),
+  consentedAt: integer("consented_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // SMS logs table
-export const smsLogs = pgTable("sms_logs", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  jobId: uuid("job_id").references(() => jobs.id, { onDelete: 'set null' }),
-  phone: varchar("phone", { length: 20 }).notNull(),
+export const smsLogs = sqliteTable("sms_logs", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  phone: text("phone").notNull(),
   message: text("message").notNull(),
-  status: varchar("status", { length: 20 }).notNull(),
-  messageSid: varchar("message_sid", { length: 100 }),
-  errorCode: varchar("error_code", { length: 20 }),
+  status: text("status").notNull(),
+  messageSid: text("message_sid"),
+  errorCode: text("error_code"),
   errorMessage: text("error_message"),
-  sentAt: timestamp("sent_at").defaultNow().notNull(),
+  sentAt: integer("sent_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Admin audit logs table
-export const adminAuditLogs = pgTable("admin_audit_logs", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  adminId: uuid("admin_id").references(() => users.id).notNull(),
+export const adminAuditLogs = sqliteTable("admin_audit_logs", {
+  id: text("id").primaryKey(),
+  adminId: text("admin_id").references(() => users.id).notNull(),
   action: text("action").notNull(),
-  targetType: varchar("target_type", { length: 50 }).notNull(),
-  targetId: uuid("target_id").notNull(),
-  metadata: jsonb("metadata"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(),
+  metadata: text("metadata", { mode: "json" }).$type<Record<string, any> | null>(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Job analytics table
-export const jobAnalytics = pgTable("job_analytics", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  officeId: uuid("office_id").references(() => offices.id).notNull(),
-  date: timestamp("date").notNull(),
+export const jobAnalytics = sqliteTable("job_analytics", {
+  id: text("id").primaryKey(),
+  officeId: text("office_id").references(() => offices.id).notNull(),
+  date: integer("date", { mode: "timestamp_ms" }).notNull(),
   totalJobsCreated: integer("total_jobs_created").default(0).notNull(),
-  jobsByStatus: jsonb("jobs_by_status").default({}).notNull(),
-  jobsByType: jsonb("jobs_by_type").default({}).notNull(),
+  jobsByStatus: text("jobs_by_status", { mode: "json" }).$type<Record<string, any>>().default({}).notNull(),
+  jobsByType: text("jobs_by_type", { mode: "json" }).$type<Record<string, any>>().default({}).notNull(),
   avgCompletionTime: integer("avg_completion_time"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Platform analytics table
-export const platformAnalytics = pgTable("platform_analytics", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  date: timestamp("date").notNull(),
+export const platformAnalytics = sqliteTable("platform_analytics", {
+  id: text("id").primaryKey(),
+  date: integer("date", { mode: "timestamp_ms" }).notNull(),
   totalOffices: integer("total_offices").default(0).notNull(),
   activeOffices: integer("active_offices").default(0).notNull(),
   totalUsers: integer("total_users").default(0).notNull(),
   totalJobsCreated: integer("total_jobs_created").default(0).notNull(),
-  jobsByStatus: jsonb("jobs_by_status").default({}).notNull(),
-  jobsByType: jsonb("jobs_by_type").default({}).notNull(),
+  jobsByStatus: text("jobs_by_status", { mode: "json" }).$type<Record<string, any>>().default({}).notNull(),
+  jobsByType: text("jobs_by_type", { mode: "json" }).$type<Record<string, any>>().default({}).notNull(),
   avgCompletionTime: integer("avg_completion_time"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // PHI access logs table for HIPAA compliance
-export const phiAccessLogs = pgTable("phi_access_logs", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").references(() => users.id).notNull(),
-  officeId: uuid("office_id").references(() => offices.id),
-  action: varchar("action", { length: 50 }).notNull(),
-  entityType: varchar("entity_type", { length: 50 }).notNull(),
-  entityId: varchar("entity_id", { length: 100 }).notNull(),
-  orderId: varchar("order_id", { length: 50 }),
-  ipAddress: varchar("ip_address", { length: 45 }),
+export const phiAccessLogs = sqliteTable("phi_access_logs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").references(() => users.id).notNull(),
+  officeId: text("office_id").references(() => offices.id),
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  orderId: text("order_id"),
+  ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
-  details: jsonb("details"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  details: text("details", { mode: "json" }).$type<Record<string, any> | null>(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
 // Relations
@@ -312,16 +348,18 @@ export const insertOfficeSchema = createInsertSchema(offices).omit({
   updatedAt: true,
 });
 
-export const insertJobSchema = createInsertSchema(jobs).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  orderId: true,
-}).extend({
-  jobType: z.string().min(1, "Job type is required"),
-  status: z.string().min(1, "Status is required"),
-  statusChangedAt: z.date().or(z.string().transform(str => new Date(str))).optional(),
-});
+export const insertJobSchema = createInsertSchema(jobs)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+    orderId: true,
+  })
+  .extend({
+    jobType: z.string().min(1, "Job type is required"),
+    status: z.string().min(1, "Status is required"),
+    statusChangedAt: z.date().or(z.string().transform((str) => new Date(str))).optional(),
+  });
 
 export const insertJobCommentSchema = createInsertSchema(jobComments).omit({
   id: true,
@@ -434,3 +472,4 @@ export type JobCommentWithAuthor = JobComment & {
     lastName: string;
   };
 };
+

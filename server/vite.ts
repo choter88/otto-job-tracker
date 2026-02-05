@@ -1,12 +1,12 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
-import { createServer as createViteServer, createLogger } from "vite";
-import { type Server } from "http";
-import viteConfig from "../vite.config";
+import { type Server as HttpServer } from "http";
+import { type Server as HttpsServer } from "https";
 import { nanoid } from "nanoid";
+import { fileURLToPath } from "url";
 
-const viteLogger = createLogger();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -19,7 +19,14 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
-export async function setupVite(app: Express, server: Server) {
+export async function setupVite(app: Express, server: HttpServer | HttpsServer) {
+  const [{ createServer: createViteServer, createLogger }, { default: viteConfig }] = await Promise.all([
+    import("vite"),
+    import("../vite.config"),
+  ]);
+
+  const viteLogger = createLogger();
+
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
@@ -46,7 +53,7 @@ export async function setupVite(app: Express, server: Server) {
 
     try {
       const clientTemplate = path.resolve(
-        import.meta.dirname,
+        __dirname,
         "..",
         "client",
         "index.html",
@@ -68,7 +75,9 @@ export async function setupVite(app: Express, server: Server) {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(import.meta.dirname, "public");
+  const bundledDistPath = path.resolve(__dirname, "public");
+  const devDistPath = path.resolve(__dirname, "..", "dist", "public");
+  const distPath = fs.existsSync(bundledDistPath) ? bundledDistPath : devDistPath;
 
   if (!fs.existsSync(distPath)) {
     throw new Error(

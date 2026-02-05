@@ -43,12 +43,8 @@ import {
   type InsertPhiAccessLog,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, asc, sql, gte, lte, isNull } from "drizzle-orm";
-import session from "express-session";
-import connectPg from "connect-pg-simple";
-import { pool } from "./db";
-
-const PostgresSessionStore = connectPg(session);
+import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
+import { randomUUID } from "crypto";
 
 export interface IStorage {
   // User operations
@@ -153,20 +149,9 @@ export interface IStorage {
   // PHI access logging for HIPAA compliance
   createPhiAccessLog(log: InsertPhiAccessLog): Promise<PhiAccessLog>;
   getPhiAccessLogs(options?: { userId?: string; officeId?: string; entityType?: string; startDate?: Date; endDate?: Date; limit?: number }): Promise<PhiAccessLog[]>;
-
-  sessionStore: any;
 }
 
 export class DatabaseStorage implements IStorage {
-  sessionStore: any;
-
-  constructor() {
-    this.sessionStore = new PostgresSessionStore({ 
-      pool, 
-      createTableIfMissing: true 
-    });
-  }
-
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
@@ -180,7 +165,7 @@ export class DatabaseStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db
       .insert(users)
-      .values(insertUser)
+      .values({ id: randomUUID(), ...insertUser })
       .returning();
     return user;
   }
@@ -233,7 +218,7 @@ export class DatabaseStorage implements IStorage {
 
     const [office] = await db
       .insert(offices)
-      .values({ ...insertOffice, settings: defaultSettings })
+      .values({ id: randomUUID(), ...insertOffice, settings: defaultSettings })
       .returning();
     return office;
   }
@@ -274,7 +259,7 @@ export class DatabaseStorage implements IStorage {
       const [job] = await db
         .select()
         .from(jobs)
-        .where(and(...conditions, sql`${jobs.id} != ${excludeJobId}`));
+        .where(and(...conditions, ne(jobs.id, excludeJobId)));
       return job || undefined;
     }
     
@@ -286,6 +271,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createJob(insertJob: InsertJob): Promise<Job> {
+    if (!insertJob.createdBy) {
+      throw new Error("createdBy is required to create a job");
+    }
+
     // Helper to extract order number from orderId (handles any digit length)
     const extractOrderNum = (orderId: string | null): number => {
       if (!orderId) return 0;
@@ -303,20 +292,18 @@ export class DatabaseStorage implements IStorage {
         const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         const orderIdPrefix = `ORD-${today}-`;
         
-        // Find the maximum order number from both jobs and archived_jobs tables for today
-        // Use CAST to order by numeric suffix (handles >9999 orders correctly)
         const maxActiveResult = await db
           .select({ orderId: jobs.orderId })
           .from(jobs)
           .where(sql`${jobs.orderId} LIKE ${orderIdPrefix + '%'}`)
-          .orderBy(sql`CAST(SPLIT_PART(${jobs.orderId}, '-', 3) AS INTEGER) DESC`)
+          .orderBy(desc(jobs.orderId))
           .limit(1);
         
         const maxArchivedResult = await db
           .select({ orderId: archivedJobs.orderId })
           .from(archivedJobs)
           .where(sql`${archivedJobs.orderId} LIKE ${orderIdPrefix + '%'}`)
-          .orderBy(sql`CAST(SPLIT_PART(${archivedJobs.orderId}, '-', 3) AS INTEGER) DESC`)
+          .orderBy(desc(archivedJobs.orderId))
           .limit(1);
         
         // Extract order numbers and find the max
@@ -330,6 +317,7 @@ export class DatabaseStorage implements IStorage {
         const [job] = await db
           .insert(jobs)
           .values({ 
+            id: randomUUID(),
             ...insertJob, 
             orderId,
             statusChangedAt: (insertJob as any).statusChangedAt || new Date()
@@ -338,16 +326,21 @@ export class DatabaseStorage implements IStorage {
         
         // Log initial status
         await db.insert(jobStatusHistory).values({
+          id: randomUUID(),
           jobId: job.id,
           oldStatus: null,
           newStatus: job.status,
-          changedBy: job.createdBy
+          changedBy: job.createdBy!,
         });
 
         return job;
       } catch (error: any) {
         // If it's a unique constraint violation on orderId, retry
-        if (error.message?.includes('jobs_order_id_unique') && attempt < maxRetries - 1) {
+        const msg = String(error?.message || "");
+        if (
+          (msg.includes("jobs_order_id_unique") || msg.includes("UNIQUE constraint failed: jobs.order_id")) &&
+          attempt < maxRetries - 1
+        ) {
           // Small random delay to reduce collision probability
           await new Promise(resolve => setTimeout(resolve, Math.random() * 100));
           continue;
@@ -376,6 +369,7 @@ export class DatabaseStorage implements IStorage {
     // Log status change if status was updated
     if (updates.status && updates.status !== oldJob.status) {
       await db.insert(jobStatusHistory).values({
+        id: randomUUID(),
         jobId: job.id,
         oldStatus: oldJob.status,
         newStatus: job.status,
@@ -409,6 +403,7 @@ export class DatabaseStorage implements IStorage {
     const [archived] = await db
       .insert(archivedJobs)
       .values({
+        id: randomUUID(),
         orderId: job.orderId,
         patientFirstInitial: job.patientFirstInitial,
         patientLastName: job.patientLastName,
@@ -477,6 +472,7 @@ export class DatabaseStorage implements IStorage {
     const [restoredJob] = await db
       .insert(jobs)
       .values({
+        id: randomUUID(),
         orderId: archived.orderId,
         patientFirstInitial: archived.patientFirstInitial,
         patientLastName: archived.patientLastName,
@@ -526,7 +522,7 @@ export class DatabaseStorage implements IStorage {
   async createJobComment(comment: InsertJobComment): Promise<JobCommentWithAuthor> {
     const [newComment] = await db
       .insert(jobComments)
-      .values(comment)
+      .values({ id: randomUUID(), ...comment })
       .returning();
     
     // Fetch the author information
@@ -587,7 +583,7 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(jobs.officeId, officeId),
-          sql`${jobComments.authorId} != ${userId}`,
+          ne(jobComments.authorId, userId),
           sql`(${commentReads.lastReadAt} IS NULL OR ${jobComments.createdAt} > ${commentReads.lastReadAt})`
         )
       );
@@ -621,6 +617,7 @@ export class DatabaseStorage implements IStorage {
       const [created] = await db
         .insert(commentReads)
         .values({
+          id: randomUUID(),
           userId,
           jobId,
           lastReadAt: new Date()
@@ -634,7 +631,7 @@ export class DatabaseStorage implements IStorage {
     const counts = await db
       .select({
         jobId: jobComments.jobId,
-        count: sql<number>`count(*)::int`
+        count: sql<number>`count(*)`
       })
       .from(jobComments)
       .innerJoin(jobs, eq(jobs.id, jobComments.jobId))
@@ -648,9 +645,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async flagJob(userId: string, jobId: string, summary?: string): Promise<JobFlag> {
-    const [flag] = await db
+    const inserted = await db
       .insert(jobFlags)
       .values({ 
+        id: randomUUID(),
         userId, 
         jobId,
         summary,
@@ -658,7 +656,19 @@ export class DatabaseStorage implements IStorage {
       })
       .onConflictDoNothing()
       .returning();
-    return flag;
+
+    if (inserted[0]) return inserted[0];
+
+    const [existing] = await db
+      .select()
+      .from(jobFlags)
+      .where(and(eq(jobFlags.userId, userId), eq(jobFlags.jobId, jobId)));
+
+    if (!existing) {
+      throw new Error("Failed to flag job");
+    }
+
+    return existing;
   }
 
   async unflagJob(userId: string, jobId: string): Promise<void> {
@@ -762,6 +772,7 @@ export class DatabaseStorage implements IStorage {
     const [request] = await db
       .insert(joinRequests)
       .values({
+        id: randomUUID(),
         requesterId,
         officeId,
         message,
@@ -831,7 +842,7 @@ export class DatabaseStorage implements IStorage {
   async createInvitation(invitation: InsertInvitation & { token: string; expiresAt: Date }): Promise<Invitation> {
     const [newInvitation] = await db
       .insert(invitations)
-      .values(invitation)
+      .values({ id: randomUUID(), ...invitation })
       .returning();
     return newInvitation;
   }
@@ -884,7 +895,7 @@ export class DatabaseStorage implements IStorage {
   async createNotificationRule(rule: InsertNotificationRule): Promise<NotificationRule> {
     const [newRule] = await db
       .insert(notificationRules)
-      .values(rule)
+      .values({ id: randomUUID(), ...rule })
       .returning();
     return newRule;
   }
@@ -905,7 +916,7 @@ export class DatabaseStorage implements IStorage {
   async createSmsOptIn(optIn: InsertSmsOptIn): Promise<SmsOptIn> {
     const [newOptIn] = await db
       .insert(smsOptIns)
-      .values(optIn)
+      .values({ id: randomUUID(), ...optIn })
       .returning();
     return newOptIn;
   }
@@ -922,7 +933,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async logSms(log: any): Promise<void> {
-    await db.insert(smsLogs).values(log);
+    const row = {
+      id: randomUUID(),
+      sentAt: new Date(),
+      ...log,
+    };
+
+    await db.insert(smsLogs).values(row);
   }
 
   async getNotificationsByUser(userId: string, options?: { unreadOnly?: boolean; limit?: number; offset?: number }): Promise<Notification[]> {
@@ -1001,7 +1018,7 @@ export class DatabaseStorage implements IStorage {
   async createNotification(notification: InsertNotification): Promise<Notification> {
     const [newNotification] = await db
       .insert(notifications)
-      .values(notification)
+      .values({ id: randomUUID(), ...notification })
       .returning();
     return newNotification;
   }
@@ -1100,7 +1117,7 @@ export class DatabaseStorage implements IStorage {
     const [officeStats] = await db
       .select({
         totalOffices: sql`count(*)`,
-        activeOffices: sql`count(*) filter (where enabled = true)`
+        activeOffices: sql`sum(case when ${offices.enabled} = 1 then 1 else 0 end)`
       })
       .from(offices);
 
@@ -1118,7 +1135,7 @@ export class DatabaseStorage implements IStorage {
 
     const [completionTimeStats] = await db
       .select({
-        avgCompletionTime: sql`avg(extract(epoch from (archived_at - original_created_at)) / 86400)::numeric`
+        avgCompletionTime: sql`avg((${archivedJobs.archivedAt} - ${archivedJobs.originalCreatedAt}) / 86400000.0)`
       })
       .from(archivedJobs)
       .where(eq(archivedJobs.finalStatus, 'completed'));
@@ -1191,7 +1208,7 @@ export class DatabaseStorage implements IStorage {
   async createAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog> {
     const [auditLog] = await db
       .insert(adminAuditLogs)
-      .values(log)
+      .values({ id: randomUUID(), ...log })
       .returning();
     return auditLog;
   }
@@ -1207,7 +1224,7 @@ export class DatabaseStorage implements IStorage {
   async createPhiAccessLog(log: InsertPhiAccessLog): Promise<PhiAccessLog> {
     const [accessLog] = await db
       .insert(phiAccessLogs)
-      .values(log)
+      .values({ id: randomUUID(), ...log })
       .returning();
     return accessLog;
   }

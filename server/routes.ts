@@ -1,5 +1,7 @@
 import type { Express, Request } from "express";
-import { createServer, type Server } from "http";
+import fs from "fs";
+import { createServer as createHttpServer, type Server as HttpServer } from "http";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "https";
 import { setupAuth } from "./auth";
 import { storage } from "./storage";
 import { insertJobSchema, insertJobCommentSchema, insertNotificationRuleSchema, insertInvitationSchema, insertSmsOptInSchema, insertAdminAuditLogSchema } from "@shared/schema";
@@ -21,7 +23,11 @@ async function logPhiAccess(
   if (!req.user) return;
   
   try {
-    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
+    const trustProxy = process.env.OTTO_TRUST_PROXY === "true";
+    const forwardedFor = trustProxy
+      ? (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
+      : undefined;
+    const ipAddress = forwardedFor || req.socket.remoteAddress || req.ip || 'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
     
     await storage.createPhiAccessLog({
@@ -41,9 +47,35 @@ async function logPhiAccess(
   }
 }
 
-export function registerRoutes(app: Express): { server: Server; sessionMiddleware: any } {
+export type AppServer = HttpServer | HttpsServer;
+
+function createAppServer(app: Express): AppServer {
+  if (process.env.OTTO_TLS !== "true") {
+    return createHttpServer(app);
+  }
+
+  const keyPath = process.env.OTTO_TLS_KEY_PATH;
+  const certPath = process.env.OTTO_TLS_CERT_PATH;
+  if (!keyPath || !certPath) {
+    throw new Error("OTTO_TLS is true but OTTO_TLS_KEY_PATH/OTTO_TLS_CERT_PATH are not set");
+  }
+
+  return createHttpsServer(
+    {
+      key: fs.readFileSync(keyPath),
+      cert: fs.readFileSync(certPath),
+    },
+    app,
+  );
+}
+
+export function registerRoutes(app: Express): { server: AppServer; sessionMiddleware: any } {
   // Setup authentication
   const sessionMiddleware = setupAuth(app);
+
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true, ts: Date.now() });
+  });
 
   // Job routes
   app.get("/api/jobs", async (req, res) => {
@@ -140,11 +172,7 @@ export function registerRoutes(app: Express): { server: Server; sessionMiddlewar
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
     
     try {
-      console.log("PUT /api/jobs/:id - Request body:", JSON.stringify(req.body, null, 2));
-      console.log("PUT /api/jobs/:id - User:", req.user.id, req.user.email);
-      
       const oldJob = await storage.getJob(req.params.id);
-      console.log("PUT /api/jobs/:id - Old job status:", oldJob?.status);
       
       // Check for duplicate tray number if tray number is being updated
       if (req.body.trayNumber && oldJob) {
@@ -165,7 +193,6 @@ export function registerRoutes(app: Express): { server: Server; sessionMiddlewar
       }
       
       const job = await storage.updateJob(req.params.id, req.body, req.user.id);
-      console.log("PUT /api/jobs/:id - Updated job status:", job.status);
       
       // Log PHI access for updating patient record
       await logPhiAccess(req, 'update', 'job', job.id, job.orderId, { 
@@ -173,37 +200,23 @@ export function registerRoutes(app: Express): { server: Server; sessionMiddlewar
         patientId: job.trayNumber || `${job.patientFirstInitial}. ${job.patientLastName}`
       });
       
-      console.log("PUT /api/jobs/:id - Checking notification conditions:");
-      console.log("  - oldJob exists:", !!oldJob);
-      console.log("  - req.body.status exists:", !!req.body.status);
-      console.log("  - oldJob.status !== req.body.status:", oldJob?.status !== req.body.status);
-      
       if (oldJob && req.body.status && oldJob.status !== req.body.status) {
-        console.log("PUT /api/jobs/:id - Sending notifications...");
         // Send notifications while job still exists in database (fixes FK violation)
         await notifyJobStatusChange(job, oldJob.status, req.user, storage);
-        console.log("PUT /api/jobs/:id - Notifications sent successfully");
         
-        console.log("PUT /api/jobs/:id - Regenerating AI summary...");
         // Regenerate AI summary BEFORE archiving (while job still exists)
         await checkAndRegenerateSummary(req.params.id);
-        console.log("PUT /api/jobs/:id - AI summary regenerated");
         
         // Archive and delete AFTER notifications if status is terminal
         if (req.body.status === 'completed' || req.body.status === 'cancelled') {
-          console.log(`Archiving job ${req.params.id} with status ${req.body.status}`);
           await storage.archiveJob(job);
-          console.log(`Deleting job ${req.params.id} from jobs table`);
           await storage.deleteJob(req.params.id);
-          console.log(`Job ${req.params.id} archived and deleted successfully`);
         }
-      } else {
-        console.log("PUT /api/jobs/:id - Skipping notifications (condition not met)");
       }
       
       res.json(job);
     } catch (error: any) {
-      console.error("PUT /api/jobs/:id - Error:", error.message, error.stack);
+      console.error("PUT /api/jobs/:id - Error:", process.env.OTTO_DEBUG === "true" ? error : error?.message);
       res.status(400).json({ error: error.message });
     }
   });
@@ -284,13 +297,15 @@ export function registerRoutes(app: Express): { server: Server; sessionMiddlewar
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
     
     try {
-      console.log("POST /api/jobs/archived/:id/restore - ID:", req.params.id, "Body:", req.body);
       // newStatus is now optional - will use previousStatus from archive if not provided
       const { newStatus } = req.body;
       const job = await storage.restoreArchivedJob(req.params.id, newStatus);
       res.json(job);
     } catch (error: any) {
-      console.error("POST /api/jobs/archived/:id/restore - Error:", error.message, error.stack);
+      console.error(
+        "POST /api/jobs/archived/:id/restore - Error:",
+        process.env.OTTO_DEBUG === "true" ? error : error?.message,
+      );
       res.status(400).json({ error: error.message });
     }
   });
@@ -442,11 +457,15 @@ export function registerRoutes(app: Express): { server: Server; sessionMiddlewar
       // Generate AI summary asynchronously in the background
       (async () => {
         try {
-          console.log(`[AI Summary] Starting async summary generation for job ${req.params.jobId}`);
+          if (process.env.OTTO_DEBUG === "true") {
+            console.log(`[AI Summary] Starting async summary generation for job ${req.params.jobId}`);
+          }
           const office = await storage.getOffice(job.officeId);
           const summary = await generateJobSummary(req.params.jobId, office?.settings || {});
           await storage.updateJobFlagSummary(req.user.id, req.params.jobId, summary);
-          console.log(`[AI Summary] Async summary generation completed for job ${req.params.jobId}`);
+          if (process.env.OTTO_DEBUG === "true") {
+            console.log(`[AI Summary] Async summary generation completed for job ${req.params.jobId}`);
+          }
           
           // TODO: Broadcast via WebSocket that summary is ready
         } catch (error) {
@@ -1112,6 +1131,6 @@ export function registerRoutes(app: Express): { server: Server; sessionMiddlewar
     }
   });
 
-  const httpServer = createServer(app);
-  return { server: httpServer, sessionMiddleware };
+  const server = createAppServer(app);
+  return { server, sessionMiddleware };
 }

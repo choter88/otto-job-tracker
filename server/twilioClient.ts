@@ -1,54 +1,62 @@
 import twilio from 'twilio';
 
-let connectionSettings: any;
+function smsGloballyDisabled(): boolean {
+  return process.env.OTTO_AIRGAP === "true" || process.env.OTTO_DISABLE_SMS === "true";
+}
 
-async function getCredentials() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME
-  const xReplitToken = process.env.REPL_IDENTITY 
-    ? 'repl ' + process.env.REPL_IDENTITY 
-    : process.env.WEB_REPL_RENEWAL 
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-    : null;
+function getTwilioCredentials() {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const fromPhoneNumber = process.env.TWILIO_FROM_PHONE;
 
-  if (!xReplitToken) {
-    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
+  if (!accountSid || !fromPhoneNumber) {
+    throw new Error("Twilio credentials missing: set TWILIO_ACCOUNT_SID and TWILIO_FROM_PHONE");
   }
 
-  connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=twilio',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
-      }
-    }
-  ).then(res => res.json()).then(data => data.items?.[0]);
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const apiKey = process.env.TWILIO_API_KEY;
+  const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
 
-  if (!connectionSettings || (!connectionSettings.settings.account_sid || !connectionSettings.settings.api_key || !connectionSettings.settings.api_key_secret)) {
-    throw new Error('Twilio not connected');
+  if (authToken) {
+    return { accountSid, fromPhoneNumber, authToken };
   }
-  return {
-    accountSid: connectionSettings.settings.account_sid,
-    apiKey: connectionSettings.settings.api_key,
-    apiKeySecret: connectionSettings.settings.api_key_secret,
-    phoneNumber: connectionSettings.settings.phone_number
-  };
+
+  if (apiKey && apiKeySecret) {
+    return { accountSid, fromPhoneNumber, apiKey, apiKeySecret };
+  }
+
+  throw new Error(
+    "Twilio credentials missing: set either TWILIO_AUTH_TOKEN or TWILIO_API_KEY + TWILIO_API_KEY_SECRET",
+  );
 }
 
 export async function getTwilioClient() {
-  const { accountSid, apiKey, apiKeySecret } = await getCredentials();
-  return twilio(apiKey, apiKeySecret, {
-  accountSid: accountSid
-  });
+  if (smsGloballyDisabled()) {
+    throw new Error("SMS is disabled (OTTO_AIRGAP/OTTO_DISABLE_SMS)");
+  }
+
+  const creds = getTwilioCredentials();
+  if ("authToken" in creds) {
+    return twilio(creds.accountSid, creds.authToken);
+  }
+
+  return twilio(creds.apiKey, creds.apiKeySecret, { accountSid: creds.accountSid });
 }
 
 export async function getTwilioFromPhoneNumber() {
-  const { phoneNumber } = await getCredentials();
-  return phoneNumber;
+  const creds = getTwilioCredentials();
+  return creds.fromPhoneNumber;
 }
 
 // SMS sending function
 export async function sendSMS(to: string, message: string) {
+  if (smsGloballyDisabled()) {
+    return {
+      success: false,
+      error: "SMS disabled",
+      errorCode: "SMS_DISABLED",
+    };
+  }
+
   try {
     const client = await getTwilioClient();
     const fromNumber = await getTwilioFromPhoneNumber();

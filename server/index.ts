@@ -1,4 +1,6 @@
+import "./local-env";
 import express, { type Request, Response, NextFunction } from "express";
+import { enforceAirgap } from "./airgap";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
@@ -7,6 +9,57 @@ import { logError } from "./error-logger";
 // import { startBackgroundJobs } from "./background-jobs";
 
 const app = express();
+
+enforceAirgap();
+
+function normalizeIp(ip: string): string {
+  if (ip.startsWith("::ffff:")) return ip.slice("::ffff:".length);
+  return ip;
+}
+
+function isPrivateIp(ip: string): boolean {
+  const normalized = normalizeIp(ip);
+  if (normalized === "::1") return true;
+  if (normalized === "127.0.0.1") return true;
+  if (normalized === "0.0.0.0") return true;
+
+  // IPv6: Unique local (fc00::/7) and link-local (fe80::/10)
+  if (normalized.includes(":")) {
+    const lower = normalized.toLowerCase();
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+    if (lower.startsWith("fe80:")) return true;
+    return false;
+  }
+
+  const parts = normalized.split(".").map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+// Default: only allow office LAN access (prevents accidental exposure to the public internet)
+app.use((req, res, next) => {
+  if (process.env.OTTO_LAN_ONLY === "false") return next();
+
+  const trustProxy = process.env.OTTO_TRUST_PROXY === "true";
+  const forwardedFor = trustProxy
+    ? (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+    : undefined;
+
+  const remote = forwardedFor || req.socket.remoteAddress || req.ip || "unknown";
+
+  if (remote === "unknown" || !isPrivateIp(remote)) {
+    return res.status(403).json({ error: "LAN only" });
+  }
+
+  next();
+});
 
 declare module 'http' {
   interface IncomingMessage {
@@ -23,11 +76,16 @@ app.use(express.urlencoded({ extended: false }));
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+  let capturedErrorMessage: string | undefined = undefined;
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
+    if (bodyJson && typeof bodyJson === "object") {
+      const maybeMessage = (bodyJson as any).message ?? (bodyJson as any).error;
+      if (typeof maybeMessage === "string") {
+        capturedErrorMessage = maybeMessage.slice(0, 300);
+      }
+    }
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
 
@@ -35,9 +93,6 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
 
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "…";
@@ -45,7 +100,7 @@ app.use((req, res, next) => {
 
       log(logLine);
 
-      // Log errors (4xx and 5xx) to persistent file
+      // Log errors (4xx and 5xx) to persistent file (no request/response payloads)
       if (res.statusCode >= 400) {
         const user = (req as any).user;
         logError({
@@ -53,10 +108,9 @@ app.use((req, res, next) => {
           method: req.method,
           path: path,
           statusCode: res.statusCode,
-          errorMessage: capturedJsonResponse?.message || capturedJsonResponse?.error || 'Unknown error',
+          errorMessage: capturedErrorMessage || "Unknown error",
           userId: user?.id,
           officeId: user?.officeId,
-          requestBody: req.method !== 'GET' ? sanitizeBody(req.body) : undefined,
           duration,
         });
       }
@@ -65,30 +119,6 @@ app.use((req, res, next) => {
 
   next();
 });
-
-// Sanitize request body to remove sensitive data before logging (deep redaction)
-function sanitizeBody(body: any, depth = 0): any {
-  if (!body || depth > 10) return undefined;
-  if (typeof body !== 'object') return body;
-  if (Array.isArray(body)) {
-    return body.map(item => sanitizeBody(item, depth + 1));
-  }
-  
-  const sensitiveKeys = ['password', 'token', 'secret', 'apikey', 'authorization', 'credentials', 'key'];
-  const sanitized: any = {};
-  
-  for (const [key, value] of Object.entries(body)) {
-    const lowerKey = key.toLowerCase();
-    if (sensitiveKeys.some(sk => lowerKey.includes(sk))) {
-      sanitized[key] = '[REDACTED]';
-    } else if (typeof value === 'object' && value !== null) {
-      sanitized[key] = sanitizeBody(value, depth + 1);
-    } else {
-      sanitized[key] = value;
-    }
-  }
-  return sanitized;
-}
 
 (async () => {
   const { server, sessionMiddleware: _sessionMiddleware } = await registerRoutes(app);
@@ -101,7 +131,7 @@ function sanitizeBody(body: any, depth = 0): any {
     const message = err.message || "Internal Server Error";
 
     res.status(status).json({ message });
-    throw err;
+    console.error("Unhandled error:", process.env.OTTO_DEBUG === "true" ? err : message);
   });
 
   // importantly only setup vite in development and after
@@ -114,16 +144,30 @@ function sanitizeBody(body: any, depth = 0): any {
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
+  // Default to 5150 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5000', 10);
+  const port = parseInt(process.env.PORT || '5150', 10);
+  const host = process.env.OTTO_LISTEN_HOST || "0.0.0.0";
+
+  server.on("error", (err: any) => {
+    if (err?.code === "EADDRINUSE") {
+      console.error(
+        `Otto Tracker can’t start because port ${port} is already being used by another app.\n` +
+          `Fix: close the other app (or change PORT in your .env file) and try again.`,
+      );
+      process.exit(1);
+    }
+
+    console.error("Server error:", process.env.OTTO_DEBUG === "true" ? err : err?.message);
+    process.exit(1);
+  });
+
   server.listen({
     port,
-    host: "0.0.0.0",
-    reusePort: true,
+    host,
   }, () => {
-    log(`serving on port ${port}`);
+    log(`serving on ${host}:${port}`);
     // NOTIFICATION SYSTEM DISABLED TO REDUCE COSTS
     // Background jobs (overdue detection, analytics) are disabled
     // startBackgroundJobs();

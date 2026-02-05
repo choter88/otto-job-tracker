@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from "os";
 
 interface ErrorLogEntry {
   timestamp: string;
@@ -14,7 +15,13 @@ interface ErrorLogEntry {
   duration?: number;
 }
 
-const LOG_FILE = '/tmp/error_log.json';
+function getLogFilePath(): string {
+  if (process.env.OTTO_ERROR_LOG_PATH) return process.env.OTTO_ERROR_LOG_PATH;
+  const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+  return path.join(dataDir, "error_log.json");
+}
+
+const LOG_FILE = getLogFilePath();
 const MAX_ENTRIES = 1000;
 
 function readLogFile(): ErrorLogEntry[] {
@@ -31,7 +38,8 @@ function readLogFile(): ErrorLogEntry[] {
 
 function writeLogFile(entries: ErrorLogEntry[]): void {
   try {
-    fs.writeFileSync(LOG_FILE, JSON.stringify(entries, null, 2));
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(LOG_FILE, JSON.stringify(entries, null, 2), { mode: 0o600 });
   } catch (e) {
     console.error('Failed to write error log:', e);
   }

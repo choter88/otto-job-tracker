@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Otto Tracker Setup</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+      label { display: block; margin: 14px 0 6px; font-weight: 600; }
+      input[type="text"] { width: 100%; padding: 10px 12px; font-size: 14px; }
+      .row { margin: 10px 0; }
+      .hint { color: #444; font-size: 13px; line-height: 1.4; }
+      .actions { margin-top: 18px; display: flex; gap: 12px; }
+      button { padding: 10px 14px; font-size: 14px; cursor: pointer; }
+      .danger { color: #7a0b0b; }
+      .box { border: 1px solid #ddd; padding: 14px; border-radius: 8px; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Otto Tracker Setup</h1>
+    <p class="hint">
+      This app is designed to run with <b>no internet access</b>. One computer is the <b>Host (SOT)</b>. Other computers connect as <b>Clients</b>.
+    </p>
+
+    <div class="box">
+      <div class="row">
+        <label>
+          <input type="radio" name="mode" value="host" checked />
+          This computer is the Host (Single Source of Truth)
+        </label>
+        <div class="hint">Runs the database and server locally on this machine.</div>
+      </div>
+
+      <div class="row">
+        <label>
+          <input type="radio" name="mode" value="client" />
+          This computer is a Client (connects to an existing Host)
+        </label>
+        <div class="hint">No data is stored locally on the Client.</div>
+      </div>
+
+      <div id="clientSettings" style="display:none">
+        <label for="hostUrl">Host URL</label>
+        <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
+        <div class="hint">Get this from the Host computer: <b>File → Show Host Address…</b></div>
+
+        <label for="pairingCode">Pairing code</label>
+        <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
+        <div class="hint danger">Required the first time you connect. This app blocks all internet access.</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="save">Save & Restart</button>
+    </div>
+
+    <script>
+      const clientSettings = document.getElementById("clientSettings");
+      const hostUrl = document.getElementById("hostUrl");
+      const pairingCode = document.getElementById("pairingCode");
+      const saveBtn = document.getElementById("save");
+      let existingConfig = null;
+
+      function selectedMode() {
+        return document.querySelector('input[name="mode"]:checked')?.value || "host";
+      }
+
+      function render() {
+        clientSettings.style.display = selectedMode() === "client" ? "block" : "none";
+      }
+
+      document.querySelectorAll('input[name="mode"]').forEach((el) => {
+        el.addEventListener("change", render);
+      });
+      render();
+
+      (async () => {
+        const config = await window.otto.getConfig();
+        existingConfig = config;
+        const modeInput = document.querySelector(`input[name="mode"][value="${config.mode}"]`);
+        if (modeInput) modeInput.checked = true;
+        hostUrl.value = config.hostUrl || "";
+        pairingCode.value = config.pairingCode || "";
+        render();
+      })();
+
+      saveBtn.addEventListener("click", async () => {
+        const mode = selectedMode();
+        const config = {
+          mode,
+          hostUrl: hostUrl.value?.trim() || "https://127.0.0.1:5150",
+          pairingCode: pairingCode.value?.trim() || "",
+        };
+
+        if (mode === "client") {
+          try {
+            const url = new URL(config.hostUrl);
+            const hostname = url.hostname;
+            const protocol = url.protocol;
+
+            const isPrivateIpv4 = (h) => {
+              const parts = h.split(".").map((p) => Number(p));
+              if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+              const [a, b] = parts;
+              if (a === 10) return true;
+              if (a === 127) return true;
+              if (a === 169 && b === 254) return true;
+              if (a === 172 && b >= 16 && b <= 31) return true;
+              if (a === 192 && b === 168) return true;
+              return false;
+            };
+
+            const isLocalHostname = (h) => {
+              if (!h) return false;
+              if (h === "localhost") return true;
+              if (h === "::1") return true;
+              if (!h.includes(".")) return true;
+              if (h.endsWith(".local")) return true;
+              return false;
+            };
+
+            if (!isLocalHostname(hostname) && !isPrivateIpv4(hostname)) {
+              alert("Please enter an office network address (example: https://192.168.1.10:5150).");
+              return;
+            }
+
+            const previousOrigin = (() => {
+              try {
+                return existingConfig?.hostUrl ? new URL(existingConfig.hostUrl).origin : null;
+              } catch {
+                return null;
+              }
+            })();
+
+            const nextOrigin = url.origin;
+            const hasTrustedForSameHost = Boolean(existingConfig?.trustedFingerprint256) && previousOrigin === nextOrigin;
+            const pairingHex = config.pairingCode.replace(/[^a-fA-F0-9]/g, "").toUpperCase();
+
+            if (protocol === "https:" && !hasTrustedForSameHost && pairingHex.length < 12) {
+              alert("Please enter the Pairing code shown on the Host (File → Show Host Address…).");
+              return;
+            }
+          } catch {
+            alert("Please enter a valid Host URL (example: https://192.168.1.10:5150).");
+            return;
+          }
+        }
+
+        try {
+          if (!window.otto || typeof window.otto.saveConfig !== "function") {
+            alert("Setup is not ready. Please close Otto Tracker and open it again.");
+            return;
+          }
+          await window.otto.saveConfig(config);
+        } catch (e) {
+          alert("Could not save settings. Please close Otto Tracker and open it again.");
+        }
+      });
+    </script>
+  </body>
+</html>

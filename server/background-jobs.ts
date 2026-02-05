@@ -12,9 +12,10 @@ import {
   archivedJobs,
   type NotificationRule 
 } from '@shared/schema';
-import { eq, and, sql, gte, lt } from 'drizzle-orm';
+import { and, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { sendSMS } from './twilioClient';
 import { storage } from './storage';
+import { randomUUID } from "crypto";
 
 function substituteTemplate(template: string, variables: Record<string, any>): string {
   return template.replace(/\{(\w+)\}/g, (match, key) => {
@@ -29,12 +30,15 @@ cron.schedule('0 0 * * *', async () => {
     const rules = await db.select().from(notificationRules).where(eq(notificationRules.enabled, true));
     
     for (const rule of rules) {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - rule.maxDays);
+
       const overdueJobs = await db.select()
         .from(jobs)
         .where(and(
           eq(jobs.officeId, rule.officeId),
           eq(jobs.status, rule.status),
-          sql`EXTRACT(DAY FROM (NOW() - ${jobs.statusChangedAt})) > ${rule.maxDays}`
+          lte(jobs.statusChangedAt, cutoffDate),
         ));
       
       for (const job of overdueJobs) {
@@ -145,7 +149,7 @@ cron.schedule('0 1 * * *', async () => {
       }
       
       const completedJobs = await db.select({
-        avgTime: sql<number>`AVG(EXTRACT(EPOCH FROM (archived_at - original_created_at)) / 86400)::numeric`
+        avgTime: sql<number>`avg((${archivedJobs.archivedAt} - ${archivedJobs.originalCreatedAt}) / 86400000.0)`,
       })
         .from(archivedJobs)
         .where(and(
@@ -157,6 +161,7 @@ cron.schedule('0 1 * * *', async () => {
       const avgCompletionTime = completedJobs[0]?.avgTime ? Math.round(completedJobs[0].avgTime) : null;
       
       await db.insert(jobAnalytics).values({
+        id: randomUUID(),
         officeId: office.id,
         date: today,
         totalJobsCreated: jobsCreatedToday.length,
@@ -183,7 +188,7 @@ cron.schedule('0 1 * * *', async () => {
     
     const [officeStats] = await db.select({
       totalOffices: sql<number>`COUNT(*)`,
-      activeOffices: sql<number>`COUNT(*) FILTER (WHERE enabled = true)`
+      activeOffices: sql<number>`sum(case when ${offices.enabled} = 1 then 1 else 0 end)`,
     })
       .from(offices);
     
@@ -193,7 +198,7 @@ cron.schedule('0 1 * * *', async () => {
       .from(users);
     
     const platformCompletedJobs = await db.select({
-      avgTime: sql<number>`AVG(EXTRACT(EPOCH FROM (archived_at - original_created_at)) / 86400)::numeric`
+      avgTime: sql<number>`avg((${archivedJobs.archivedAt} - ${archivedJobs.originalCreatedAt}) / 86400000.0)`,
     })
       .from(archivedJobs)
       .where(and(
@@ -206,6 +211,7 @@ cron.schedule('0 1 * * *', async () => {
       : null;
     
     await db.insert(platformAnalytics).values({
+      id: randomUUID(),
       date: today,
       totalOffices: Number(officeStats.totalOffices) || 0,
       activeOffices: Number(officeStats.activeOffices) || 0,

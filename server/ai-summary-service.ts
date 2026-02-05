@@ -5,9 +5,16 @@ import { db } from "./db";
 import { jobStatusHistory, users, jobFlags, jobComments } from "@shared/schema";
 import { eq, and, or, desc } from "drizzle-orm";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function aiSummaryEnabled(): boolean {
+  if (process.env.OTTO_AIRGAP === "true") return false;
+  if (process.env.OTTO_ENABLE_AI_SUMMARY !== "true") return false;
+  if (process.env.OTTO_ALLOW_PHI_EGRESS !== "true") return false;
+  return Boolean(process.env.OPENAI_API_KEY);
+}
+
+const openai = aiSummaryEnabled()
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 
 interface StatusHistoryEntry {
   oldStatus: string | null;
@@ -25,6 +32,18 @@ export async function generateJobSummary(jobId: string, officeSettings: any): Pr
     const job = await storage.getJob(jobId);
     if (!job) {
       throw new Error("Job not found");
+    }
+
+    if (!openai) {
+      const statusLabel =
+        officeSettings?.customStatuses?.find((s: any) => s.id === job.status)?.label || job.status;
+      const jobTypeLabel =
+        officeSettings?.customJobTypes?.find((t: any) => t.id === job.jobType)?.label || job.jobType;
+      const daysInStatus = Math.floor(
+        (Date.now() - new Date(job.statusChangedAt).getTime()) / (1000 * 60 * 60 * 24),
+      );
+
+      return `AI summaries are disabled. Job ${job.orderId} is ${jobTypeLabel} in status “${statusLabel}” (${daysInStatus} day(s)).`;
     }
 
     // Fetch comments

@@ -2,6 +2,7 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import { Express } from "express";
 import session from "express-session";
+import MemoryStoreFactory from "memorystore";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
@@ -55,23 +56,45 @@ export function setupAuth(app: Express) {
   // HIPAA-compliant session timeout: 15 minutes of inactivity
   const SESSION_TIMEOUT_MS = 1000 * 60 * 15; // 15 minutes
   
+  if (!process.env.SESSION_SECRET) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("SESSION_SECRET must be set");
+    }
+    process.env.SESSION_SECRET = randomBytes(32).toString("hex");
+    console.warn("SESSION_SECRET was not set; generated a temporary one for this dev run.");
+  }
+
+  const MemoryStore = MemoryStoreFactory(session);
+  const sessionStore = new MemoryStore({
+    checkPeriod: SESSION_TIMEOUT_MS,
+  });
+
+  const cookieSecure =
+    process.env.OTTO_COOKIE_SECURE === "true"
+      ? true
+      : process.env.OTTO_COOKIE_SECURE === "false"
+        ? false
+        : process.env.NODE_ENV === "production";
+
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET!,
+    secret: process.env.SESSION_SECRET,
     resave: true, // Required for rolling sessions
     saveUninitialized: false,
-    store: storage.sessionStore,
+    store: sessionStore,
     rolling: true, // Reset session expiry on every request (activity extends session)
     cookie: {
       httpOnly: true,
       maxAge: SESSION_TIMEOUT_MS,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: cookieSecure,
     },
   };
 
   const sessionMiddleware = session(sessionSettings);
 
-  app.set("trust proxy", 1);
+  if (process.env.OTTO_TRUST_PROXY === "true") {
+    app.set("trust proxy", 1);
+  }
   app.use(sessionMiddleware);
   app.use(passport.initialize());
   app.use(passport.session());
