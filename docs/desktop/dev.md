@@ -11,6 +11,7 @@
    - `npm run desktop`
 
 On first launch, choose **Host** in the setup screen.
+Then complete the one-time in-app setup (`/setup`) to create the office + first admin login.
 
 If you see `tsx: command not found` or `electron: command not found`, it means step 1 didn’t run (or didn’t finish).
 

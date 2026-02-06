@@ -3,18 +3,16 @@ import { Strategy as LocalStrategy } from "passport-local";
 import { Express } from "express";
 import session from "express-session";
 import MemoryStoreFactory from "memorystore";
-import { scrypt, randomBytes, timingSafeEqual } from "crypto";
-import { promisify } from "util";
+import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
+import { hashSecret, verifySecret } from "./secret-hash";
 
 declare global {
   namespace Express {
     interface User extends SelectUser {}
   }
 }
-
-const scryptAsync = promisify(scrypt);
 
 // HIPAA-compliant password complexity requirements
 export function validatePasswordComplexity(password: string): { valid: boolean; errors: string[] } {
@@ -40,16 +38,18 @@ export function validatePasswordComplexity(password: string): { valid: boolean; 
 }
 
 async function hashPassword(password: string) {
-  const salt = randomBytes(16).toString("hex");
-  const buf = (await scryptAsync(password, salt, 64)) as Buffer;
-  return `${buf.toString("hex")}.${salt}`;
+  return hashSecret(password);
 }
 
 async function comparePasswords(supplied: string, stored: string) {
-  const [hashed, salt] = stored.split(".");
-  const hashedBuf = Buffer.from(hashed, "hex");
-  const suppliedBuf = (await scryptAsync(supplied, salt, 64)) as Buffer;
-  return timingSafeEqual(hashedBuf, suppliedBuf);
+  return verifySecret(supplied, stored);
+}
+
+function normalizeStaffCode(input: string): string {
+  return String(input || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 }
 
 export function setupAuth(app: Express) {
@@ -126,10 +126,30 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/register", async (req, res, next) => {
-    const { inviteToken, ...userData } = req.body;
+    const inviteToken =
+      typeof req.body?.inviteToken === "string" ? req.body.inviteToken.trim() : undefined;
+    const staffCode = typeof req.body?.staffCode === "string" ? req.body.staffCode : undefined;
+
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
+    const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
+
+    if (!email || !email.includes("@")) {
+      return res.status(400).json({ error: "A valid email address is required" });
+    }
+    if (!password) {
+      return res.status(400).json({ error: "Password is required" });
+    }
+    if (!firstName) {
+      return res.status(400).json({ error: "First name is required" });
+    }
+    if (!lastName) {
+      return res.status(400).json({ error: "Last name is required" });
+    }
     
     // Validate password complexity
-    const passwordValidation = validatePasswordComplexity(userData.password);
+    const passwordValidation = validatePasswordComplexity(password);
     if (!passwordValidation.valid) {
       return res.status(400).json({ 
         error: "Password does not meet complexity requirements",
@@ -137,14 +157,14 @@ export function setupAuth(app: Express) {
       });
     }
     
-    const existingUser = await storage.getUserByEmail(userData.email);
+    const existingUser = await storage.getUserByEmail(email);
     if (existingUser) {
       return res.status(400).send("Email already exists");
     }
 
     let invitation = null;
     let userOfficeId = null;
-    let userRole: string | undefined = undefined;
+    let userRole: SelectUser["role"] | undefined = undefined;
 
     if (inviteToken) {
       invitation = await storage.getInvitationByToken(inviteToken);
@@ -161,19 +181,49 @@ export function setupAuth(app: Express) {
         return res.status(400).send("Invitation expired");
       }
       
-      if (invitation.email.toLowerCase() !== userData.email.toLowerCase()) {
+      if (invitation.email.toLowerCase() !== email.toLowerCase()) {
         return res.status(400).send("Email does not match invitation");
       }
 
       userOfficeId = invitation.officeId;
       userRole = invitation.role;
+    } else {
+      const allOffices = await storage.getAllOffices();
+      if (allOffices.length === 0) {
+        return res.status(409).json({ error: "This office is not set up yet." });
+      }
+      if (allOffices.length > 1) {
+        return res.status(400).json({ error: "Multiple offices exist. Please use an invitation link." });
+      }
+
+      const primaryOffice = allOffices[0];
+      const settings = (primaryOffice.settings || {}) as Record<string, any>;
+      const staffSignupHash = settings?.staffSignup?.codeHash as string | undefined;
+
+      if (!staffSignupHash) {
+        return res.status(400).json({
+          error: "Self sign-up is disabled. Ask the office owner to generate a Staff code.",
+        });
+      }
+
+      if (typeof staffCode !== "string" || !staffCode.trim()) {
+        return res.status(400).json({ error: "Staff code is required to create an account." });
+      }
+
+      const ok = await verifySecret(normalizeStaffCode(staffCode), staffSignupHash);
+      if (!ok) {
+        return res.status(403).json({ error: "Invalid Staff code." });
+      }
+
+      userOfficeId = primaryOffice.id;
+      userRole = "staff";
     }
 
     const user = await storage.createUser({
-      ...userData,
-      firstName: userData.firstName || userData.username || "User",
-      lastName: userData.lastName || "",
-      password: await hashPassword(userData.password),
+      email,
+      firstName,
+      lastName,
+      password: await hashPassword(password),
       officeId: userOfficeId,
       role: userRole,
     });

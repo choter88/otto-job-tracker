@@ -9,7 +9,11 @@
 
 1. Install and open Otto Tracker.
 2. When asked, choose **“This computer is the Host”**.
-3. Sign in and set up your office/users.
+3. On the Host, complete the one-time setup:
+   - Paste your **Activation Code** (from the billing portal)
+   - Enter your **office details**
+   - Create the first **Admin login**
+4. Otto Tracker will show a **Staff code**. Save it — your team will need it to create their logins.
 
 ## Step 2 — Find the Host address
 
@@ -29,6 +33,16 @@ You’ll use one of those on each Client computer.
 3. Paste the **Host address** into the box.
 4. Enter the **Pairing code** (from the Host).
 5. Click **Save & Restart**.
+6. Sign in (existing user) or create a new login:
+   - To create a new login, the user needs the **Staff code** from the office owner/admin.
+
+## Adding team members
+
+On the Host, sign in as the **Owner** and open **Team**:
+- Click **Generate Staff code**
+- Give that code to the new team member
+
+The Staff code can be regenerated at any time (this replaces the old code).
 
 ## Backups (recommended weekly)
 

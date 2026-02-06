@@ -2,14 +2,27 @@ import type { Express, Request } from "express";
 import fs from "fs";
 import { createServer as createHttpServer, type Server as HttpServer } from "http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "https";
-import { setupAuth } from "./auth";
+import { randomBytes } from "crypto";
+import { setupAuth, validatePasswordComplexity } from "./auth";
 import { storage } from "./storage";
-import { insertJobSchema, insertJobCommentSchema, insertNotificationRuleSchema, insertInvitationSchema, insertSmsOptInSchema, insertAdminAuditLogSchema } from "@shared/schema";
+import {
+  offices,
+  users,
+  insertJobSchema,
+  insertJobCommentSchema,
+  insertNotificationRuleSchema,
+  insertInvitationSchema,
+  insertSmsOptInSchema,
+  insertAdminAuditLogSchema,
+} from "@shared/schema";
 import { sendSMS } from "./twilioClient";
 import { requireAdmin } from "./middleware";
 import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob } from "./notification-service";
 import { generateJobSummary, checkAndRegenerateSummary } from "./ai-summary-service";
 import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
+import { hashSecret } from "./secret-hash";
 
 // PHI access logging helper for HIPAA compliance
 async function logPhiAccess(
@@ -69,12 +82,213 @@ function createAppServer(app: Express): AppServer {
   );
 }
 
+function normalizeRemoteIp(ip: string): string {
+  if (!ip) return "";
+  if (ip.startsWith("::ffff:")) return ip.slice("::ffff:".length);
+  return ip;
+}
+
+function isLoopbackIp(ip: string): boolean {
+  const normalized = normalizeRemoteIp(ip);
+  return normalized === "127.0.0.1" || normalized === "::1";
+}
+
+const STAFF_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // avoids confusing chars
+
+function randomCodeChars(length: number): string {
+  const bytes = randomBytes(length);
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += STAFF_CODE_ALPHABET[bytes[i] % STAFF_CODE_ALPHABET.length];
+  }
+  return out;
+}
+
+function generateStaffCode(): string {
+  const a = randomCodeChars(4);
+  const b = randomCodeChars(4);
+  return `${a}-${b}`;
+}
+
+function normalizeStaffCode(input: string): string {
+  return String(input || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
 export function registerRoutes(app: Express): { server: AppServer; sessionMiddleware: any } {
   // Setup authentication
   const sessionMiddleware = setupAuth(app);
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, ts: Date.now() });
+  });
+
+  // Setup / onboarding routes (desktop-first)
+  app.get("/api/setup/status", async (_req, res) => {
+    try {
+      const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
+      const [userStats] = await db.select({ count: sql`count(*)` }).from(users);
+      const officeCount = Number(officeStats?.count) || 0;
+      const userCount = Number(userStats?.count) || 0;
+
+      const allOffices = officeCount > 0 ? await storage.getAllOffices() : [];
+      const primaryOffice = allOffices[0];
+      const settings = (primaryOffice?.settings || {}) as Record<string, any>;
+      const staffSignupConfigured = Boolean(settings?.staffSignup?.codeHash);
+
+      res.json({
+        initialized: officeCount > 0 && userCount > 0,
+        officeId: primaryOffice?.id || null,
+        officeName: primaryOffice?.name || null,
+        staffSignupConfigured,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to read setup status" });
+    }
+  });
+
+  app.post("/api/setup/bootstrap", async (req, res, next) => {
+    // Do not trust proxy headers for setup restrictions.
+    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
+    if (!isLoopbackIp(remote)) {
+      return res.status(403).json({
+        error: "Setup must be completed on the Host computer.",
+      });
+    }
+
+    try {
+      const activationCode =
+        typeof req.body?.activationCode === "string" ? req.body.activationCode.trim() : "";
+      const officeBody = req.body?.office || {};
+      const adminBody = req.body?.admin || {};
+
+      const officeName = typeof officeBody?.name === "string" ? officeBody.name.trim() : "";
+      const officeAddress =
+        typeof officeBody?.address === "string" ? officeBody.address.trim() : undefined;
+      const officePhone = typeof officeBody?.phone === "string" ? officeBody.phone.trim() : undefined;
+      const officeEmail = typeof officeBody?.email === "string" ? officeBody.email.trim() : undefined;
+
+      const adminEmail =
+        typeof adminBody?.email === "string" ? adminBody.email.trim().toLowerCase() : "";
+      const adminPassword = typeof adminBody?.password === "string" ? adminBody.password : "";
+      const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
+      const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
+
+      if (!activationCode) {
+        return res.status(400).json({ error: "Activation Code is required" });
+      }
+      if (!officeName) {
+        return res.status(400).json({ error: "Office name is required" });
+      }
+      if (!adminEmail) {
+        return res.status(400).json({ error: "Admin email is required" });
+      }
+      if (!adminFirstName) {
+        return res.status(400).json({ error: "Admin first name is required" });
+      }
+      if (!adminLastName) {
+        return res.status(400).json({ error: "Admin last name is required" });
+      }
+
+      const passwordValidation = validatePasswordComplexity(adminPassword);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({
+          error: "Password does not meet complexity requirements",
+          details: passwordValidation.errors,
+        });
+      }
+
+      const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
+      const [userStats] = await db.select({ count: sql`count(*)` }).from(users);
+      const officeCount = Number(officeStats?.count) || 0;
+      const userCount = Number(userStats?.count) || 0;
+
+      if (userCount > 0) {
+        return res.status(409).json({ error: "This office is already set up." });
+      }
+      if (officeCount > 1) {
+        return res.status(409).json({ error: "Multiple offices exist. Please contact support." });
+      }
+
+      const existingUser = await storage.getUserByEmail(adminEmail);
+      if (existingUser) {
+        return res.status(409).json({ error: "A user with this email already exists." });
+      }
+
+      const staffCode = generateStaffCode();
+      const staffCodeHash = await hashSecret(normalizeStaffCode(staffCode));
+
+      const office =
+        officeCount === 1
+          ? (await storage.getAllOffices())[0]
+          : await storage.createOffice({
+              name: officeName,
+              address: officeAddress,
+              phone: officePhone,
+              email: officeEmail,
+            });
+
+      const mergedSettings: Record<string, any> = { ...(office.settings || {}) };
+      mergedSettings.staffSignup = {
+        codeHash: staffCodeHash,
+        rotatedAt: Date.now(),
+      };
+      mergedSettings.licensing = {
+        activationCode,
+        activatedAt: Date.now(),
+      };
+
+      const updatedOffice = await storage.updateOffice(office.id, {
+        name: officeName,
+        address: officeAddress,
+        phone: officePhone,
+        email: officeEmail,
+        settings: mergedSettings,
+      });
+
+      const user = await storage.createUser({
+        email: adminEmail,
+        firstName: adminFirstName,
+        lastName: adminLastName,
+        password: await hashSecret(adminPassword),
+        officeId: updatedOffice.id,
+        role: "owner",
+      });
+
+      req.login(user, (err) => {
+        if (err) return next(err);
+        res.status(201).json({ ok: true, office: updatedOffice, user, staffCode });
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Setup failed" });
+    }
+  });
+
+  app.post("/api/setup/staff-code/regenerate", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
+    if (req.user.role !== "owner") return res.status(403).json({ error: "Only the owner can do this" });
+
+    try {
+      const office = await storage.getOffice(req.user.officeId);
+      if (!office) return res.status(404).json({ error: "Office not found" });
+
+      const staffCode = generateStaffCode();
+      const staffCodeHash = await hashSecret(normalizeStaffCode(staffCode));
+
+      const mergedSettings: Record<string, any> = { ...(office.settings || {}) };
+      mergedSettings.staffSignup = {
+        codeHash: staffCodeHash,
+        rotatedAt: Date.now(),
+      };
+
+      await storage.updateOffice(office.id, { settings: mergedSettings });
+      res.json({ staffCode });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to generate staff code" });
+    }
   });
 
   // Job routes

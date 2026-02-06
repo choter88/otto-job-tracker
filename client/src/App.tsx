@@ -11,6 +11,7 @@ import Dashboard from "@/pages/dashboard";
 import Admin from "@/pages/admin";
 import AuthPage from "@/pages/auth-page";
 import OfficeSetup from "@/pages/office-setup";
+import SetupPage from "@/pages/setup-page";
 import SMSOptIn from "@/pages/sms-opt-in";
 import AcceptInvite from "@/pages/accept-invite";
 import NotFound from "@/pages/not-found";
@@ -18,6 +19,7 @@ import NotFound from "@/pages/not-found";
 function Router() {
   return (
     <Switch>
+      <Route path="/setup" component={SetupPage} />
       <ProtectedRoute path="/" component={Dashboard} />
       <ProtectedRoute path="/dashboard/:tab?" component={Dashboard} />
       <ProtectedRoute path="/important" component={Dashboard} />

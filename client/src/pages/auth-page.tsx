@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, Glasses } from "lucide-react";
 
 const loginSchema = z.object({
@@ -18,6 +19,7 @@ const loginSchema = z.object({
 });
 
 const registerSchema = z.object({
+  staffCode: z.string().min(1, "Staff code is required"),
   email: z.string().email("Please enter a valid email address"),
   password: z.string()
     .min(12, "Password must be at least 12 characters")
@@ -32,9 +34,25 @@ const registerSchema = z.object({
 type LoginFormData = z.infer<typeof loginSchema>;
 type RegisterFormData = z.infer<typeof registerSchema>;
 
+type SetupStatus = {
+  initialized: boolean;
+  officeId: string | null;
+  officeName: string | null;
+  staffSignupConfigured: boolean;
+};
+
 export default function AuthPage() {
   const { user, isLoading, loginMutation, registerMutation } = useAuth();
   const [activeTab, setActiveTab] = useState("login");
+
+  const { data: setupStatus, isLoading: setupLoading } = useQuery<SetupStatus>({
+    queryKey: ["/api/setup/status"],
+  });
+
+  const isLocalHost = (() => {
+    const host = window.location.hostname;
+    return host === "127.0.0.1" || host === "localhost" || host === "::1";
+  })();
 
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -43,7 +61,7 @@ export default function AuthPage() {
 
   const registerForm = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { email: "", password: "", firstName: "", lastName: "" },
+    defaultValues: { staffCode: "", email: "", password: "", firstName: "", lastName: "" },
   });
 
   // Redirect if already logged in
@@ -51,10 +69,34 @@ export default function AuthPage() {
     return <Redirect to="/" />;
   }
 
-  if (isLoading) {
+  if (isLoading || setupLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!setupStatus?.initialized) {
+    if (isLocalHost) {
+      return <Redirect to="/setup" />;
+    }
+
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Office setup needed</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              This office hasn’t been set up yet. Please open Otto Tracker on the Host computer and complete setup first.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={() => window.location.reload()} className="w-full">
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -167,6 +209,24 @@ export default function AuthPage() {
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="staffCode">Staff code</Label>
+                      <Input
+                        id="staffCode"
+                        placeholder="Ask your office admin"
+                        {...registerForm.register("staffCode")}
+                        data-testid="input-staffCode"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        You only need this code once to create your login.
+                      </p>
+                      {registerForm.formState.errors.staffCode && (
+                        <p className="text-sm text-destructive">
+                          {registerForm.formState.errors.staffCode.message}
+                        </p>
+                      )}
+                    </div>
+
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="firstName">First Name</Label>
