@@ -4,6 +4,8 @@
 
 - All computers must be on the **same office network** (same Wi‑Fi or Ethernet).
 - Pick one computer to be the **Host (SOT)** (usually a front desk computer that stays on).
+- The **Host needs internet access at least once every 7 days** to verify the office is active (no patient data is sent). If it can’t verify, Otto Tracker switches to **read-only** until it can.
+- The Host computer should be set so it **does not go to sleep** during business hours (sleep will disconnect Clients).
 
 ## Step 1 — Install on the Host (SOT)
 
@@ -32,9 +34,14 @@ You’ll use one of those on each Client computer.
 2. Choose **“This computer is a Client”**.
 3. Paste the **Host address** into the box.
 4. Enter the **Pairing code** (from the Host).
-5. Click **Save & Restart**.
-6. Sign in (existing user) or create a new login:
+5. Click **Test Connection**.
+6. If it says **Connection successful**, click **Save & Restart**.
+7. Sign in (existing user) or create a new login:
    - To create a new login, the user needs the **Staff code** from the office owner/admin.
+
+### Windows note (one-time)
+
+If Windows asks whether to allow Otto Tracker on your network, choose **Allow** (Private network).
 
 ## Adding team members
 
@@ -44,11 +51,15 @@ On the Host, sign in as the **Owner** and open **Team**:
 
 The Staff code can be regenerated at any time (this replaces the old code).
 
-## Backups (recommended weekly)
+## Backups (automatic daily — recommended)
 
-On the Host computer:
-- Open **File → Backup Data…**
-- Save the backup file to a safe place (for example a USB drive).
+On the Host computer (one-time setup):
+- Open **File → Choose Backup Folder…**
+- Select a **shared office network folder** (for example a folder on your office server/NAS).
+
+After that:
+- Otto Tracker saves a **daily backup automatically** (as long as the Host computer is on).
+- You can also run an extra backup anytime: **File → Back Up Now**
 
 ## Restore (only on the Host)
 
@@ -58,9 +69,29 @@ On the Host computer:
 
 This replaces the Host’s current data with the backup.
 
+## If the Host computer is replaced (recovery)
+
+1. Install Otto Tracker on the replacement computer.
+2. In the setup screen, choose **Host**.
+3. Open **File → Restore Data…**
+4. Select the most recent backup from your office network backup folder.
+5. On each Client computer, open **File → Change Connection…** and reconnect to the new Host address (and re-enter the Pairing code).
+
 ## If a Client can’t connect
 
 - Confirm the Host computer is on and Otto Tracker is open.
 - Confirm both computers are on the same Wi‑Fi/network.
 - Try a different Host address from **Show Host Address…**
 - Re-check the **Pairing code** (Client setup screen) matches the Host.
+
+## If the office network drops briefly
+
+- Otto Tracker will show a banner that it’s disconnected.
+- If you make changes while disconnected, Otto Tracker will **save them offline** and **sync automatically** once the connection comes back.
+
+## Host sleep settings (recommended)
+
+The Host should not go to sleep during business hours.
+
+- Mac: `System Settings → Lock Screen → Turn display off on power adapter` (set longer) and disable any “sleep” timer if present.
+- Windows: `Settings → System → Power` and set Sleep to `Never` (or a long time) while plugged in.

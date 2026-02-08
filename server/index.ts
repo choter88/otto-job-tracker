@@ -1,6 +1,8 @@
 import "./local-env";
 import express, { type Request, Response, NextFunction } from "express";
 import { enforceAirgap } from "./airgap";
+import { getLicenseSnapshot, startLicenseScheduler } from "./license";
+import { broadcastToOffice, setupSyncWebSocket } from "./sync-websocket";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
@@ -11,6 +13,54 @@ import { logError } from "./error-logger";
 const app = express();
 
 enforceAirgap();
+startLicenseScheduler();
+
+// Enforce licensing: after grace period, the app becomes read-only.
+app.use((req, res, next) => {
+  const method = String(req.method || "GET").toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+
+  if (!req.path.startsWith("/api")) return next();
+
+  // Always allow authentication + licensing + initial bootstrap.
+  const allowlist = new Set([
+    "/api/login",
+    "/api/logout",
+    "/api/license/activate",
+    "/api/license/checkin",
+    "/api/setup/bootstrap",
+  ]);
+  if (allowlist.has(req.path)) return next();
+
+  const snapshot = getLicenseSnapshot();
+  if (snapshot.writeAllowed) return next();
+
+  return res.status(403).json({
+    error: snapshot.message,
+    code: "READ_ONLY",
+    license: snapshot,
+  });
+});
+
+// LAN realtime sync: broadcast changes to other Clients.
+app.use((req, res, next) => {
+  const method = String(req.method || "GET").toUpperCase();
+  const isMutating = method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
+  if (!isMutating) return next();
+  if (!req.path.startsWith("/api")) return next();
+  if (req.path.startsWith("/api/license")) return next();
+  if (req.path === "/api/login" || req.path === "/api/logout") return next();
+  if (req.path.startsWith("/api/setup")) return next();
+
+  res.on("finish", () => {
+    if (res.statusCode < 200 || res.statusCode >= 400) return;
+    const officeId = (req as any).user?.officeId as string | undefined;
+    if (!officeId) return;
+    broadcastToOffice(officeId, { type: "office_updated", ts: Date.now() });
+  });
+
+  next();
+});
 
 function normalizeIp(ip: string): string {
   if (ip.startsWith("::ffff:")) return ip.slice("::ffff:".length);
@@ -121,10 +171,11 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  const { server, sessionMiddleware: _sessionMiddleware } = await registerRoutes(app);
+  const { server, sessionMiddleware } = await registerRoutes(app);
   
   // NOTIFICATION SYSTEM DISABLED TO REDUCE COSTS
   // setupWebSocket(server, sessionMiddleware);
+  setupSyncWebSocket(server as any, sessionMiddleware);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

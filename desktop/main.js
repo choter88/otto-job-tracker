@@ -1,7 +1,10 @@
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage } from "electron";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import http from "http";
+import https from "https";
+import { execFileSync } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
 import { randomBytes, X509Certificate } from "crypto";
 import selfsigned from "selfsigned";
@@ -11,6 +14,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const guardedSessions = new WeakSet();
 const tlsTrustByWebContentsId = new Map();
 let cachedHostTlsInfo = null;
+let automaticBackupInterval = null;
+let backupWarningShown = false;
 
 // Chromium-level hardening to reduce background network traffic.
 app.commandLine.appendSwitch("disable-background-networking");
@@ -20,12 +25,51 @@ app.commandLine.appendSwitch("disable-translate");
 app.commandLine.appendSwitch("no-first-run");
 app.commandLine.appendSwitch("safebrowsing-disable-auto-update");
 
+function loadDevDotEnv() {
+  // In development, align Electron with the same `.env` used by `npm run dev`.
+  // (Packaged apps should rely on built-in defaults + internal app data paths.)
+  if (app.isPackaged) return;
+
+  const envPath = path.join(process.cwd(), ".env");
+  if (!fs.existsSync(envPath)) return;
+
+  try {
+    const raw = fs.readFileSync(envPath, "utf-8");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      const idx = trimmed.indexOf("=");
+      if (idx === -1) continue;
+      const key = trimmed.slice(0, idx).trim();
+      if (!key) continue;
+
+      let value = trimmed.slice(idx + 1).trim();
+      if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+
+      if (process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function getDefaultConfig() {
   return {
     mode: "host",
     hostUrl: "https://127.0.0.1:5150",
     pairingCode: "",
     trustedFingerprint256: "",
+    backupDir: "",
+    backupEnabled: true,
+    backupRetention: 14,
+    backupLastAt: 0,
+    backupLastPath: "",
+    backupLastError: "",
   };
 }
 
@@ -35,6 +79,10 @@ function getConfigPath() {
 
 function getDataDir() {
   return path.join(app.getPath("userData"), "data");
+}
+
+function getOutboxPath() {
+  return path.join(app.getPath("userData"), "otto-outbox.json");
 }
 
 function getSqlitePath() {
@@ -63,6 +111,108 @@ function pairingCodeFromFingerprintHex(hex) {
 function normalizePairingCodeHex(value) {
   const normalized = normalizeHex(value);
   return normalized.length >= 12 ? normalized.slice(0, 12) : normalized;
+}
+
+function isPrivateIpv4(hostname) {
+  const parts = String(hostname || "").split(".").map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+function isLocalHostname(hostname) {
+  const h = String(hostname || "").toLowerCase();
+  if (!h) return false;
+  if (h === "localhost" || h === "::1") return true;
+  if (!h.includes(".")) return true;
+  if (h.endsWith(".local")) return true;
+  return false;
+}
+
+async function testHostConnection(hostUrl, pairingCode) {
+  if (!hostUrl || typeof hostUrl !== "string") {
+    return { ok: false, message: "Please enter a Host address." };
+  }
+
+  let url;
+  try {
+    url = new URL(hostUrl);
+  } catch {
+    return { ok: false, message: "Please enter a valid Host address." };
+  }
+
+  const hostname = url.hostname;
+  if (!isLocalHostname(hostname) && !isPrivateIpv4(hostname)) {
+    return { ok: false, message: "Host address must be on the office network." };
+  }
+
+  const isHttps = url.protocol === "https:";
+  const pairingHex = normalizePairingCodeHex(pairingCode || "");
+
+  if (isHttps && pairingHex.length < 12) {
+    return { ok: false, message: "Pairing code is required for HTTPS Hosts." };
+  }
+
+  const healthUrl = new URL("/api/health", url);
+  const port = healthUrl.port || (isHttps ? "443" : "80");
+
+  return await new Promise((resolve) => {
+    const client = isHttps ? https : http;
+    const req = client.request(
+      {
+        hostname: healthUrl.hostname,
+        port,
+        path: `${healthUrl.pathname}${healthUrl.search}`,
+        method: "GET",
+        rejectUnauthorized: false,
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => {
+          body += chunk.toString();
+        });
+        res.on("end", () => {
+          if (isHttps) {
+            const cert = res.socket?.getPeerCertificate?.();
+            const certFp = normalizeHex(cert?.fingerprint256 || cert?.fingerprint);
+            if (!certFp) {
+              return resolve({ ok: false, message: "Could not read the Host certificate." });
+            }
+            if (!certFp.startsWith(pairingHex)) {
+              return resolve({
+                ok: false,
+                message: "Pairing code does not match this Host. Check the code from the Host computer.",
+              });
+            }
+          }
+
+          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+            return resolve({
+              ok: false,
+              message: `Host responded with ${res.statusCode || "an error"}.`,
+            });
+          }
+
+          return resolve({ ok: true, message: "Connection successful." });
+        });
+      },
+    );
+
+    req.on("error", (err) => {
+      resolve({ ok: false, message: `Could not connect: ${err?.message || "Unknown error"}` });
+    });
+
+    req.setTimeout(5000, () => {
+      req.destroy(new Error("Connection timed out"));
+    });
+
+    req.end();
+  });
 }
 
 function getTlsDir() {
@@ -167,6 +317,61 @@ function writeConfig(config) {
   fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 
+function canEncryptOutbox() {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
+function readOutboxItems() {
+  const outboxPath = getOutboxPath();
+  if (!fs.existsSync(outboxPath)) return [];
+
+  try {
+    const raw = fs.readFileSync(outboxPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return [];
+
+    if (parsed.encrypted === true) {
+      if (!canEncryptOutbox()) return [];
+      const payload = typeof parsed.payload === "string" ? parsed.payload : "";
+      if (!payload) return [];
+      const decrypted = safeStorage.decryptString(Buffer.from(payload, "base64"));
+      const items = JSON.parse(decrypted);
+      return Array.isArray(items) ? items : [];
+    }
+
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+function writeOutboxItems(items) {
+  const outboxPath = getOutboxPath();
+  fs.mkdirSync(path.dirname(outboxPath), { recursive: true, mode: 0o700 });
+
+  const capped = Array.isArray(items) ? items.slice(-500) : [];
+  const encrypt = canEncryptOutbox();
+
+  const payload = encrypt
+    ? {
+        version: 1,
+        encrypted: true,
+        payload: safeStorage.encryptString(JSON.stringify(capped)).toString("base64"),
+      }
+    : {
+        version: 1,
+        encrypted: false,
+        items: capped,
+      };
+
+  fs.writeFileSync(outboxPath, JSON.stringify(payload, null, 2), { mode: 0o600 });
+}
+
 function applyOfflineDefaults() {
   if (!process.env.PORT) process.env.PORT = "5150";
   if (!process.env.OTTO_LISTEN_HOST) process.env.OTTO_LISTEN_HOST = "0.0.0.0";
@@ -175,6 +380,35 @@ function applyOfflineDefaults() {
   if (!process.env.OTTO_DATA_DIR) process.env.OTTO_DATA_DIR = getDataDir();
   if (!process.env.OTTO_SQLITE_PATH) process.env.OTTO_SQLITE_PATH = getSqlitePath();
   ensureSessionSecret();
+}
+
+function applyLicenseEgressAllowlist() {
+  // Only the Host should ever talk to the internet, and only to the licensing portal.
+  const raw = String(process.env.OTTO_LICENSE_BASE_URL || "https://ottojobtracker.com").trim();
+  const hostnames = new Set();
+  try {
+    const url = new URL(raw);
+    if (url.hostname) hostnames.add(url.hostname);
+  } catch {
+    hostnames.add("ottojobtracker.com");
+  }
+
+  // Be resilient to redirects between `otto.com` and `www.otto.com`.
+  for (const host of Array.from(hostnames)) {
+    if (host.startsWith("www.")) hostnames.add(host.slice(4));
+    else hostnames.add(`www.${host}`);
+  }
+
+  const existing = String(process.env.OTTO_EGRESS_ALLOWLIST || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  for (const hostname of hostnames) {
+    existing.push(hostname);
+  }
+
+  process.env.OTTO_EGRESS_ALLOWLIST = Array.from(new Set(existing)).join(",");
 }
 
 function maybeRestoreDatabaseFromArgs() {
@@ -447,7 +681,7 @@ function createSetupWindow() {
 ipcMain.handle("otto:config:get", async () => readConfig());
 ipcMain.handle("otto:config:set", async (_event, configInput) => {
   const previous = readConfig();
-  const config = { ...getDefaultConfig(), ...configInput };
+  const config = { ...getDefaultConfig(), ...previous, ...configInput };
 
   if (config.mode !== "client") {
     config.pairingCode = "";
@@ -477,6 +711,26 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
   writeConfig(config);
   app.relaunch();
   app.exit(0);
+});
+
+ipcMain.handle("otto:connection:test", async (_event, payload) => {
+  const hostUrl = payload?.hostUrl;
+  const pairingCode = payload?.pairingCode;
+  return await testHostConnection(hostUrl, pairingCode);
+});
+
+ipcMain.handle("otto:outbox:get", async () => {
+  return readOutboxItems();
+});
+
+ipcMain.handle("otto:outbox:replace", async (_event, items) => {
+  writeOutboxItems(items);
+  return { ok: true };
+});
+
+ipcMain.handle("otto:outbox:clear", async () => {
+  writeOutboxItems([]);
+  return { ok: true };
 });
 
 async function showHostAddresses() {
@@ -528,38 +782,247 @@ async function showHostAddresses() {
   }
 }
 
-async function backupDatabase() {
-  const sqlitePath = getSqlitePath();
-  if (!fs.existsSync(sqlitePath)) {
+function isAllowedNetworkBackupDir(dirPath) {
+  if (!dirPath || typeof dirPath !== "string") return false;
+  const normalized = path.resolve(dirPath);
+
+  if (process.platform === "darwin") {
+    if (!normalized.startsWith("/Volumes/")) return false;
+    try {
+      const fsType = execFileSync("stat", ["-f", "%T", normalized], { encoding: "utf8" }).trim().toLowerCase();
+      // Common network filesystem types on macOS
+      const allowed = new Set(["smbfs", "nfs", "afpfs", "webdav", "cifs"]);
+      return allowed.has(fsType);
+    } catch {
+      return false;
+    }
+  }
+
+  if (process.platform === "win32") {
+    if (normalized.startsWith("\\\\")) return true; // UNC path
+    const root = path.parse(normalized).root; // e.g. "C:\\"
+    const drive = root?.slice(0, 2)?.toUpperCase(); // "C:"
+    const systemDrive = String(process.env.SystemDrive || "C:").toUpperCase();
+    if (!drive || drive.length !== 2) return false;
+    if (drive === systemDrive) return false;
+    try {
+      const out = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-Command",
+          `(Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='${drive}'").DriveType`,
+        ],
+        { encoding: "utf8", windowsHide: true },
+      )
+        .trim()
+        .split(/\s+/)[0];
+      // DriveType: 4 = Network
+      return out === "4";
+    } catch {
+      return false;
+    }
+  }
+
+  // Best-effort for other platforms (not a target).
+  return normalized.startsWith("/mnt/") || normalized.startsWith("/media/");
+}
+
+function networkBackupHelpText() {
+  if (process.platform === "darwin") {
+    return (
+      "Please choose a shared office network folder.\n\n" +
+      "Tip (Mac): connect to the office file server in Finder, then select the mounted share under /Volumes.\n" +
+      "Example: /Volumes/OfficeShare/OttoBackups"
+    );
+  }
+
+  if (process.platform === "win32") {
+    return (
+      "Please choose a shared office network folder.\n\n" +
+      "Tip (Windows): select a UNC path like \\\\SERVER\\Share\\OttoBackups, or a mapped network drive like Z:\\OttoBackups."
+    );
+  }
+
+  return "Please choose a shared office network folder.";
+}
+
+async function chooseNetworkBackupFolder() {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: "Choose Backup Folder (Network)",
+    properties: ["openDirectory", "createDirectory"],
+    message: "Choose a shared office network folder for daily backups.",
+  });
+
+  if (canceled || filePaths.length === 0) return null;
+  const dirPath = filePaths[0];
+
+  if (!isAllowedNetworkBackupDir(dirPath)) {
     await dialog.showMessageBox({
       type: "error",
-      message: "No data to back up yet.",
-      detail: "The database file was not found. Create at least one office/user/job first, then try again.",
+      message: "That doesn’t look like a network folder.",
+      detail: networkBackupHelpText(),
     });
+    return null;
+  }
+
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    const testFile = path.join(dirPath, `.otto-backup-write-test-${Date.now()}.tmp`);
+    fs.writeFileSync(testFile, "ok", { mode: 0o600 });
+    fs.unlinkSync(testFile);
+  } catch (error) {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "Can’t write to that folder.",
+      detail:
+        "Otto Tracker needs permission to save backups there.\n\n" +
+        `Folder:\n${dirPath}\n\n` +
+        `Error:\n${error?.message || error}`,
+    });
+    return null;
+  }
+
+  const current = readConfig();
+  writeConfig({
+    ...current,
+    backupDir: dirPath,
+    backupEnabled: true,
+    backupLastError: "",
+  });
+  return dirPath;
+}
+
+function formatBackupTimestamp(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${yyyy}-${mm}-${dd}-${hh}${mi}${ss}`;
+}
+
+function listBackupFiles(dirPath) {
+  try {
+    return fs
+      .readdirSync(dirPath)
+      .filter((name) => name.startsWith("otto-backup-") && (name.endsWith(".sqlite") || name.endsWith(".db")))
+      .sort()
+      .map((name) => path.join(dirPath, name));
+  } catch {
+    return [];
+  }
+}
+
+function enforceBackupRetention(dirPath, retentionCount) {
+  const keep = Math.max(1, Number(retentionCount) || 14);
+  const files = listBackupFiles(dirPath);
+  if (files.length <= keep) return;
+
+  const toDelete = files.slice(0, Math.max(0, files.length - keep));
+  for (const filePath of toDelete) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function runBackupToNetworkFolder({ interactive, reason }) {
+  const sqlitePath = getSqlitePath();
+  if (!fs.existsSync(sqlitePath)) {
+    if (interactive) {
+      await dialog.showMessageBox({
+        type: "error",
+        message: "No data to back up yet.",
+        detail: "The database file was not found. Create at least one office/user/job first, then try again.",
+      });
+    }
     return;
   }
 
-  const defaultName = `otto-backup-${new Date().toISOString().slice(0, 10)}.sqlite`;
-  const { canceled, filePath } = await dialog.showSaveDialog({
-    title: "Save Backup",
-    defaultPath: path.join(app.getPath("documents"), defaultName),
-    filters: [{ name: "SQLite Backup", extensions: ["sqlite", "db"] }],
-  });
+  const config = readConfig();
+  if (config.mode !== "host") return;
+  if (config.backupEnabled === false) return;
 
-  if (canceled || !filePath) return;
+  let backupDir = config.backupDir;
+  if (!backupDir) {
+    if (!interactive) return;
+    const chosen = await chooseNetworkBackupFolder();
+    if (!chosen) return;
+    backupDir = chosen;
+  }
+
+  if (!isAllowedNetworkBackupDir(backupDir)) {
+    if (interactive) {
+      await dialog.showMessageBox({
+        type: "error",
+        message: "Backup folder must be a network folder.",
+        detail: networkBackupHelpText(),
+      });
+    }
+    writeConfig({ ...config, backupLastError: "Backup folder is not a network folder." });
+    return;
+  }
+
+  const stamp = formatBackupTimestamp(new Date());
+  const finalPath = path.join(backupDir, `otto-backup-${stamp}.sqlite`);
+  const tempPath = `${finalPath}.tmp`;
 
   const db = new Database(sqlitePath, { fileMustExist: true });
   try {
-    await db.backup(filePath);
+    try {
+      await db.backup(tempPath);
+      fs.renameSync(tempPath, finalPath);
+
+      const updated = readConfig();
+      writeConfig({
+        ...updated,
+        backupLastAt: Date.now(),
+        backupLastPath: finalPath,
+        backupLastError: "",
+      });
+
+      enforceBackupRetention(backupDir, updated.backupRetention);
+    } catch (error) {
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      } catch {
+        // ignore
+      }
+
+      const updated = readConfig();
+      writeConfig({
+        ...updated,
+        backupLastError: error?.message || String(error),
+      });
+
+      if (interactive) {
+        await dialog.showMessageBox({
+          type: "error",
+          message: "Backup failed.",
+          detail:
+            `Folder:\n${backupDir}\n\n` +
+            `Error:\n${error?.message || error}\n\n` +
+            "Make sure the office network folder is connected and writable, then try again.",
+        });
+      }
+      return;
+    }
   } finally {
     db.close();
   }
 
-  await dialog.showMessageBox({
-    type: "info",
-    message: "Backup saved.",
-    detail: `Saved to:\n${filePath}\n\nStore this file somewhere safe (for example a USB drive).`,
-  });
+  if (interactive) {
+    await dialog.showMessageBox({
+      type: "info",
+      message: "Backup saved.",
+      detail: `Saved to:\n${finalPath}\n\nThis folder should be a shared office network folder so you can recover if the Host computer is replaced.`,
+    });
+  }
 }
 
 async function restoreDatabase() {
@@ -567,6 +1030,10 @@ async function restoreDatabase() {
     title: "Select Backup File",
     properties: ["openFile"],
     filters: [{ name: "SQLite Backup", extensions: ["sqlite", "db"] }],
+    defaultPath: (() => {
+      const config = readConfig();
+      return config.backupDir || app.getPath("documents");
+    })(),
   });
 
   if (canceled || filePaths.length === 0) return;
@@ -585,6 +1052,103 @@ async function restoreDatabase() {
 
   app.relaunch({ args: [...process.argv.slice(1), "--restore", backupPath] });
   app.exit(0);
+}
+
+function scheduleAutomaticBackups() {
+  if (automaticBackupInterval) {
+    clearInterval(automaticBackupInterval);
+    automaticBackupInterval = null;
+  }
+
+  const config = readConfig();
+  if (config.mode !== "host") return;
+  if (config.backupEnabled === false) return;
+  if (!config.backupDir) return;
+
+  const ONE_DAY_MS = 1000 * 60 * 60 * 24;
+  const lastAt = Number(config.backupLastAt) || 0;
+  const now = Date.now();
+  const due = now - lastAt > ONE_DAY_MS;
+
+  if (due) {
+    setTimeout(() => {
+      runBackupToNetworkFolder({ interactive: false, reason: "startup" }).catch(() => {});
+    }, 30_000);
+  }
+
+  automaticBackupInterval = setInterval(() => {
+    runBackupToNetworkFolder({ interactive: false, reason: "scheduled" }).catch(() => {});
+  }, ONE_DAY_MS);
+}
+
+async function maybePromptForBackupFolder() {
+  const config = readConfig();
+  if (config.mode !== "host") return;
+  if (config.backupEnabled === false) return;
+  if (config.backupDir) return;
+
+  const result = await dialog.showMessageBox({
+    type: "info",
+    buttons: ["Choose Backup Folder…", "Not Now"],
+    defaultId: 0,
+    cancelId: 1,
+    message: "Set up daily backups (recommended)",
+    detail:
+      "Otto Tracker can automatically save a daily backup to a shared office network folder.\n\n" +
+      "This helps you recover if the Host computer is replaced.\n\n" +
+      "Choose a network folder now?",
+  });
+
+  if (result.response !== 0) return;
+  const chosen = await chooseNetworkBackupFolder();
+  if (chosen) scheduleAutomaticBackups();
+}
+
+async function maybeWarnAboutBackups() {
+  if (backupWarningShown) return;
+  const config = readConfig();
+  if (config.mode !== "host") return;
+  if (config.backupEnabled === false) return;
+  if (!config.backupDir) return;
+
+  const now = Date.now();
+  const lastAt = Number(config.backupLastAt) || 0;
+  const tooOld = !lastAt || now - lastAt > 1000 * 60 * 60 * 24 * 2; // 2 days
+  const hasError = Boolean(config.backupLastError);
+
+  if (!tooOld && !hasError) return;
+  backupWarningShown = true;
+
+  const detailParts = [];
+  if (lastAt) {
+    detailParts.push(`Last backup: ${new Date(lastAt).toLocaleString()}`);
+  } else {
+    detailParts.push("Last backup: never");
+  }
+  if (config.backupLastPath) {
+    detailParts.push(`Last backup file:\n${config.backupLastPath}`);
+  }
+  if (hasError) {
+    detailParts.push(`Last error:\n${config.backupLastError}`);
+  }
+
+  const result = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["Back Up Now", "Choose Backup Folder…", "OK"],
+    defaultId: 0,
+    cancelId: 2,
+    message: "Backups need attention",
+    detail:
+      detailParts.join("\n\n") +
+      "\n\nDaily backups help you recover if the Host computer is replaced.",
+  });
+
+  if (result.response === 0) {
+    await runBackupToNetworkFolder({ interactive: true, reason: "manual" });
+  } else if (result.response === 1) {
+    const chosen = await chooseNetworkBackupFolder();
+    if (chosen) scheduleAutomaticBackups();
+  }
 }
 
 function setAppMenu(config) {
@@ -611,7 +1175,8 @@ function setAppMenu(config) {
           ? [
               { label: "Show Host Address…", click: () => showHostAddresses() },
               { type: "separator" },
-              { label: "Backup Data…", click: () => backupDatabase() },
+              { label: "Choose Backup Folder…", click: () => chooseNetworkBackupFolder().then(() => scheduleAutomaticBackups()) },
+              { label: "Back Up Now", click: () => runBackupToNetworkFolder({ interactive: true, reason: "manual" }) },
               { label: "Restore Data…", click: () => restoreDatabase() },
               { type: "separator" },
             ]
@@ -646,6 +1211,7 @@ function setAppMenu(config) {
 }
 
 app.whenReady().then(async () => {
+  loadDevDotEnv();
   applyOfflineDefaults();
   maybeRestoreDatabaseFromArgs();
 
@@ -654,6 +1220,10 @@ app.whenReady().then(async () => {
   if (!fs.existsSync(getConfigPath())) {
     createSetupWindow();
     return;
+  }
+
+  if (config.mode === "host") {
+    applyLicenseEgressAllowlist();
   }
 
   if (config.mode === "host" && app.isPackaged) {
@@ -668,6 +1238,12 @@ app.whenReady().then(async () => {
       ? `${app.isPackaged ? "https" : "http"}://127.0.0.1:${port}`
       : config.hostUrl;
   createWindow(targetUrl, config);
+
+  if (config.mode === "host") {
+    await maybePromptForBackupFolder();
+    await maybeWarnAboutBackups();
+    scheduleAutomaticBackups();
+  }
 });
 
 app.on("window-all-closed", () => {

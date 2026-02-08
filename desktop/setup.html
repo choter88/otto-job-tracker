@@ -12,8 +12,13 @@
       .hint { color: #444; font-size: 13px; line-height: 1.4; }
       .actions { margin-top: 18px; display: flex; gap: 12px; }
       button { padding: 10px 14px; font-size: 14px; cursor: pointer; }
+      button[disabled] { opacity: 0.6; cursor: not-allowed; }
       .danger { color: #7a0b0b; }
       .box { border: 1px solid #ddd; padding: 14px; border-radius: 8px; margin-top: 12px; }
+      .step { font-size: 13px; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 18px; }
+      .status { margin-top: 8px; font-size: 13px; }
+      .status.ok { color: #0a7a3f; }
+      .status.err { color: #7a0b0b; }
     </style>
   </head>
   <body>
@@ -22,13 +27,14 @@
       This app is designed to run with <b>no internet access</b>. One computer is the <b>Host (SOT)</b>. Other computers connect as <b>Clients</b>.
     </p>
 
+    <div class="step">Step 1 — Choose Host or Client</div>
     <div class="box">
       <div class="row">
         <label>
           <input type="radio" name="mode" value="host" checked />
           This computer is the Host (Single Source of Truth)
         </label>
-        <div class="hint">Runs the database and server locally on this machine.</div>
+        <div class="hint">Runs the database and server locally on this machine. After saving, you’ll complete office setup here.</div>
       </div>
 
       <div class="row">
@@ -40,6 +46,7 @@
       </div>
 
       <div id="clientSettings" style="display:none">
+        <div class="step">Step 2 — Connect to the Host</div>
         <label for="hostUrl">Host URL</label>
         <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
         <div class="hint">Get this from the Host computer: <b>File → Show Host Address…</b></div>
@@ -47,6 +54,14 @@
         <label for="pairingCode">Pairing code</label>
         <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
         <div class="hint danger">Required the first time you connect. This app blocks all internet access.</div>
+
+        <div class="actions">
+          <button id="testConnection">Test Connection</button>
+          <div id="testStatus" class="status"></div>
+        </div>
+
+        <div class="step">Step 3 — Sign In</div>
+        <div class="hint">After saving, you’ll sign in or create a login using the Staff code from your office admin.</div>
       </div>
     </div>
 
@@ -59,7 +74,10 @@
       const hostUrl = document.getElementById("hostUrl");
       const pairingCode = document.getElementById("pairingCode");
       const saveBtn = document.getElementById("save");
+      const testBtn = document.getElementById("testConnection");
+      const testStatus = document.getElementById("testStatus");
       let existingConfig = null;
+      let testPassed = false;
 
       function selectedMode() {
         return document.querySelector('input[name="mode"]:checked')?.value || "host";
@@ -67,6 +85,11 @@
 
       function render() {
         clientSettings.style.display = selectedMode() === "client" ? "block" : "none";
+        if (selectedMode() === "client") {
+          saveBtn.disabled = !testPassed;
+        } else {
+          saveBtn.disabled = false;
+        }
       }
 
       document.querySelectorAll('input[name="mode"]').forEach((el) => {
@@ -84,6 +107,58 @@
         render();
       })();
 
+      function resetTestStatus() {
+        testPassed = false;
+        if (testStatus) {
+          testStatus.textContent = "";
+          testStatus.className = "status";
+        }
+        render();
+      }
+
+      hostUrl.addEventListener("input", resetTestStatus);
+      pairingCode.addEventListener("input", resetTestStatus);
+
+      async function runConnectionTest() {
+        if (!testStatus) return;
+        testStatus.textContent = "Testing connection…";
+        testStatus.className = "status";
+
+        const mode = selectedMode();
+        if (mode !== "client") {
+          testStatus.textContent = "";
+          return;
+        }
+
+        const config = {
+          hostUrl: hostUrl.value?.trim() || "",
+          pairingCode: pairingCode.value?.trim() || "",
+        };
+
+        try {
+          const result = await window.otto.testConnection(config);
+          if (result?.ok) {
+            testPassed = true;
+            testStatus.textContent = "Connection successful.";
+            testStatus.className = "status ok";
+          } else {
+            testPassed = false;
+            testStatus.textContent = result?.message || "Connection failed.";
+            testStatus.className = "status err";
+          }
+        } catch (e) {
+          testPassed = false;
+          testStatus.textContent = "Connection failed. Please check the Host address and pairing code.";
+          testStatus.className = "status err";
+        }
+
+        render();
+      }
+
+      if (testBtn) {
+        testBtn.addEventListener("click", runConnectionTest);
+      }
+
       saveBtn.addEventListener("click", async () => {
         const mode = selectedMode();
         const config = {
@@ -93,6 +168,11 @@
         };
 
         if (mode === "client") {
+          if (!testPassed) {
+            alert("Please test the connection before saving.");
+            return;
+          }
+
           try {
             const url = new URL(config.hostUrl);
             const hostname = url.hostname;

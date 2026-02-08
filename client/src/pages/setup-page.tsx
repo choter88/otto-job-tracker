@@ -52,11 +52,24 @@ type SetupStatus = {
   staffSignupConfigured: boolean;
 };
 
+type LicenseSnapshot = {
+  mode: string;
+  writeAllowed: boolean;
+  message: string;
+  hostTokenPresent: boolean;
+  nextCheckinDueAt: number | null;
+  graceEndsAt: number | null;
+  lastError: string | null;
+};
+
 export default function SetupPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [staffCode, setStaffCode] = useState<string | null>(null);
+  const [activationCodeUsed, setActivationCodeUsed] = useState<string>("");
+  const [licenseSnapshot, setLicenseSnapshot] = useState<LicenseSnapshot | null>(null);
+  const [activationWarning, setActivationWarning] = useState<string | null>(null);
 
   const isLocalHost = useMemo(() => {
     const host = window.location.hostname;
@@ -113,16 +126,32 @@ export default function SetupPage() {
         throw new Error(details ? `${message}\n${details}` : message);
       }
 
-      return payload as { ok: true; office: any; user: any; staffCode: string };
+      return payload as {
+        ok: true;
+        office: any;
+        user: any;
+        staffCode: string;
+        license?: LicenseSnapshot;
+        activationWarning?: string | null;
+      };
     },
     onSuccess: (payload) => {
       queryClient.setQueryData(["/api/user"], payload.user);
       queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
       setStaffCode(payload.staffCode);
+      setLicenseSnapshot(payload.license || null);
+      setActivationWarning(payload.activationWarning || null);
       toast({
         title: "Setup complete",
         description: "Your office is ready. Save the Staff code before continuing.",
       });
+
+      if (payload.activationWarning) {
+        toast({
+          title: "Activation not verified yet",
+          description: payload.activationWarning,
+        });
+      }
     },
     onError: (error: Error) => {
       toast({
@@ -130,6 +159,55 @@ export default function SetupPage() {
         description: error.message,
         variant: "destructive",
       });
+    },
+  });
+
+  const licenseActivateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/license/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ activationCode: activationCodeUsed }),
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || payload?.message || res.statusText || "Activation failed");
+      }
+      return payload as LicenseSnapshot;
+    },
+    onSuccess: (snapshot) => {
+      setLicenseSnapshot(snapshot);
+      setActivationWarning(null);
+      toast({ title: "Activation verified", description: "This Host is now activated." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Activation failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const licenseCheckinMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/license/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({}),
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || payload?.message || res.statusText || "Check-in failed");
+      }
+      return payload as LicenseSnapshot;
+    },
+    onSuccess: (snapshot) => {
+      setLicenseSnapshot(snapshot);
+      toast({ title: "License checked", description: snapshot.message });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Check-in failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -211,6 +289,45 @@ export default function SetupPage() {
               </AlertDescription>
             </Alert>
 
+            {activationWarning && (
+              <Alert>
+                <AlertDescription>{activationWarning}</AlertDescription>
+              </Alert>
+            )}
+
+            {licenseSnapshot && (
+              <div className="rounded-lg border bg-card p-4 space-y-3">
+                <div className="text-sm font-medium">Activation status</div>
+                <div className="text-sm text-muted-foreground">{licenseSnapshot.message}</div>
+                {licenseSnapshot.lastError && (
+                  <div className="text-xs text-muted-foreground">Last error: {licenseSnapshot.lastError}</div>
+                )}
+                {licenseSnapshot.mode !== "ACTIVE" && (
+                  <div className="flex gap-2">
+                    {!licenseSnapshot.hostTokenPresent ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => licenseActivateMutation.mutate()}
+                        disabled={licenseActivateMutation.isPending || !activationCodeUsed}
+                      >
+                        {licenseActivateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Retry activation
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        onClick={() => licenseCheckinMutation.mutate()}
+                        disabled={licenseCheckinMutation.isPending}
+                      >
+                        {licenseCheckinMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Check license now
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <Button className="w-full" onClick={() => setLocation("/")} data-testid="button-continue">
               Continue to Otto Tracker
             </Button>
@@ -220,7 +337,10 @@ export default function SetupPage() {
     );
   }
 
-  const onSubmit = (data: SetupFormData) => bootstrapMutation.mutate(data);
+  const onSubmit = (data: SetupFormData) => {
+    setActivationCodeUsed(data.activationCode);
+    bootstrapMutation.mutate(data);
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
@@ -367,4 +487,3 @@ export default function SetupPage() {
     </div>
   );
 }
-

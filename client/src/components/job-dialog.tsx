@@ -37,6 +37,7 @@ const jobSchema = z.object({
 });
 
 type JobFormData = z.infer<typeof jobSchema>;
+type JobMutationData = JobFormData & { clientJobId?: string };
 
 interface JobDialogProps {
   open: boolean;
@@ -120,7 +121,7 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
   const useTrayNumberForMutation = jobIdentifierModeForMutation === "trayNumber";
 
   const createJobMutation = useMutation({
-    mutationFn: async (data: JobFormData) => {
+    mutationFn: async (data: JobMutationData) => {
       const { createdAt, ...rest } = data;
       const formattedData = {
         ...rest,
@@ -140,13 +141,14 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
       } else {
         // For creates, include createdAt as a Date
         const res = await apiRequest("POST", "/api/jobs", {
+          id: data.clientJobId,
           ...formattedData,
           createdAt: new Date(createdAt),
         });
         return res.json();
       }
     },
-    onMutate: async (data) => {
+    onMutate: async (data: JobMutationData) => {
       await queryClient.cancelQueries({ queryKey: ["/api/jobs"] });
       
       const previousJobs = queryClient.getQueryData(["/api/jobs"]);
@@ -169,10 +171,14 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
           } : j) : []
         );
       } else {
-        // Optimistically add new job with temporary ID
+        const clientJobId =
+          typeof data.clientJobId === "string" && data.clientJobId ? data.clientJobId : `temp-${Date.now()}`;
+        const pendingSuffix = clientJobId.replace(/[^a-fA-F0-9]/g, "").slice(0, 6).toUpperCase() || "PENDING";
+
+        // Optimistically add new job with client-generated ID
         const optimisticJob = {
-          id: `temp-${Date.now()}`,
-          orderId: `TEMP-${Date.now()}`,
+          id: clientJobId,
+          orderId: `PENDING-${pendingSuffix}`,
           officeId: user?.officeId || '',
           ...data,
           phone: data.phone ? data.phone.replace(/\D/g, '') : '',
@@ -241,7 +247,12 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
         return;
       }
     }
-    createJobMutation.mutate(data);
+    if (job) {
+      createJobMutation.mutate(data);
+    } else {
+      const id = (globalThis as any)?.crypto?.randomUUID?.() || `job-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      createJobMutation.mutate({ ...data, clientJobId: id });
+    }
   };
 
   const formatPhoneNumber = (value: string) => {

@@ -350,21 +350,25 @@ export const insertOfficeSchema = createInsertSchema(offices).omit({
 
 export const insertJobSchema = createInsertSchema(jobs)
   .omit({
-    id: true,
     createdAt: true,
     updatedAt: true,
     orderId: true,
   })
   .extend({
+    id: z.string().min(1).optional(),
     jobType: z.string().min(1, "Job type is required"),
     status: z.string().min(1, "Status is required"),
     statusChangedAt: z.date().or(z.string().transform((str) => new Date(str))).optional(),
   });
 
-export const insertJobCommentSchema = createInsertSchema(jobComments).omit({
-  id: true,
-  createdAt: true,
-});
+export const insertJobCommentSchema = createInsertSchema(jobComments)
+  .omit({
+    id: true,
+    createdAt: true,
+  })
+  .extend({
+    id: z.string().min(1).optional(),
+  });
 
 export const insertCommentReadSchema = createInsertSchema(commentReads).omit({
   id: true,
@@ -472,4 +476,3 @@ export type JobCommentWithAuthor = JobComment & {
     lastName: string;
   };
 };
-

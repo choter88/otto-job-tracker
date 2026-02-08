@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
 import { SessionTimeoutProvider } from "@/components/session-timeout-provider";
+import SyncManager from "@/components/sync-manager";
 import { ProtectedRoute } from "@/lib/protected-route";
 import { RoleProtectedRoute } from "@/lib/role-protected-route";
 import Dashboard from "@/pages/dashboard";
@@ -40,6 +41,7 @@ function App() {
         <SessionTimeoutProvider>
           <TooltipProvider>
             <Toaster />
+            <SyncManager />
             <Router />
           </TooltipProvider>
         </SessionTimeoutProvider>

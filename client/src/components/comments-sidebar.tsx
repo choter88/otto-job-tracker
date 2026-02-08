@@ -35,13 +35,14 @@ export default function CommentsSidebar({ open, onOpenChange, job }: CommentsSid
   });
 
   const addCommentMutation = useMutation({
-    mutationFn: async (content: string) => {
+    mutationFn: async (input: { content: string; clientCommentId: string }) => {
       const res = await apiRequest("POST", `/api/jobs/${job.id}/comments`, {
-        content: content.trim(),
+        id: input.clientCommentId,
+        content: input.content.trim(),
       });
       return res.json();
     },
-    onMutate: async (content) => {
+    onMutate: async (input) => {
       const queryKey = ["/api/jobs", job.id, "comments"];
       
       // Only cancel if query exists in cache
@@ -56,10 +57,10 @@ export default function CommentsSidebar({ open, onOpenChange, job }: CommentsSid
       // Only update cache if data exists
       if (previousComments) {
         const optimisticComment = {
-          id: `temp-${Date.now()}`,
+          id: input.clientCommentId,
           jobId: job.id,
           authorId: user?.id || '',
-          content: content.trim(),
+          content: input.content.trim(),
           createdAt: new Date(),
           author: {
             id: user?.id || '',
@@ -213,7 +214,10 @@ export default function CommentsSidebar({ open, onOpenChange, job }: CommentsSid
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (newComment.trim()) {
-      addCommentMutation.mutate(newComment);
+      const id =
+        (globalThis as any)?.crypto?.randomUUID?.() ||
+        `comment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      addCommentMutation.mutate({ content: newComment, clientCommentId: id });
     }
   }, [newComment, addCommentMutation]);
 
@@ -221,7 +225,10 @@ export default function CommentsSidebar({ open, onOpenChange, job }: CommentsSid
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (newComment.trim()) {
-        addCommentMutation.mutate(newComment);
+        const id =
+          (globalThis as any)?.crypto?.randomUUID?.() ||
+          `comment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        addCommentMutation.mutate({ content: newComment, clientCommentId: id });
       }
     }
   }, [newComment, addCommentMutation]);

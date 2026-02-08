@@ -23,6 +23,7 @@ import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
+import { activateLicense, forceCheckin, getLicenseSnapshot } from "./license";
 
 // PHI access logging helper for HIPAA compliance
 async function logPhiAccess(
@@ -125,6 +126,41 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     res.json({ ok: true, ts: Date.now() });
   });
 
+  app.get("/api/license/status", (_req, res) => {
+    res.json(getLicenseSnapshot());
+  });
+
+  app.post("/api/license/activate", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
+    if (req.user.role !== "owner" && req.user.role !== "super_admin") {
+      return res.status(403).json({ error: "Only the Owner can do this" });
+    }
+
+    try {
+      const activationCode =
+        typeof req.body?.activationCode === "string" ? req.body.activationCode.trim() : "";
+      const snapshot = await activateLicense(activationCode);
+      res.json(snapshot);
+    } catch (error: any) {
+      const status = typeof error?.statusCode === "number" ? error.statusCode : 400;
+      res.status(status).json({ error: error?.message || "Activation failed" });
+    }
+  });
+
+  app.post("/api/license/checkin", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
+    if (req.user.role !== "owner" && req.user.role !== "super_admin") {
+      return res.status(403).json({ error: "Only the Owner can do this" });
+    }
+
+    try {
+      const snapshot = await forceCheckin();
+      res.json(snapshot);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Check-in failed" });
+    }
+  });
+
   // Setup / onboarding routes (desktop-first)
   app.get("/api/setup/status", async (_req, res) => {
     try {
@@ -217,6 +253,32 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(409).json({ error: "A user with this email already exists." });
       }
 
+      let licenseSnapshot = getLicenseSnapshot();
+      let activationWarning: string | null = null;
+      try {
+        licenseSnapshot = await activateLicense(activationCode);
+      } catch (error: any) {
+        const status = typeof error?.statusCode === "number" ? error.statusCode : 0;
+        const code = typeof error?.code === "string" ? error.code : "";
+        const msg = typeof error?.message === "string" ? error.message : "Activation failed";
+
+        // Hard failures the user must fix in the portal before continuing.
+        if (status === 409 || code === "HOST_ALREADY_ACTIVATED") {
+          return res.status(409).json({
+            error:
+              "This office is already activated on another Host. In the portal, click “Replace Host”, then try again.",
+          });
+        }
+        if (status >= 400 && status < 500) {
+          return res.status(status).json({ error: msg });
+        }
+
+        // Soft failure (network/timeout): allow setup, but the app will go read-only after grace.
+        activationWarning =
+          "We couldn’t verify your Activation Code right now. Otto Tracker will work for up to 7 days, then become read-only until activation succeeds.";
+        licenseSnapshot = getLicenseSnapshot();
+      }
+
       const staffCode = generateStaffCode();
       const staffCodeHash = await hashSecret(normalizeStaffCode(staffCode));
 
@@ -235,9 +297,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         codeHash: staffCodeHash,
         rotatedAt: Date.now(),
       };
+      const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
       mergedSettings.licensing = {
-        activationCode,
-        activatedAt: Date.now(),
+        activationCodeLast4: activationCode.slice(-4),
+        activationAttemptedAt: Date.now(),
+        activationVerifiedAt: activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null,
       };
 
       const updatedOffice = await storage.updateOffice(office.id, {
@@ -259,7 +323,14 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       req.login(user, (err) => {
         if (err) return next(err);
-        res.status(201).json({ ok: true, office: updatedOffice, user, staffCode });
+        res.status(201).json({
+          ok: true,
+          office: updatedOffice,
+          user,
+          staffCode,
+          license: licenseSnapshot,
+          activationWarning,
+        });
       });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Setup failed" });
@@ -336,6 +407,14 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
     
     try {
+      const requestedId = typeof req.body?.id === "string" ? req.body.id.trim() : "";
+      if (requestedId) {
+        const existing = await storage.getJob(requestedId);
+        if (existing && existing.officeId === req.user.officeId) {
+          return res.json(existing);
+        }
+      }
+
       // Get office settings to check identifier mode
       const office = await storage.getOffice(req.user.officeId);
       const officeSettings = (office?.settings || {}) as Record<string, any>;
@@ -558,6 +637,15 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
     
     try {
+      const requestedId = typeof req.body?.id === "string" ? req.body.id.trim() : "";
+      if (requestedId) {
+        const existingComments = await storage.getJobComments(req.params.jobId);
+        const existing = existingComments.find((comment) => comment.id === requestedId);
+        if (existing) {
+          return res.json(existing);
+        }
+      }
+
       const commentData = insertJobCommentSchema.parse({
         ...req.body,
         jobId: req.params.jobId,

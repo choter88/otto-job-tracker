@@ -275,6 +275,12 @@ export class DatabaseStorage implements IStorage {
       throw new Error("createdBy is required to create a job");
     }
 
+    const providedId = typeof (insertJob as any).id === "string" ? (insertJob as any).id.trim() : "";
+    if (providedId) {
+      const existing = await this.getJob(providedId);
+      if (existing) return existing;
+    }
+
     // Helper to extract order number from orderId (handles any digit length)
     const extractOrderNum = (orderId: string | null): number => {
       if (!orderId) return 0;
@@ -317,7 +323,7 @@ export class DatabaseStorage implements IStorage {
         const [job] = await db
           .insert(jobs)
           .values({ 
-            id: randomUUID(),
+            id: providedId || randomUUID(),
             ...insertJob, 
             orderId,
             statusChangedAt: (insertJob as any).statusChangedAt || new Date()
@@ -520,9 +526,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createJobComment(comment: InsertJobComment): Promise<JobCommentWithAuthor> {
+    const providedId = typeof (comment as any).id === "string" ? (comment as any).id.trim() : "";
+    if (providedId) {
+      const existing = await db
+        .select({
+          id: jobComments.id,
+          jobId: jobComments.jobId,
+          authorId: jobComments.authorId,
+          content: jobComments.content,
+          isOverdueComment: jobComments.isOverdueComment,
+          createdAt: jobComments.createdAt,
+          author: {
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+          },
+        })
+        .from(jobComments)
+        .innerJoin(users, eq(jobComments.authorId, users.id))
+        .where(eq(jobComments.id, providedId))
+        .limit(1);
+
+      if (existing[0]) {
+        return existing[0];
+      }
+    }
+
     const [newComment] = await db
       .insert(jobComments)
-      .values({ id: randomUUID(), ...comment })
+      .values({ id: providedId || randomUUID(), ...comment })
       .returning();
     
     // Fetch the author information
