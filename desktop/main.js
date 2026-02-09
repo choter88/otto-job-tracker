@@ -13,9 +13,12 @@ import Database from "better-sqlite3";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const guardedSessions = new WeakSet();
 const tlsTrustByWebContentsId = new Map();
+const tlsTrustBySession = new WeakMap();
+const certVerifyInstalled = new WeakSet();
 let cachedHostTlsInfo = null;
 let automaticBackupInterval = null;
 let backupWarningShown = false;
+let mainWindow = null;
 
 // Chromium-level hardening to reduce background network traffic.
 app.commandLine.appendSwitch("disable-background-networking");
@@ -514,20 +517,79 @@ function registerTlsTrustForWindow(win, targetUrl, config) {
     if (url.protocol !== "https:") return;
 
     const origin = url.origin;
+    const originHost = url.hostname;
 
     if (config.mode === "host") {
       const tls = getHostTlsInfo();
       tlsTrustByWebContentsId.set(win.webContents.id, {
         mode: "host",
         origin,
+        originHost,
         fingerprintHex: normalizeHex(tls.fingerprint256),
       });
     } else {
       tlsTrustByWebContentsId.set(win.webContents.id, {
         mode: "client",
         origin,
+        originHost,
         fingerprintHex: normalizeHex(config.trustedFingerprint256),
         pairingCodeHex: normalizePairingCodeHex(config.pairingCode),
+      });
+    }
+
+    // Install a per-session certificate verifier (more reliable than certificate-error).
+    const session = win.webContents.session;
+    const trust = tlsTrustByWebContentsId.get(win.webContents.id);
+    tlsTrustBySession.set(session, trust);
+
+    if (!certVerifyInstalled.has(session)) {
+      certVerifyInstalled.add(session);
+      session.setCertificateVerifyProc((request, callback) => {
+        try {
+          const current = tlsTrustBySession.get(session);
+          if (!current) return callback(-3);
+
+          const hostname = request?.hostname || "";
+          if (current.originHost && hostname && hostname !== current.originHost) {
+            return callback(-3);
+          }
+
+          const certFpHex = normalizeHex(
+            request?.certificate?.fingerprint256 || request?.certificate?.fingerprint,
+          );
+
+          if (current.fingerprintHex && certFpHex && certFpHex === current.fingerprintHex) {
+            return callback(0);
+          }
+
+          if (current.mode === "client" && current.pairingCodeHex && certFpHex) {
+            if (certFpHex.startsWith(current.pairingCodeHex)) {
+              try {
+                const cfg = readConfig();
+                if (cfg.mode === "client") {
+                  const formatted =
+                    typeof request?.certificate?.fingerprint256 === "string"
+                      ? request.certificate.fingerprint256
+                      : formatFingerprint256(certFpHex);
+                  if (normalizeHex(cfg.trustedFingerprint256) !== certFpHex) {
+                    writeConfig({ ...cfg, trustedFingerprint256: formatted });
+                  }
+                }
+              } catch {
+                // ignore
+              }
+              return callback(0);
+            }
+          }
+
+          if (current.mode === "host" && isLocalHostname(hostname)) {
+            return callback(0);
+          }
+
+          return callback(-2);
+        } catch {
+          return callback(-2);
+        }
       });
     }
 
@@ -598,6 +660,7 @@ function createWindow(targetUrl, config) {
     },
   });
 
+  mainWindow = win;
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event, url) => {
     try {
@@ -658,6 +721,26 @@ function createWindow(targetUrl, config) {
   return win;
 }
 
+function createBootWindow() {
+  const win = new BrowserWindow({
+    width: 520,
+    height: 320,
+    resizable: false,
+    webPreferences: {
+      contextIsolation: true,
+      sandbox: true,
+      spellcheck: false,
+      partition: "otto-boot",
+    },
+  });
+
+  win.setMenuBarVisibility(false);
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.loadFile(path.join(__dirname, "boot.html"));
+  setupNoInternetNetworkGuard(win.webContents.session);
+  return win;
+}
+
 function createSetupWindow() {
   const win = new BrowserWindow({
     width: 720,
@@ -676,6 +759,43 @@ function createSetupWindow() {
   win.loadFile(path.join(__dirname, "setup.html"));
   setupNoInternetNetworkGuard(win.webContents.session);
   return win;
+}
+
+async function waitForHostReady({ protocol, host, port, timeoutMs = 30000 }) {
+  const deadline = Date.now() + timeoutMs;
+  const client = protocol === "https" ? https : http;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    const ok = await new Promise((resolve) => {
+      const req = client.request(
+        {
+          hostname: host,
+          port,
+          path: "/api/health",
+          method: "GET",
+          rejectUnauthorized: false,
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode && res.statusCode >= 200 && res.statusCode < 300);
+        },
+      );
+      req.on("error", (err) => {
+        lastError = err;
+        resolve(false);
+      });
+      req.setTimeout(1500, () => {
+        req.destroy(new Error("timeout"));
+      });
+      req.end();
+    });
+
+    if (ok) return { ok: true };
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  return { ok: false, error: lastError };
 }
 
 ipcMain.handle("otto:config:get", async () => readConfig());
@@ -1222,6 +1342,11 @@ app.whenReady().then(async () => {
     return;
   }
 
+  let bootWindow = null;
+  if (config.mode === "host") {
+    bootWindow = createBootWindow();
+  }
+
   if (config.mode === "host") {
     applyLicenseEgressAllowlist();
   }
@@ -1232,12 +1357,37 @@ app.whenReady().then(async () => {
 
   await maybeStartHostServer();
 
+  if (config.mode === "host") {
+    const protocol = app.isPackaged ? "https" : "http";
+    const port = process.env.PORT || "5150";
+    const readiness = await waitForHostReady({
+      protocol,
+      host: "127.0.0.1",
+      port,
+      timeoutMs: 30000,
+    });
+
+    if (!readiness.ok) {
+      await dialog.showMessageBox({
+        type: "error",
+        message: "The Host server didn’t start",
+        detail:
+          "Otto Tracker couldn’t reach its local Host server.\n\n" +
+          "Please close Otto Tracker and try again. If this keeps happening, contact support.",
+      });
+    }
+  }
+
   const port = process.env.PORT || "5150";
   const targetUrl =
     config.mode === "host"
       ? `${app.isPackaged ? "https" : "http"}://127.0.0.1:${port}`
       : config.hostUrl;
   createWindow(targetUrl, config);
+
+  if (bootWindow) {
+    bootWindow.close();
+  }
 
   if (config.mode === "host") {
     await maybePromptForBackupFolder();
@@ -1248,4 +1398,11 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("second-instance", () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
 });
