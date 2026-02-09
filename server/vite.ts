@@ -4,7 +4,7 @@ import path from "path";
 import { type Server as HttpServer } from "http";
 import { type Server as HttpsServer } from "https";
 import { nanoid } from "nanoid";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,10 +20,16 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: HttpServer | HttpsServer) {
-  const [{ createServer: createViteServer, createLogger }, { default: viteConfig }] = await Promise.all([
+  const [{ createServer: createViteServer, createLogger }, viteConfigModule] = await Promise.all([
     import("vite"),
-    import("../vite.config"),
+    (async () => {
+      // Resolve Vite config at runtime so production bundles don't pull in dev-only deps.
+      const configPath = path.resolve(__dirname, "..", "vite.config.ts");
+      return import(pathToFileURL(configPath).href);
+    })(),
   ]);
+
+  const viteConfig = viteConfigModule.default;
 
   const viteLogger = createLogger();
 

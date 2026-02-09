@@ -348,9 +348,29 @@ export default function SetupPage() {
         <div className="text-center">
           <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
           <p className="text-muted-foreground">
-            This only happens once, on the Host computer. You’ll create your office and the first admin login.
+            This only happens once, on the Host computer. You’ll activate the office, enter office details, and create the
+            first admin login.
           </p>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Before you start</CardTitle>
+            <CardDescription>What this setup does and why.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <ol className="list-decimal pl-5 space-y-1">
+              <li>Enter your Activation Code to verify your subscription (no patient data is sent).</li>
+              <li>Create your office record and first admin login (local to this office).</li>
+              <li>After setup, you’ll get a Staff code to share with your team for sign‑ups.</li>
+            </ol>
+            <Alert>
+              <AlertDescription>
+                Not the Host computer? Use <b>File → Change Connection…</b> to switch this computer to Client.
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
 
         <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-6 lg:grid-cols-2">
           <Card>
@@ -359,7 +379,10 @@ export default function SetupPage() {
                 <KeyRound className="h-5 w-5 text-primary" />
                 Activation
               </CardTitle>
-              <CardDescription>Paste the Activation Code from your billing portal.</CardDescription>
+              <CardDescription>
+                Paste the Activation Code from your billing portal. This verifies your subscription (no patient data is
+                sent).
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
@@ -426,7 +449,10 @@ export default function SetupPage() {
                 <UserPlus className="h-5 w-5 text-primary" />
                 Create the admin login
               </CardTitle>
-              <CardDescription>This person can manage the office and add team members.</CardDescription>
+              <CardDescription>
+                This person can manage the office and add team members. It’s separate from the billing portal login (you
+                can use the same email if you want).
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid md:grid-cols-2 gap-4">

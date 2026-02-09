@@ -1,14 +1,20 @@
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage } from "electron";
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import http from "http";
 import https from "https";
+import net from "net";
 import { execFileSync } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
 import { randomBytes, X509Certificate } from "crypto";
 import selfsigned from "selfsigned";
 import Database from "better-sqlite3";
+
+const APP_DISPLAY_NAME = "Otto Tracker";
+const LEGACY_APP_DIR_NAME = "rest-express";
+
+app.setName(APP_DISPLAY_NAME);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const guardedSessions = new WeakSet();
@@ -19,6 +25,56 @@ let cachedHostTlsInfo = null;
 let automaticBackupInterval = null;
 let backupWarningShown = false;
 let mainWindow = null;
+
+process.on("uncaughtException", (error) => {
+  logStartup("Uncaught exception", error);
+});
+
+process.on("unhandledRejection", (error) => {
+  logStartup("Unhandled rejection", error);
+});
+
+function getStartupLogPath() {
+  return path.join(app.getPath("userData"), "startup.log");
+}
+
+function logStartup(message, error) {
+  try {
+    const stamp = new Date().toISOString();
+    const details =
+      error && typeof error === "object"
+        ? error.stack || error.message || JSON.stringify(error)
+        : error
+          ? String(error)
+          : "";
+    fs.mkdirSync(path.dirname(getStartupLogPath()), { recursive: true, mode: 0o700 });
+    fs.appendFileSync(getStartupLogPath(), `[${stamp}] ${message}\n${details}\n\n`, { mode: 0o600 });
+  } catch {
+    // ignore
+  }
+}
+
+function migrateLegacyUserDataDir() {
+  try {
+    const appData = app.getPath("appData");
+    const legacyPath = path.join(appData, LEGACY_APP_DIR_NAME);
+    const newPath = app.getPath("userData");
+    if (legacyPath === newPath) return;
+    if (fs.existsSync(legacyPath) && !fs.existsSync(newPath)) {
+      fs.mkdirSync(path.dirname(newPath), { recursive: true, mode: 0o700 });
+      fs.renameSync(legacyPath, newPath);
+      logStartup(`Migrated user data to ${newPath}`);
+    }
+  } catch (error) {
+    logStartup("Failed to migrate legacy user data folder", error);
+  }
+}
+
+function getErrorLogPath() {
+  if (process.env.OTTO_ERROR_LOG_PATH) return process.env.OTTO_ERROR_LOG_PATH;
+  const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+  return path.join(dataDir, "error_log.json");
+}
 
 // Chromium-level hardening to reduce background network traffic.
 app.commandLine.appendSwitch("disable-background-networking");
@@ -131,7 +187,7 @@ function isPrivateIpv4(hostname) {
 function isLocalHostname(hostname) {
   const h = String(hostname || "").toLowerCase();
   if (!h) return false;
-  if (h === "localhost" || h === "::1") return true;
+  if (h === "localhost" || h === "::1" || h === "127.0.0.1") return true;
   if (!h.includes(".")) return true;
   if (h.endsWith(".local")) return true;
   return false;
@@ -458,7 +514,24 @@ async function maybeStartHostServer() {
     throw new Error(`Server build not found at ${serverEntry}. Run \`npm run build\` first.`);
   }
 
-  await import(pathToFileURL(serverEntry).href);
+  void import(pathToFileURL(serverEntry).href).catch((error) => {
+    logStartup("Host server failed to start", error);
+    try {
+      dialog.showMessageBox({
+        type: "error",
+        message: "The Host server failed to start",
+        detail:
+          "Otto Tracker couldn’t start its local server.\n\n" +
+          "Most common causes:\n" +
+          "• The SQLite module failed to load\n" +
+          "• Port 5150 is already in use\n" +
+          "• The app doesn’t have permission to write its data folder\n\n" +
+          `Log file:\n${getStartupLogPath()}`,
+      });
+    } catch {
+      // ignore
+    }
+  });
 }
 
 function setupNoInternetNetworkGuard(electronSession, allowedOrigin) {
@@ -519,16 +592,19 @@ function registerTlsTrustForWindow(win, targetUrl, config) {
     const origin = url.origin;
     const originHost = url.hostname;
 
+    const webContentsId = win.webContents.id;
+    const session = win.webContents.session;
+
     if (config.mode === "host") {
       const tls = getHostTlsInfo();
-      tlsTrustByWebContentsId.set(win.webContents.id, {
+      tlsTrustByWebContentsId.set(webContentsId, {
         mode: "host",
         origin,
         originHost,
         fingerprintHex: normalizeHex(tls.fingerprint256),
       });
     } else {
-      tlsTrustByWebContentsId.set(win.webContents.id, {
+      tlsTrustByWebContentsId.set(webContentsId, {
         mode: "client",
         origin,
         originHost,
@@ -538,8 +614,7 @@ function registerTlsTrustForWindow(win, targetUrl, config) {
     }
 
     // Install a per-session certificate verifier (more reliable than certificate-error).
-    const session = win.webContents.session;
-    const trust = tlsTrustByWebContentsId.get(win.webContents.id);
+    const trust = tlsTrustByWebContentsId.get(webContentsId);
     tlsTrustBySession.set(session, trust);
 
     if (!certVerifyInstalled.has(session)) {
@@ -594,7 +669,8 @@ function registerTlsTrustForWindow(win, targetUrl, config) {
     }
 
     win.on("closed", () => {
-      tlsTrustByWebContentsId.delete(win.webContents.id);
+      tlsTrustByWebContentsId.delete(webContentsId);
+      tlsTrustBySession.delete(session);
     });
   } catch {
     // ignore
@@ -649,6 +725,7 @@ function createWindow(targetUrl, config) {
   const isClient = config.mode === "client";
 
   const win = new BrowserWindow({
+    title: APP_DISPLAY_NAME,
     width: 1280,
     height: 800,
     webPreferences: {
@@ -723,6 +800,7 @@ function createWindow(targetUrl, config) {
 
 function createBootWindow() {
   const win = new BrowserWindow({
+    title: APP_DISPLAY_NAME,
     width: 520,
     height: 320,
     resizable: false,
@@ -743,6 +821,7 @@ function createBootWindow() {
 
 function createSetupWindow() {
   const win = new BrowserWindow({
+    title: `${APP_DISPLAY_NAME} Setup`,
     width: 720,
     height: 520,
     resizable: false,
@@ -796,6 +875,83 @@ async function waitForHostReady({ protocol, host, port, timeoutMs = 30000 }) {
   }
 
   return { ok: false, error: lastError };
+}
+
+async function isPortAvailable(port, host) {
+  return await new Promise((resolve) => {
+    const tester = net.createServer();
+    tester.once("error", (err) => {
+      if (err && err.code === "EADDRINUSE") return resolve(false);
+      resolve(true);
+    });
+    tester.once("listening", () => {
+      tester.close(() => resolve(true));
+    });
+    tester.listen(port, host);
+  });
+}
+
+async function showHostStartFailureDialog() {
+  const { response } = await dialog.showMessageBox({
+    type: "error",
+    buttons: ["Retry", "Open Logs", "Quit"],
+    defaultId: 0,
+    cancelId: 2,
+    message: "The Host server didn’t start",
+    detail:
+      "Otto Tracker couldn’t reach its local server after 30 seconds.\n\n" +
+      "Most common causes:\n" +
+      "• The SQLite module failed to load\n" +
+      "• Port 5150 is already in use\n" +
+      "• The app doesn’t have permission to write its data folder\n\n" +
+      `Log file:\n${getStartupLogPath()}`,
+  });
+
+  if (response === 1) {
+    shell.showItemInFolder(getStartupLogPath());
+  } else if (response === 2) {
+    app.quit();
+  }
+
+  return response;
+}
+
+async function showDiagnostics() {
+  const config = readConfig();
+  const port = process.env.PORT || "5150";
+  const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
+  const appVersion = app.getVersion();
+  const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+  const details = [
+    `App version: ${appVersion}`,
+    `Mode: ${config.mode}`,
+    `Host URL: ${config.hostUrl}`,
+    `Protocol: ${protocol}`,
+    `Port: ${port}`,
+    "",
+    `User data: ${app.getPath("userData")}`,
+    `Config: ${getConfigPath()}`,
+    `SQLite: ${getSqlitePath()}`,
+    `Data dir: ${dataDir}`,
+    "",
+    `Startup log: ${getStartupLogPath()}`,
+    `Error log: ${getErrorLogPath()}`,
+  ].join("\n");
+
+  const { response } = await dialog.showMessageBox({
+    type: "info",
+    buttons: ["Copy", "Open Logs Folder", "OK"],
+    defaultId: 2,
+    cancelId: 2,
+    message: "Diagnostics",
+    detail: details,
+  });
+
+  if (response === 0) {
+    clipboard.writeText(details);
+  } else if (response === 1) {
+    shell.showItemInFolder(getStartupLogPath());
+  }
 }
 
 ipcMain.handle("otto:config:get", async () => readConfig());
@@ -1302,6 +1458,7 @@ function setAppMenu(config) {
             ]
           : []),
         { label: "Change Connection…", click: () => createSetupWindow() },
+        { label: "Diagnostics…", click: () => showDiagnostics() },
         { type: "separator" },
         { role: "quit" },
       ],
@@ -1332,8 +1489,10 @@ function setAppMenu(config) {
 
 app.whenReady().then(async () => {
   loadDevDotEnv();
+  migrateLegacyUserDataDir();
   applyOfflineDefaults();
   maybeRestoreDatabaseFromArgs();
+  logStartup("App starting");
 
   const config = readConfig();
   setAppMenu(config);
@@ -1355,25 +1514,43 @@ app.whenReady().then(async () => {
     applyHostTlsEnv();
   }
 
+  if (config.mode === "host") {
+    const port = Number(process.env.PORT || "5150");
+    const available = await isPortAvailable(port, "0.0.0.0");
+    if (!available) {
+      await dialog.showMessageBox({
+        type: "error",
+        message: `Port ${port} is already in use`,
+        detail:
+          "Another app is using the port Otto Tracker needs.\n\n" +
+          "Please close the other app (or restart your computer) and try again.",
+      });
+      return;
+    }
+  }
+
   await maybeStartHostServer();
 
   if (config.mode === "host") {
     const protocol = app.isPackaged ? "https" : "http";
     const port = process.env.PORT || "5150";
-    const readiness = await waitForHostReady({
+    let readiness = await waitForHostReady({
       protocol,
       host: "127.0.0.1",
       port,
       timeoutMs: 30000,
     });
 
-    if (!readiness.ok) {
-      await dialog.showMessageBox({
-        type: "error",
-        message: "The Host server didn’t start",
-        detail:
-          "Otto Tracker couldn’t reach its local Host server.\n\n" +
-          "Please close Otto Tracker and try again. If this keeps happening, contact support.",
+    while (!readiness.ok) {
+      const action = await showHostStartFailureDialog();
+      if (action !== 0) {
+        return;
+      }
+      readiness = await waitForHostReady({
+        protocol,
+        host: "127.0.0.1",
+        port,
+        timeoutMs: 30000,
       });
     }
   }

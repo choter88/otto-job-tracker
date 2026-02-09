@@ -14,7 +14,7 @@
 3. On the Host, complete the one-time setup:
    - Paste your **Activation Code** (from the billing portal)
    - Enter your **office details**
-   - Create the first **Admin login**
+   - Create the first **Admin login** (this is local to your office — it does not need to match the billing portal login)
 4. Otto Tracker will show a **Staff code**. Save it — your team will need it to create their logins.
 
 ## Step 2 — Find the Host address
