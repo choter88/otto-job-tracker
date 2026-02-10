@@ -10,10 +10,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Edit, Trash2, MessageSquare, ChevronUp, ChevronDown, Star } from "lucide-react";
+import { Search, Plus, Edit, Trash2, MessageSquare, MessageSquareText, ChevronUp, ChevronDown, Star } from "lucide-react";
 import JobDialog from "./job-dialog";
 import CommentsSidebar from "./comments-sidebar";
-import type { Job } from "@shared/schema";
+import JobMessageTemplatesModal from "./job-message-templates-modal";
+import type { Job, Office } from "@shared/schema";
 import { format } from "date-fns";
 import { getDefaultStatusColor, getDefaultJobTypeColor, getDefaultDestinationColor, getColorForBadge } from "@/lib/default-colors";
 import { cn } from "@/lib/utils";
@@ -41,8 +42,10 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [editingJob, setEditingJob] = useState<Job | undefined>();
   const [commentsSidebarOpen, setCommentsSidebarOpen] = useState(false);
   const [selectedJobForComments, setSelectedJobForComments] = useState<Job | undefined>();
+  const [messageTemplatesOpen, setMessageTemplatesOpen] = useState(false);
+  const [selectedJobForMessages, setSelectedJobForMessages] = useState<Job | undefined>();
 
-  const { data: office } = useQuery<any>({
+  const { data: office } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
     enabled: !!user?.officeId,
   });
@@ -359,6 +362,11 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const handleOpenComments = useCallback((job: Job) => {
     setSelectedJobForComments(job);
     setCommentsSidebarOpen(true);
+  }, []);
+
+  const handleOpenMessageTemplates = useCallback((job: Job) => {
+    setSelectedJobForMessages(job);
+    setMessageTemplatesOpen(true);
   }, []);
 
   const handleToggleFlag = useCallback((jobId: string) => {
@@ -890,6 +898,15 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8"
+                        onClick={() => handleOpenMessageTemplates(job)}
+                        data-testid={`button-messages-${job.id}`}
+                      >
+                        <MessageSquareText className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
                         onClick={() => handleEditJob(job)}
                         data-testid={`button-edit-${job.id}`}
                       >
@@ -952,6 +969,16 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           open={commentsSidebarOpen}
           onOpenChange={setCommentsSidebarOpen}
           job={selectedJobForComments}
+        />
+      )}
+
+      {/* Job Message Templates */}
+      {selectedJobForMessages && (
+        <JobMessageTemplatesModal
+          open={messageTemplatesOpen}
+          onOpenChange={setMessageTemplatesOpen}
+          job={selectedJobForMessages}
+          office={office}
         />
       )}
     </>

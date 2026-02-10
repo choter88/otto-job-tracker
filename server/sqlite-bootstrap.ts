@@ -31,6 +31,81 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     ).run();
   };
 
+  const ensureHighContrastOfficeColors = (): void => {
+    const normalizeHexColor = (value: unknown) =>
+      String(typeof value === "string" ? value : "").trim().toLowerCase();
+
+    const OFFICE_COLOR_MIGRATIONS: Record<
+      string,
+      Record<string, { from: string; to: string }>
+    > = {
+      customStatuses: {
+        job_created: { from: "#e0e7ff", to: "#2563eb" },
+        ordered: { from: "#fef3c7", to: "#d97706" },
+        in_progress: { from: "#dbeafe", to: "#0284c7" },
+        quality_check: { from: "#e0f2fe", to: "#7c3aed" },
+        ready_for_pickup: { from: "#d1fae5", to: "#16a34a" },
+        completed: { from: "#bbf7d0", to: "#059669" },
+        cancelled: { from: "#fee2e2", to: "#dc2626" },
+      },
+      customJobTypes: {
+        contacts: { from: "#e0e7ff", to: "#475569" },
+        glasses: { from: "#d1fae5", to: "#2563eb" },
+        sunglasses: { from: "#f3e8ff", to: "#d97706" },
+        prescription: { from: "#fef3c7", to: "#7c3aed" },
+      },
+      customOrderDestinations: {
+        vision_lab: { from: "#e0e7ff", to: "#0284c7" },
+        eyetech_labs: { from: "#d1fae5", to: "#16a34a" },
+        premium_optics: { from: "#fef3c7", to: "#d97706" },
+      },
+    };
+
+    const officeRows = sqlite
+      .prepare("SELECT id, settings FROM offices")
+      .all() as Array<{ id: string; settings: string }>;
+
+    const updateOfficeSettings = sqlite.prepare(
+      `UPDATE offices
+       SET settings = ?, updated_at = (unixepoch() * 1000)
+       WHERE id = ?;`,
+    );
+
+    for (const office of officeRows) {
+      let settings: any = {};
+      try {
+        settings = office.settings ? JSON.parse(office.settings) : {};
+      } catch {
+        continue;
+      }
+
+      let changed = false;
+
+      for (const [settingsKey, byId] of Object.entries(OFFICE_COLOR_MIGRATIONS)) {
+        const list = Array.isArray(settings?.[settingsKey]) ? settings[settingsKey] : [];
+        if (!Array.isArray(list) || list.length === 0) continue;
+
+        for (const item of list) {
+          const id = String(item?.id || "");
+          const migration = byId[id];
+          if (!migration) continue;
+
+          const current = normalizeHexColor(item?.color);
+          if (current !== migration.from) continue;
+
+          item.color = migration.to;
+          changed = true;
+        }
+
+        settings[settingsKey] = list;
+      }
+
+      if (!changed) continue;
+
+      updateOfficeSettings.run(JSON.stringify(settings), office.id);
+    }
+  };
+
   const statements: string[] = [
     `PRAGMA foreign_keys = ON;`,
     `PRAGMA journal_mode = WAL;`,
@@ -267,5 +342,6 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     // Migrations / forward-compat changes for existing installs.
     ensurePatientFirstName("jobs");
     ensurePatientFirstName("archived_jobs");
+    ensureHighContrastOfficeColors();
   })();
 }

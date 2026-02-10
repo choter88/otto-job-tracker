@@ -187,32 +187,36 @@ export class DatabaseStorage implements IStorage {
   async createOffice(insertOffice: InsertOffice): Promise<Office> {
     const defaultSettings = {
       customStatuses: [
-        { id: "job_created", label: "Job Created", color: "#E0E7FF", order: 1 },
-        { id: "ordered", label: "Ordered", color: "#FEF3C7", order: 2 },
-        { id: "in_progress", label: "In Progress", color: "#DBEAFE", order: 3 },
-        { id: "quality_check", label: "Quality Check", color: "#E0F2FE", order: 4 },
-        { id: "ready_for_pickup", label: "Ready for Pickup", color: "#D1FAE5", order: 5 },
-        { id: "completed", label: "Completed", color: "#BBF7D0", order: 6 },
-        { id: "cancelled", label: "Cancelled", color: "#FEE2E2", order: 7 }
+        { id: "job_created", label: "Job Created", color: "#2563EB", order: 1 },
+        { id: "ordered", label: "Ordered", color: "#D97706", order: 2 },
+        { id: "in_progress", label: "In Progress", color: "#0284C7", order: 3 },
+        { id: "quality_check", label: "Quality Check", color: "#7C3AED", order: 4 },
+        { id: "ready_for_pickup", label: "Ready for Pickup", color: "#16A34A", order: 5 },
+        { id: "completed", label: "Completed", color: "#059669", order: 6 },
+        { id: "cancelled", label: "Cancelled", color: "#DC2626", order: 7 }
       ],
       customJobTypes: [
-        { id: "contacts", label: "Contacts", color: "#E0E7FF", order: 1 },
-        { id: "glasses", label: "Glasses", color: "#D1FAE5", order: 2 },
-        { id: "sunglasses", label: "Sunglasses", color: "#F3E8FF", order: 3 },
-        { id: "prescription", label: "Prescription", color: "#FEF3C7", order: 4 }
+        { id: "contacts", label: "Contacts", color: "#475569", order: 1 },
+        { id: "glasses", label: "Glasses", color: "#2563EB", order: 2 },
+        { id: "sunglasses", label: "Sunglasses", color: "#D97706", order: 3 },
+        { id: "prescription", label: "Prescription", color: "#7C3AED", order: 4 }
       ],
       customOrderDestinations: [
-        { id: "vision_lab", label: "Vision Lab", color: "#E0E7FF", order: 1 },
-        { id: "eyetech_labs", label: "EyeTech Labs", color: "#D1FAE5", order: 2 },
-        { id: "premium_optics", label: "Premium Optics", color: "#FEF3C7", order: 3 }
+        { id: "vision_lab", label: "Vision Lab", color: "#0284C7", order: 1 },
+        { id: "eyetech_labs", label: "EyeTech Labs", color: "#16A34A", order: 2 },
+        { id: "premium_optics", label: "Premium Optics", color: "#D97706", order: 3 }
       ],
       customColumns: [],
       smsEnabled: false,
       smsTemplates: {
-        ordered: "Your {job_type} order has been placed and is being processed.",
-        in_progress: "Your {job_type} order is now in progress.",
-        ready_for_pickup: "Great news! Your {job_type} order is ready for pickup.",
-        completed: "Your {job_type} order has been completed."
+        job_created: "Hi {patient_first_name}, we received your {job_type} order #{order_id}.",
+        ordered: "Your {job_type} order #{order_id} has been placed and is being processed.",
+        in_progress: "Update: Your {job_type} order #{order_id} is now in progress.",
+        quality_check: "Update: Your {job_type} order #{order_id} is in quality check.",
+        ready_for_pickup: "Great news! Your {job_type} order #{order_id} is ready for pickup.",
+        completed: "Your {job_type} order #{order_id} has been completed.",
+        cancelled:
+          "Update: Your {job_type} order #{order_id} was cancelled. Please contact {office_name} at {office_phone}."
       }
     };
 

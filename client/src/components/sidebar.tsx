@@ -9,7 +9,6 @@ import {
   AlertTriangle, 
   BarChart3, 
   Users, 
-  LogOut,
   Star
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -21,7 +20,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
-  const { user, logoutMutation } = useAuth();
+  const { user } = useAuth();
 
   const { data: jobs = [] } = useQuery<Job[]>({
     queryKey: ["/api/jobs"],
@@ -46,10 +45,6 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
   const activeJobsCount = jobs.length;
   const overdueCount = overdueJobs.length;
   const flaggedCount = flaggedJobs.length;
-
-  const handleLogout = () => {
-    logoutMutation.mutate();
-  };
 
   const menuItems = [
     {
@@ -164,32 +159,6 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
           })}
         </div>
       </nav>
-
-      {/* User Profile */}
-      <div className="p-4 border-t border-border">
-        <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer group">
-          <div className="w-8 h-8 bg-primary/20 rounded-full flex items-center justify-center text-primary font-semibold text-sm">
-            {user?.firstName?.[0]}{user?.lastName?.[0]}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate" data-testid="text-user-name">
-              {user?.firstName} {user?.lastName}
-            </p>
-            <p className="text-xs text-muted-foreground truncate" data-testid="text-user-email">
-              {user?.email}
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={handleLogout}
-            data-testid="button-logout"
-          >
-            <LogOut className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
     </aside>
   );
 }

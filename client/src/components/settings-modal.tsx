@@ -25,7 +25,7 @@ import {
   Columns
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
-import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, hexToHSL } from "@/lib/default-colors";
+import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, chooseHighContrastColor, getColorForBadge, hexToHSL } from "@/lib/default-colors";
 import type { Office } from "@shared/schema";
 import {
   DndContext,
@@ -237,10 +237,20 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
   };
 
   const addCustomItem = (type: 'statuses' | 'jobTypes' | 'destinations') => {
+    const existingColors =
+      type === 'statuses'
+        ? customStatuses.map((s) => s.color)
+        : type === 'jobTypes'
+          ? customJobTypes.map((t) => t.color)
+          : customOrderDestinations.map((d) => d.color);
+
+    const color = chooseHighContrastColor(existingColors);
+
     const newItem = {
       id: `custom_${Date.now()}`,
       label: `New ${type === 'statuses' ? 'Status' : type === 'jobTypes' ? 'Type' : 'Destination'}`,
-      color: "#E0E7FF",
+      color,
+      hsl: hexToHSL(color),
       order: 999,
     };
 
@@ -279,6 +289,12 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
       // Don't allow deleting required statuses
       if (id === 'job_created' || id === 'completed') return;
       setCustomStatuses(customStatuses.filter(item => item.id !== id));
+      setMessageTemplates((prev) => {
+        if (!prev || !(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     } else if (type === 'jobTypes') {
       setCustomJobTypes(customJobTypes.filter(item => item.id !== id));
     } else {
@@ -678,66 +694,99 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                   <h3 className="text-lg font-semibold mb-2">Message Templates</h3>
                   <p className="text-sm text-muted-foreground">
                     Otto Tracker doesn’t send texts. Use these templates to copy/paste into your office’s texting system.
+                    Templates are configured per Job Status, so any custom statuses you add are supported automatically.
                   </p>
-                  
-                  <div className="space-y-4">
-                      <div className="space-y-4 pt-4 border-t border-border">
-                        <div>
-                          <Label htmlFor="ordered-template">Order placed</Label>
-                          <Textarea
-                            id="ordered-template"
-                            value={messageTemplates.ordered || ''}
-                            onChange={(e) => setMessageTemplates({
-                              ...messageTemplates,
-                              ordered: e.target.value
-                            })}
-                            placeholder="Your {job_type} order has been placed..."
-                            rows={3}
-                            data-testid="textarea-message-template-ordered"
-                          />
-                        </div>
+                </div>
 
-                        <div>
-                          <Label htmlFor="progress-template">In progress</Label>
-                          <Textarea
-                            id="progress-template"
-                            value={messageTemplates.in_progress || ''}
-                            onChange={(e) => setMessageTemplates({
-                              ...messageTemplates,
-                              in_progress: e.target.value
-                            })}
-                            placeholder="Your {job_type} order is now in progress..."
-                            rows={3}
-                            data-testid="textarea-message-template-in-progress"
-                          />
-                        </div>
+                <div className="p-4 bg-muted rounded-lg">
+                  <h4 className="font-medium mb-2">Available variables</h4>
+                  <div className="grid gap-1 text-sm text-muted-foreground sm:grid-cols-2">
+                    <p><code>{"{patient_first_name}"}</code> - Patient first name</p>
+                    <p><code>{"{patient_last_name}"}</code> - Patient last name</p>
+                    <p><code>{"{patient_name}"}</code> - Patient full name</p>
+                    <p><code>{"{order_id}"}</code> - Order ID</p>
+                    <p><code>{"{job_type}"}</code> - Job type label (supports custom types)</p>
+                    <p><code>{"{status}"}</code> - Status label (supports custom statuses)</p>
+                    <p><code>{"{destination}"}</code> - Destination label (supports custom destinations)</p>
+                    <p><code>{"{office_name}"}</code> - Practice name</p>
+                    <p><code>{"{office_phone}"}</code> - Practice phone</p>
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Tip: You can preview and copy the final message from any job in the Worklist.
+                  </p>
+                </div>
 
-                        <div>
-                          <Label htmlFor="ready-template">Ready for pickup</Label>
-                          <Textarea
-                            id="ready-template"
-                            value={messageTemplates.ready_for_pickup || ''}
-                            onChange={(e) => setMessageTemplates({
-                              ...messageTemplates,
-                              ready_for_pickup: e.target.value
-                            })}
-                            placeholder="Great news! Your {job_type} order is ready..."
-                            rows={3}
-                            data-testid="textarea-message-template-ready"
-                          />
-                        </div>
-
-                        <div className="p-4 bg-muted rounded-lg">
-                          <h4 className="font-medium mb-2">Available Variables:</h4>
-                          <div className="text-sm text-muted-foreground space-y-1">
-                            <p><code>{"{job_type}"}</code> - Type of job (contacts, glasses, etc.)</p>
-                            <p><code>{"{status}"}</code> - Current job status</p>
-                            <p><code>{"{office_name}"}</code> - Your practice name</p>
-                            <p><code>{"{office_phone}"}</code> - Your practice phone number</p>
+                <div className="space-y-4">
+                  {customStatuses.map((status) => {
+                    const badgeColors = getColorForBadge(status.color);
+                    return (
+                      <div
+                        key={status.id}
+                        className="p-4 bg-card border border-border rounded-lg space-y-3"
+                        data-testid={`message-template-card-${status.id}`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Badge
+                              className="shrink-0"
+                              style={{ backgroundColor: badgeColors.background, color: badgeColors.text }}
+                            >
+                              {status.label}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground truncate">
+                              Shown when a job is <span className="font-medium">{status.label}</span>
+                            </span>
                           </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setMessageTemplates((prev) => {
+                                if (!prev || !(status.id in prev)) return prev;
+                                const next = { ...prev };
+                                delete next[status.id];
+                                return next;
+                              })
+                            }
+                            disabled={!messageTemplates?.[status.id]?.trim()}
+                            data-testid={`button-clear-message-template-${status.id}`}
+                          >
+                            Clear
+                          </Button>
+                        </div>
+
+                        <div>
+                          <Label htmlFor={`message-template-${status.id}`} className="sr-only">
+                            {status.label} template
+                          </Label>
+                          <Textarea
+                            id={`message-template-${status.id}`}
+                            value={messageTemplates?.[status.id] || ""}
+                            onChange={(e) =>
+                              setMessageTemplates({
+                                ...messageTemplates,
+                                [status.id]: e.target.value,
+                              })
+                            }
+                            placeholder={`Optional: message for "${status.label}"`}
+                            rows={3}
+                            data-testid={`textarea-message-template-${status.id}`}
+                          />
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Leave blank to hide this message.
+                          </p>
                         </div>
                       </div>
-                  </div>
+                    );
+                  })}
+
+                  {customStatuses.length === 0 && (
+                    <div className="p-8 text-center bg-muted rounded-lg">
+                      <p className="text-sm text-muted-foreground">
+                        No job statuses found. Create a status first to configure message templates.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </TabsContent>
