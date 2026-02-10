@@ -5,7 +5,8 @@ import { randomBytes, X509Certificate } from "crypto";
 import type { LicenseSnapshot, LicenseState, LicenseMode, LicenseOfficeStatus } from "./license-types";
 
 const LICENSE_FILE_NAME = "license.json";
-const GRACE_PERIOD_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+const ACTIVATION_GRACE_MS = 1000 * 60 * 60 * 24 * 7; // 7 days to complete activation
+const CHECKIN_OUTAGE_GRACE_MS = 1000 * 60 * 60 * 24 * 30; // tolerate portal outages (local-first)
 
 function getDataDir(): string {
   return process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
@@ -102,12 +103,13 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
   const lastSuccessfulCheckinAt = typeof state.lastSuccessfulCheckinAt === "number" ? state.lastSuccessfulCheckinAt : null;
   const nextCheckinDueAt = typeof state.nextCheckinDueAt === "number" ? state.nextCheckinDueAt : null;
 
-  const graceEndsAtLocal =
-    typeof state.firstRunAt === "number" && state.firstRunAt > 0 ? state.firstRunAt + GRACE_PERIOD_MS : null;
+  const activationGraceEndsAtLocal =
+    typeof state.firstRunAt === "number" && state.firstRunAt > 0 ? state.firstRunAt + ACTIVATION_GRACE_MS : null;
 
   let mode: LicenseMode = "UNACTIVATED";
   let writeAllowed = true;
   let message = "Activation required";
+  let graceEndsAt: number | null = activationGraceEndsAtLocal;
 
   if (state.tokenInvalid) {
     mode = "INVALID";
@@ -118,7 +120,8 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
     writeAllowed = false;
     message = "Office is disabled. Otto Tracker is in read-only mode.";
   } else if (!hostTokenPresent) {
-    if (graceEndsAtLocal && Date.now() > graceEndsAtLocal) {
+    graceEndsAt = activationGraceEndsAtLocal;
+    if (activationGraceEndsAtLocal && Date.now() > activationGraceEndsAtLocal) {
       mode = "READ_ONLY";
       writeAllowed = false;
       message = "Activation not completed. Otto Tracker is in read-only mode.";
@@ -133,25 +136,39 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
       writeAllowed = true;
       message = "License active";
     } else {
-      mode = "READ_ONLY";
-      writeAllowed = false;
-      message = "License check-in overdue. Otto Tracker is in read-only mode.";
+      const lastOk = lastSuccessfulCheckinAt || nextCheckinDueAt;
+      const outageGraceEndsAt = lastOk ? lastOk + CHECKIN_OUTAGE_GRACE_MS : null;
+
+      if (outageGraceEndsAt && nowServerTime <= outageGraceEndsAt) {
+        mode = "GRACE";
+        writeAllowed = true;
+        graceEndsAt = outageGraceEndsAt;
+        message = "License check-in overdue. Otto Tracker will keep working while it retries.";
+      } else {
+        mode = "READ_ONLY";
+        writeAllowed = false;
+        graceEndsAt = outageGraceEndsAt;
+        message = "License check-in overdue. Otto Tracker is in read-only mode.";
+      }
     }
   } else if (lastSuccessfulCheckinAt) {
     // Fallback if portal didn't return nextCheckinDueAt for some reason.
-    const fallbackDue = lastSuccessfulCheckinAt + GRACE_PERIOD_MS;
+    const fallbackDue = lastSuccessfulCheckinAt + CHECKIN_OUTAGE_GRACE_MS;
     if (nowServerTime <= fallbackDue) {
       mode = "ACTIVE";
       writeAllowed = true;
+      graceEndsAt = null;
       message = "License active";
     } else {
       mode = "READ_ONLY";
       writeAllowed = false;
+      graceEndsAt = fallbackDue;
       message = "License check-in overdue. Otto Tracker is in read-only mode.";
     }
   } else {
     // Activated but we haven't successfully checked in yet.
-    if (graceEndsAtLocal && Date.now() > graceEndsAtLocal) {
+    graceEndsAt = activationGraceEndsAtLocal;
+    if (activationGraceEndsAtLocal && Date.now() > activationGraceEndsAtLocal) {
       mode = "READ_ONLY";
       writeAllowed = false;
       message = "License check-in required. Otto Tracker is in read-only mode.";
@@ -176,8 +193,7 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
     activatedAt,
     lastSuccessfulCheckinAt,
     nextCheckinDueAt,
-    graceEndsAt: graceEndsAtLocal,
+    graceEndsAt,
     lastError,
   };
 }
-

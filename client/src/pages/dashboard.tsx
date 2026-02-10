@@ -11,6 +11,7 @@ import AnalyticsDashboard from "@/components/analytics-dashboard";
 import ImportantJobs from "@/pages/important-jobs";
 import NotificationBell from "@/components/notification-bell";
 import SettingsModal from "@/components/settings-modal";
+import HealthModal from "@/components/health-modal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -22,13 +23,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, LogOut, Settings } from "lucide-react";
+import { Activity, ChevronDown, LogOut, Settings } from "lucide-react";
 import type { Job, ArchivedJob, Office } from "@shared/schema";
 
 export default function Dashboard() {
   const { user, logoutMutation } = useAuth();
   const [location, setLocation] = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [healthOpen, setHealthOpen] = useState(false);
 
   // Derive tab from URL - check if we're on a specific tab route
   const [, importantParams] = useRoute("/important");
@@ -192,6 +194,10 @@ export default function Dashboard() {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setHealthOpen(true)} data-testid="menu-user-health">
+                  <Activity className="h-4 w-4" />
+                  System Health
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setSettingsOpen(true)} data-testid="menu-user-settings">
                   <Settings className="h-4 w-4" />
                   Office Settings
@@ -214,6 +220,7 @@ export default function Dashboard() {
 
       {/* Settings Modal */}
       <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <HealthModal open={healthOpen} onOpenChange={setHealthOpen} />
     </div>
   );
 }

@@ -7,7 +7,7 @@ import https from "https";
 import net from "net";
 import { execFileSync } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
-import { randomBytes, X509Certificate } from "crypto";
+import { createCipheriv, createDecipheriv, randomBytes, X509Certificate } from "crypto";
 import selfsigned from "selfsigned";
 import Database from "better-sqlite3";
 
@@ -134,6 +134,11 @@ function getDefaultConfig() {
     backupLastAt: 0,
     backupLastPath: "",
     backupLastError: "",
+    localBackupEnabled: true,
+    localBackupRetention: 7,
+    localBackupLastAt: 0,
+    localBackupLastPath: "",
+    localBackupLastError: "",
   };
 }
 
@@ -151,6 +156,10 @@ function getOutboxPath() {
 
 function getSqlitePath() {
   return process.env.OTTO_SQLITE_PATH || path.join(getDataDir(), "otto.sqlite");
+}
+
+function getLocalBackupDir() {
+  return path.join(app.getPath("userData"), "backups");
 }
 
 function normalizeHex(value) {
@@ -389,6 +398,89 @@ function canEncryptOutbox() {
   }
 }
 
+function getOutboxKeyPath() {
+  return path.join(app.getPath("userData"), "outbox-key.bin");
+}
+
+function getOrCreateOutboxKey() {
+  const keyPath = getOutboxKeyPath();
+  try {
+    if (fs.existsSync(keyPath)) {
+      const raw = fs.readFileSync(keyPath);
+      if (Buffer.isBuffer(raw) && raw.length === 32) return raw;
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const key = randomBytes(32);
+    fs.mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(keyPath, key, { mode: 0o600 });
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+function encryptOutboxString(plaintext) {
+  const text = typeof plaintext === "string" ? plaintext : JSON.stringify(plaintext ?? "");
+
+  if (canEncryptOutbox()) {
+    return {
+      mode: "safeStorage",
+      payload: safeStorage.encryptString(text).toString("base64"),
+    };
+  }
+
+  const key = getOrCreateOutboxKey();
+  if (!key) {
+    throw new Error("Outbox encryption unavailable (no key storage)");
+  }
+
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const packed = Buffer.concat([iv, tag, ciphertext]).toString("base64");
+  return { mode: "aes-256-gcm", payload: packed };
+}
+
+function decryptOutboxString(mode, payload) {
+  const m = String(mode || "");
+  const p = typeof payload === "string" ? payload : "";
+  if (!p) return null;
+
+  if (m === "safeStorage") {
+    if (!canEncryptOutbox()) return null;
+    try {
+      return safeStorage.decryptString(Buffer.from(p, "base64"));
+    } catch {
+      return null;
+    }
+  }
+
+  if (m === "aes-256-gcm") {
+    const key = getOrCreateOutboxKey();
+    if (!key) return null;
+    try {
+      const packed = Buffer.from(p, "base64");
+      if (packed.length < 12 + 16) return null;
+      const iv = packed.subarray(0, 12);
+      const tag = packed.subarray(12, 28);
+      const ciphertext = packed.subarray(28);
+      const decipher = createDecipheriv("aes-256-gcm", key, iv);
+      decipher.setAuthTag(tag);
+      const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+      return plaintext;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 function readOutboxItems() {
   const outboxPath = getOutboxPath();
   if (!fs.existsSync(outboxPath)) return [];
@@ -399,15 +491,23 @@ function readOutboxItems() {
     if (!parsed || typeof parsed !== "object") return [];
 
     if (parsed.encrypted === true) {
-      if (!canEncryptOutbox()) return [];
-      const payload = typeof parsed.payload === "string" ? parsed.payload : "";
-      if (!payload) return [];
-      const decrypted = safeStorage.decryptString(Buffer.from(payload, "base64"));
+      const mode = parsed.mode;
+      const payload = parsed.payload;
+      const decrypted = decryptOutboxString(mode, payload);
+      if (!decrypted) return [];
       const items = JSON.parse(decrypted);
       return Array.isArray(items) ? items : [];
     }
 
     const items = Array.isArray(parsed.items) ? parsed.items : [];
+    // Migrate legacy plaintext outbox to encrypted storage.
+    if (items.length > 0) {
+      try {
+        writeOutboxItems(items);
+      } catch {
+        // ignore migration failures
+      }
+    }
     return items;
   } catch {
     return [];
@@ -419,19 +519,14 @@ function writeOutboxItems(items) {
   fs.mkdirSync(path.dirname(outboxPath), { recursive: true, mode: 0o700 });
 
   const capped = Array.isArray(items) ? items.slice(-500) : [];
-  const encrypt = canEncryptOutbox();
 
-  const payload = encrypt
-    ? {
-        version: 1,
-        encrypted: true,
-        payload: safeStorage.encryptString(JSON.stringify(capped)).toString("base64"),
-      }
-    : {
-        version: 1,
-        encrypted: false,
-        items: capped,
-      };
+  const encrypted = encryptOutboxString(JSON.stringify(capped));
+  const payload = {
+    version: 2,
+    encrypted: true,
+    mode: encrypted.mode,
+    payload: encrypted.payload,
+  };
 
   fs.writeFileSync(outboxPath, JSON.stringify(payload, null, 2), { mode: 0o600 });
 }
@@ -981,12 +1076,117 @@ async function showDiagnostics() {
   const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
   const appVersion = app.getVersion();
   const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+  const outboxItems = readOutboxItems();
+  const outboxCount = outboxItems.length;
+  const outboxOldestAt = outboxItems.reduce((min, item) => {
+    const ts = Number(item?.createdAt) || 0;
+    if (!ts) return min;
+    return min ? Math.min(min, ts) : ts;
+  }, 0);
+  const outboxNewestAt = outboxItems.reduce((max, item) => {
+    const ts = Number(item?.createdAt) || 0;
+    return Math.max(max, ts);
+  }, 0);
+  const outboxFailures = outboxItems.filter((i) => i?.lastError).length;
+  const outboxMaxAttempts = outboxItems.reduce((max, item) => {
+    const attempts = Number(item?.attempts) || 0;
+    return Math.max(max, attempts);
+  }, 0);
+  const safeStorageAvailable = canEncryptOutbox();
+
+  const fetchJson = async (urlString) => {
+    return await new Promise((resolve) => {
+      let url;
+      try {
+        url = new URL(urlString);
+      } catch {
+        return resolve(null);
+      }
+
+      const client = url.protocol === "https:" ? https : http;
+      const req = client.request(
+        {
+          method: "GET",
+          hostname: url.hostname,
+          port: url.port || (url.protocol === "https:" ? 443 : 80),
+          path: url.pathname + (url.search || ""),
+          timeout: 3000,
+          rejectUnauthorized: false, // Host uses self-signed cert
+        },
+        (res) => {
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => {
+            try {
+              const text = Buffer.concat(chunks).toString("utf8");
+              const json = JSON.parse(text);
+              resolve(json);
+            } catch {
+              resolve(null);
+            }
+          });
+        },
+      );
+
+      req.on("error", () => resolve(null));
+      req.on("timeout", () => {
+        try {
+          req.destroy();
+        } catch {
+          // ignore
+        }
+        resolve(null);
+      });
+      req.end();
+    });
+  };
+
+  const licenseSnapshot = await fetchJson(`${config.hostUrl}/api/license/status`);
+
+  const formatWhen = (ts) => (ts ? new Date(ts).toLocaleString() : "never");
+  const networkBackupStatus =
+    config.mode === "host"
+      ? config.backupEnabled === false
+        ? "disabled"
+        : config.backupDir
+          ? config.backupLastError
+            ? "error"
+            : config.backupLastAt
+              ? `last ${formatWhen(config.backupLastAt)}`
+              : "configured"
+          : "not set up"
+      : null;
+
+  const localBackupStatus =
+    config.mode === "host"
+      ? config.localBackupEnabled === false
+        ? "disabled"
+        : config.localBackupLastError
+          ? "error"
+          : config.localBackupLastAt
+            ? `last ${formatWhen(config.localBackupLastAt)}`
+            : "pending"
+      : null;
+
   const details = [
     `App version: ${appVersion}`,
     `Mode: ${config.mode}`,
     `Host URL: ${config.hostUrl}`,
     `Protocol: ${protocol}`,
     `Port: ${port}`,
+    `License: ${licenseSnapshot?.mode ? `${licenseSnapshot.mode} (${licenseSnapshot.message || ""})` : "unavailable"}`,
+    config.mode === "host" ? `Backups (network): ${networkBackupStatus}` : null,
+    config.mode === "host" && config.backupDir ? `Network backup folder: ${config.backupDir}` : null,
+    config.mode === "host" && config.backupLastPath ? `Network backup last file:\n${config.backupLastPath}` : null,
+    config.mode === "host" && config.backupLastError ? `Network backup last error: ${config.backupLastError}` : null,
+    config.mode === "host" ? `Backups (local): ${localBackupStatus}` : null,
+    config.mode === "host" && config.localBackupEnabled !== false ? `Local backup folder: ${getLocalBackupDir()}` : null,
+    config.mode === "host" && config.localBackupLastPath ? `Local backup last file:\n${config.localBackupLastPath}` : null,
+    config.mode === "host" && config.localBackupLastError ? `Local backup last error: ${config.localBackupLastError}` : null,
+    `Offline outbox: ${outboxCount} pending (encrypted; safeStorage=${safeStorageAvailable ? "yes" : "no"})`,
+    outboxCount ? `Outbox oldest: ${formatWhen(outboxOldestAt)}` : null,
+    outboxCount ? `Outbox newest: ${formatWhen(outboxNewestAt)}` : null,
+    outboxCount ? `Outbox failures: ${outboxFailures} (max attempts=${outboxMaxAttempts})` : null,
     "",
     `User data: ${app.getPath("userData")}`,
     `Config: ${getConfigPath()}`,
@@ -995,7 +1195,9 @@ async function showDiagnostics() {
     "",
     `Startup log: ${getStartupLogPath()}`,
     `Error log: ${getErrorLogPath()}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const { response } = await dialog.showMessageBox({
     type: "info",
@@ -1010,6 +1212,222 @@ async function showDiagnostics() {
     clipboard.writeText(details);
   } else if (response === 1) {
     shell.showItemInFolder(getStartupLogPath());
+  }
+}
+
+function sanitizeConfigForSupport(config) {
+  const cloned = { ...(config || {}) };
+  if (typeof cloned.pairingCode === "string" && cloned.pairingCode) cloned.pairingCode = "[REDACTED]";
+  if (typeof cloned.trustedFingerprint256 === "string" && cloned.trustedFingerprint256) cloned.trustedFingerprint256 = "[REDACTED]";
+  return cloned;
+}
+
+function readErrorLogSummary(limit = 200) {
+  const logPath = getErrorLogPath();
+  try {
+    if (!fs.existsSync(logPath)) return { total: 0, last24Hours: 0, lastHour: 0, byStatusCode: {}, byPath: {} };
+    const raw = fs.readFileSync(logPath, "utf-8");
+    const entries = JSON.parse(raw);
+    if (!Array.isArray(entries)) return { total: 0, last24Hours: 0, lastHour: 0, byStatusCode: {}, byPath: {} };
+
+    const now = Date.now();
+    const hourAgo = now - 60 * 60 * 1000;
+    const dayAgo = now - 24 * 60 * 60 * 1000;
+
+    const stats = {
+      total: entries.length,
+      last24Hours: 0,
+      lastHour: 0,
+      byStatusCode: {},
+      byPath: {},
+    };
+
+    for (const entry of entries.slice(0, Math.max(0, Number(limit) || 200))) {
+      const ts = new Date(entry?.timestamp || 0).getTime();
+      if (ts > dayAgo) stats.last24Hours += 1;
+      if (ts > hourAgo) stats.lastHour += 1;
+
+      const status = Number(entry?.statusCode) || 0;
+      if (status) stats.byStatusCode[status] = (stats.byStatusCode[status] || 0) + 1;
+
+      const rawPath = String(entry?.path || "");
+      const normalized = rawPath.replace(/\/[0-9a-f-]{36}/gi, "/:id").replace(/\/\d+/g, "/:id");
+      if (normalized) stats.byPath[normalized] = (stats.byPath[normalized] || 0) + 1;
+    }
+
+    return stats;
+  } catch {
+    return { total: 0, last24Hours: 0, lastHour: 0, byStatusCode: {}, byPath: {} };
+  }
+}
+
+function summarizeOutboxItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  const oldestAt = list.reduce((min, item) => {
+    const ts = Number(item?.createdAt) || 0;
+    if (!ts) return min;
+    return min ? Math.min(min, ts) : ts;
+  }, 0);
+
+  const newestAt = list.reduce((max, item) => {
+    const ts = Number(item?.createdAt) || 0;
+    return Math.max(max, ts);
+  }, 0);
+
+  const failures = list.filter((i) => i?.lastError).length;
+  const maxAttempts = list.reduce((max, item) => {
+    const attempts = Number(item?.attempts) || 0;
+    return Math.max(max, attempts);
+  }, 0);
+
+  const sample = list.slice(-50).map((item) => ({
+    id: item?.id,
+    origin: item?.origin,
+    method: item?.method,
+    url: item?.url,
+    createdAt: item?.createdAt,
+    attempts: item?.attempts,
+    lastError: item?.lastError,
+  }));
+
+  return {
+    count: list.length,
+    oldestAt: oldestAt || null,
+    newestAt: newestAt || null,
+    failures,
+    maxAttempts,
+    sample,
+  };
+}
+
+async function exportSupportBundle() {
+  const config = readConfig();
+  const appVersion = app.getVersion();
+  const port = process.env.PORT || "5150";
+  const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
+
+  const stamp = (() => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  })();
+
+  const defaultName = `otto-support-bundle-${stamp}.json`;
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    title: "Export Support Bundle",
+    defaultPath: path.join(app.getPath("documents"), defaultName),
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+
+  if (canceled || !filePath) return;
+
+  const fetchJson = async (urlString) => {
+    return await new Promise((resolve) => {
+      let url;
+      try {
+        url = new URL(urlString);
+      } catch {
+        return resolve(null);
+      }
+
+      const client = url.protocol === "https:" ? https : http;
+      const req = client.request(
+        {
+          method: "GET",
+          hostname: url.hostname,
+          port: url.port || (url.protocol === "https:" ? 443 : 80),
+          path: url.pathname + (url.search || ""),
+          timeout: 3000,
+          rejectUnauthorized: false,
+        },
+        (res) => {
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => {
+            try {
+              const text = Buffer.concat(chunks).toString("utf8");
+              const json = JSON.parse(text);
+              resolve(json);
+            } catch {
+              resolve(null);
+            }
+          });
+        },
+      );
+
+      req.on("error", () => resolve(null));
+      req.on("timeout", () => {
+        try {
+          req.destroy();
+        } catch {
+          // ignore
+        }
+        resolve(null);
+      });
+      req.end();
+    });
+  };
+
+  const licenseSnapshot = await fetchJson(`${config.hostUrl}/api/license/status`);
+
+  const bundle = {
+    generatedAt: new Date().toISOString(),
+    app: {
+      name: APP_DISPLAY_NAME,
+      version: appVersion,
+      platform: process.platform,
+      arch: process.arch,
+      electron: process.versions?.electron,
+      chrome: process.versions?.chrome,
+      node: process.versions?.node,
+    },
+    runtime: {
+      mode: config.mode,
+      hostUrl: config.hostUrl,
+      protocol,
+      port,
+      env: {
+        OTTO_AIRGAP: process.env.OTTO_AIRGAP,
+        OTTO_LAN_ONLY: process.env.OTTO_LAN_ONLY,
+        OTTO_TLS: process.env.OTTO_TLS,
+        OTTO_COOKIE_SECURE: process.env.OTTO_COOKIE_SECURE,
+        OTTO_LICENSE_BASE_URL: process.env.OTTO_LICENSE_BASE_URL,
+        OTTO_EGRESS_ALLOWLIST: process.env.OTTO_EGRESS_ALLOWLIST,
+        OTTO_DISABLE_SMS: process.env.OTTO_DISABLE_SMS,
+        OTTO_ENABLE_AI_SUMMARY: process.env.OTTO_ENABLE_AI_SUMMARY,
+        OTTO_ALLOW_PHI_EGRESS: process.env.OTTO_ALLOW_PHI_EGRESS,
+      },
+    },
+    paths: {
+      userData: app.getPath("userData"),
+      config: getConfigPath(),
+      sqlite: getSqlitePath(),
+      dataDir: process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker"),
+      startupLog: getStartupLogPath(),
+      errorLog: getErrorLogPath(),
+      outbox: getOutboxPath(),
+    },
+    config: sanitizeConfigForSupport(config),
+    license: licenseSnapshot,
+    outbox: summarizeOutboxItems(readOutboxItems()),
+    errors: readErrorLogSummary(),
+    note:
+      "This support bundle is non-PHI by design: it does not include the SQLite database, patient/job records, or offline outbox request bodies.",
+  };
+
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(bundle, null, 2), { mode: 0o600 });
+    await dialog.showMessageBox({
+      type: "info",
+      message: "Support bundle exported.",
+      detail: `Saved to:\n${filePath}\n\nThis bundle does not include patient/job data.`,
+    });
+  } catch (error) {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "Could not export support bundle.",
+      detail: String(error?.message || error),
+    });
   }
 }
 
@@ -1065,6 +1483,16 @@ ipcMain.handle("otto:outbox:replace", async (_event, items) => {
 
 ipcMain.handle("otto:outbox:clear", async () => {
   writeOutboxItems([]);
+  return { ok: true };
+});
+
+ipcMain.handle("otto:diagnostics:show", async () => {
+  await showDiagnostics();
+  return { ok: true };
+});
+
+ipcMain.handle("otto:supportBundle:export", async () => {
+  await exportSupportBundle();
   return { ok: true };
 });
 
@@ -1266,6 +1694,95 @@ function enforceBackupRetention(dirPath, retentionCount) {
   }
 }
 
+async function runBackupToLocalFolder({ interactive, reason }) {
+  const sqlitePath = getSqlitePath();
+  if (!fs.existsSync(sqlitePath)) {
+    if (interactive) {
+      await dialog.showMessageBox({
+        type: "error",
+        message: "No data to back up yet.",
+        detail: "The database file was not found. Create at least one office/user/job first, then try again.",
+      });
+    }
+    return;
+  }
+
+  const config = readConfig();
+  if (config.mode !== "host") return;
+  if (config.localBackupEnabled === false) return;
+
+  const backupDir = getLocalBackupDir();
+  try {
+    fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    const updated = readConfig();
+    writeConfig({ ...updated, localBackupLastError: error?.message || String(error) });
+    if (interactive) {
+      await dialog.showMessageBox({
+        type: "error",
+        message: "Local backup failed.",
+        detail: `Folder:\n${backupDir}\n\nError:\n${error?.message || error}`,
+      });
+    }
+    return;
+  }
+
+  const stamp = formatBackupTimestamp(new Date());
+  const finalPath = path.join(backupDir, `otto-backup-${stamp}.sqlite`);
+  const tempPath = `${finalPath}.tmp`;
+
+  const db = new Database(sqlitePath, { fileMustExist: true });
+  try {
+    try {
+      await db.backup(tempPath);
+      fs.renameSync(tempPath, finalPath);
+
+      const updated = readConfig();
+      writeConfig({
+        ...updated,
+        localBackupLastAt: Date.now(),
+        localBackupLastPath: finalPath,
+        localBackupLastError: "",
+      });
+
+      enforceBackupRetention(backupDir, updated.localBackupRetention);
+    } catch (error) {
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      } catch {
+        // ignore
+      }
+
+      const updated = readConfig();
+      writeConfig({
+        ...updated,
+        localBackupLastError: error?.message || String(error),
+      });
+
+      if (interactive) {
+        await dialog.showMessageBox({
+          type: "error",
+          message: "Local backup failed.",
+          detail: `Folder:\n${backupDir}\n\nError:\n${error?.message || error}`,
+        });
+      }
+      return;
+    }
+  } finally {
+    db.close();
+  }
+
+  if (interactive) {
+    await dialog.showMessageBox({
+      type: "info",
+      message: "Local backup saved.",
+      detail:
+        `Saved to:\n${finalPath}\n\n` +
+        "This is a local backup on the Host computer. For disaster recovery, set up a shared office network backup folder too.",
+    });
+  }
+}
+
 async function runBackupToNetworkFolder({ interactive, reason }) {
   const sqlitePath = getSqlitePath();
   if (!fs.existsSync(sqlitePath)) {
@@ -1367,7 +1884,9 @@ async function restoreDatabase() {
     filters: [{ name: "SQLite Backup", extensions: ["sqlite", "db"] }],
     defaultPath: (() => {
       const config = readConfig();
-      return config.backupDir || app.getPath("documents");
+      if (config.backupDir) return config.backupDir;
+      if (config.localBackupEnabled !== false) return getLocalBackupDir();
+      return app.getPath("documents");
     })(),
   });
 
@@ -1397,21 +1916,34 @@ function scheduleAutomaticBackups() {
 
   const config = readConfig();
   if (config.mode !== "host") return;
-  if (config.backupEnabled === false) return;
-  if (!config.backupDir) return;
 
   const ONE_DAY_MS = 1000 * 60 * 60 * 24;
-  const lastAt = Number(config.backupLastAt) || 0;
   const now = Date.now();
-  const due = now - lastAt > ONE_DAY_MS;
+  const localEnabled = config.localBackupEnabled !== false;
+  const networkEnabled = config.backupEnabled !== false && Boolean(config.backupDir);
 
-  if (due) {
+  const localLastAt = Number(config.localBackupLastAt) || 0;
+  const networkLastAt = Number(config.backupLastAt) || 0;
+
+  const dueLocal = localEnabled && now - localLastAt > ONE_DAY_MS;
+  const dueNetwork = networkEnabled && now - networkLastAt > ONE_DAY_MS;
+
+  if (dueLocal) {
+    setTimeout(() => {
+      runBackupToLocalFolder({ interactive: false, reason: "startup" }).catch(() => {});
+    }, 30_000);
+  }
+
+  if (dueNetwork) {
     setTimeout(() => {
       runBackupToNetworkFolder({ interactive: false, reason: "startup" }).catch(() => {});
     }, 30_000);
   }
 
+  if (!localEnabled && !networkEnabled) return;
+
   automaticBackupInterval = setInterval(() => {
+    runBackupToLocalFolder({ interactive: false, reason: "scheduled" }).catch(() => {});
     runBackupToNetworkFolder({ interactive: false, reason: "scheduled" }).catch(() => {});
   }, ONE_DAY_MS);
 }
@@ -1430,7 +1962,7 @@ async function maybePromptForBackupFolder() {
     message: "Set up daily backups (recommended)",
     detail:
       "Otto Tracker can automatically save a daily backup to a shared office network folder.\n\n" +
-      "This helps you recover if the Host computer is replaced.\n\n" +
+      "Local backups run automatically on this Host, but a shared network backup helps you recover if the Host computer is replaced.\n\n" +
       "Choose a network folder now?",
   });
 
@@ -1443,46 +1975,75 @@ async function maybeWarnAboutBackups() {
   if (backupWarningShown) return;
   const config = readConfig();
   if (config.mode !== "host") return;
-  if (config.backupEnabled === false) return;
-  if (!config.backupDir) return;
 
   const now = Date.now();
-  const lastAt = Number(config.backupLastAt) || 0;
-  const tooOld = !lastAt || now - lastAt > 1000 * 60 * 60 * 24 * 2; // 2 days
-  const hasError = Boolean(config.backupLastError);
+  const localHasError = config.localBackupEnabled !== false && Boolean(config.localBackupLastError);
 
-  if (!tooOld && !hasError) return;
+  const networkHasFolder = Boolean(config.backupDir);
+  const networkEnabled = config.backupEnabled !== false;
+  const networkLastAt = Number(config.backupLastAt) || 0;
+  const networkTooOld = networkHasFolder && (!networkLastAt || now - networkLastAt > 1000 * 60 * 60 * 24 * 2); // 2 days
+  const networkHasError = networkHasFolder && Boolean(config.backupLastError);
+
+  const networkNeedsAttention = networkEnabled && networkHasFolder && (networkTooOld || networkHasError);
+  const localNeedsAttention = localHasError;
+
+  if (!networkNeedsAttention && !localNeedsAttention) return;
   backupWarningShown = true;
 
   const detailParts = [];
-  if (lastAt) {
-    detailParts.push(`Last backup: ${new Date(lastAt).toLocaleString()}`);
-  } else {
-    detailParts.push("Last backup: never");
+  if (networkNeedsAttention) {
+    detailParts.push("Network backups");
+    if (networkLastAt) {
+      detailParts.push(`Last backup: ${new Date(networkLastAt).toLocaleString()}`);
+    } else {
+      detailParts.push("Last backup: never");
+    }
+    if (config.backupLastPath) {
+      detailParts.push(`Last backup file:\n${config.backupLastPath}`);
+    }
+    if (networkHasError) {
+      detailParts.push(`Last error:\n${config.backupLastError}`);
+    }
   }
-  if (config.backupLastPath) {
-    detailParts.push(`Last backup file:\n${config.backupLastPath}`);
+
+  if (localNeedsAttention) {
+    if (detailParts.length) detailParts.push("");
+    detailParts.push("Local backups");
+    detailParts.push(`Folder:\n${getLocalBackupDir()}`);
+    detailParts.push(`Last error:\n${config.localBackupLastError}`);
   }
-  if (hasError) {
-    detailParts.push(`Last error:\n${config.backupLastError}`);
+
+  const actions = [];
+  if (networkNeedsAttention) {
+    actions.push({ label: "Back Up Now", run: () => runBackupToNetworkFolder({ interactive: true, reason: "manual" }) });
+    actions.push({
+      label: "Choose Backup Folder…",
+      run: async () => {
+        const chosen = await chooseNetworkBackupFolder();
+        if (chosen) scheduleAutomaticBackups();
+      },
+    });
   }
+  if (localNeedsAttention) {
+    actions.push({ label: "Retry Local Backup", run: () => runBackupToLocalFolder({ interactive: true, reason: "manual" }) });
+  }
+  actions.push({ label: "OK", run: null });
 
   const result = await dialog.showMessageBox({
     type: "warning",
-    buttons: ["Back Up Now", "Choose Backup Folder…", "OK"],
+    buttons: actions.map((a) => a.label),
     defaultId: 0,
-    cancelId: 2,
+    cancelId: actions.length - 1,
     message: "Backups need attention",
     detail:
       detailParts.join("\n\n") +
       "\n\nDaily backups help you recover if the Host computer is replaced.",
   });
 
-  if (result.response === 0) {
-    await runBackupToNetworkFolder({ interactive: true, reason: "manual" });
-  } else if (result.response === 1) {
-    const chosen = await chooseNetworkBackupFolder();
-    if (chosen) scheduleAutomaticBackups();
+  const picked = actions[result.response];
+  if (picked?.run) {
+    await picked.run();
   }
 }
 
@@ -1518,6 +2079,7 @@ function setAppMenu(config) {
           : []),
         { label: "Change Connection…", click: () => createSetupWindow() },
         { label: "Diagnostics…", click: () => showDiagnostics() },
+        { label: "Export Support Bundle…", click: () => exportSupportBundle() },
         { type: "separator" },
         { role: "quit" },
       ],

@@ -4,17 +4,17 @@ import {
   useMutation,
   UseMutationResult,
 } from "@tanstack/react-query";
-import { insertUserSchema, User as SelectUser, InsertUser } from "@shared/schema";
+import type { PublicUser, InsertUser } from "@shared/schema";
 import { getQueryFn, apiRequest, queryClient } from "../lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type AuthContextType = {
-  user: SelectUser | null;
+  user: PublicUser | null;
   isLoading: boolean;
   error: Error | null;
-  loginMutation: UseMutationResult<SelectUser, Error, LoginData>;
+  loginMutation: UseMutationResult<PublicUser, Error, LoginData>;
   logoutMutation: UseMutationResult<void, Error, void>;
-  registerMutation: UseMutationResult<SelectUser, Error, RegisterData>;
+  registerMutation: UseMutationResult<PublicUser, Error, RegisterData>;
 };
 
 type LoginData = Pick<InsertUser, "email" | "password">;
@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     data: user,
     error,
     isLoading,
-  } = useQuery<SelectUser | undefined, Error>({
+  } = useQuery<PublicUser | undefined, Error>({
     queryKey: ["/api/user"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     onMutate: () => {
       queryClient.clear();
     },
-    onSuccess: (user: SelectUser) => {
+    onSuccess: (user: PublicUser) => {
       queryClient.setQueryData(["/api/user"], user);
     },
     onError: (error: Error) => {
@@ -63,7 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     onMutate: () => {
       queryClient.clear();
     },
-    onSuccess: (user: SelectUser) => {
+    onSuccess: (user: PublicUser) => {
       queryClient.setQueryData(["/api/user"], user);
     },
     onError: (error: Error) => {

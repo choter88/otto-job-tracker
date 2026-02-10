@@ -23,7 +23,7 @@ The simplest desktop conversion keeps the web UI and API exactly as-is, but runs
 - Serves the web UI/API to desktop clients on the LAN
 
 2) **Client mode**
-- Does **not** store ePHI locally
+- Does **not** store the office database locally (may temporarily store a small **encrypted offline queue** to sync writes)
 - Opens a desktop window pointed at the Host’s URL (for example `https://SOT-IP:5150`) — no separate browser required
 - First-time connection uses a **pairing code** (shown on the Host) to trust the Host certificate
 

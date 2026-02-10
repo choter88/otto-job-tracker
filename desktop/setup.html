@@ -42,7 +42,10 @@
           <input type="radio" name="mode" value="client" />
           This computer is a Client (connects to an existing Host)
         </label>
-        <div class="hint">No data is stored locally on the Client.</div>
+        <div class="hint">
+          Does not store the office database locally. If you make changes while disconnected, Otto Tracker may keep a small <b>encrypted</b>
+          offline queue temporarily to sync those changes once the connection returns.
+        </div>
       </div>
 
       <div id="clientSettings" style="display:none">

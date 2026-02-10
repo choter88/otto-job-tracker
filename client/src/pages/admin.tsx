@@ -44,7 +44,7 @@ import {
   XCircle
 } from "lucide-react";
 import { format } from "date-fns";
-import type { Office, User, AdminAuditLog } from "@shared/schema";
+import type { Office, PublicUser, AdminAuditLog } from "@shared/schema";
 
 interface PlatformStats {
   totalOffices: number;
@@ -61,7 +61,7 @@ interface OfficeWithStats extends Office {
 
 interface OfficeDetails {
   office: Office;
-  users: User[];
+  users: PublicUser[];
   activeJobs: number;
   completedJobs: number;
   totalJobs: number;

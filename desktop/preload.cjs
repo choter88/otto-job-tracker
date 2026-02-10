@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld("otto", {
   outboxGet: () => ipcRenderer.invoke("otto:outbox:get"),
   outboxReplace: (items) => ipcRenderer.invoke("otto:outbox:replace", items),
   outboxClear: () => ipcRenderer.invoke("otto:outbox:clear"),
+  showDiagnostics: () => ipcRenderer.invoke("otto:diagnostics:show"),
+  exportSupportBundle: () => ipcRenderer.invoke("otto:supportBundle:export"),
 });

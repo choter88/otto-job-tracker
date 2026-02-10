@@ -87,7 +87,7 @@ This replaces the Host’s current data with the backup.
 ## If the office network drops briefly
 
 - Otto Tracker will show a banner that it’s disconnected.
-- If you make changes while disconnected, Otto Tracker will **save them offline** and **sync automatically** once the connection comes back.
+- If you make changes while disconnected, Otto Tracker will **save them locally (encrypted)** and **sync automatically** once the connection comes back.
 
 ## Host sleep settings (recommended)
 

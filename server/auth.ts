@@ -14,6 +14,11 @@ declare global {
   }
 }
 
+function withoutPassword(user: SelectUser) {
+  const { password: _password, ...rest } = user;
+  return rest;
+}
+
 // HIPAA-compliant password complexity requirements
 export function validatePasswordComplexity(password: string): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
@@ -234,12 +239,12 @@ export function setupAuth(app: Express) {
 
     req.login(user, (err) => {
       if (err) return next(err);
-      res.status(201).json(user);
+      res.status(201).json(withoutPassword(user));
     });
   });
 
   app.post("/api/login", passport.authenticate("local"), (req, res) => {
-    res.status(200).json(req.user);
+    res.status(200).json(withoutPassword(req.user as SelectUser));
   });
 
   app.post("/api/logout", (req, res, next) => {
@@ -251,7 +256,7 @@ export function setupAuth(app: Express) {
 
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    res.json(req.user);
+    res.json(withoutPassword(req.user as SelectUser));
   });
 
   return sessionMiddleware;

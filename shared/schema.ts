@@ -424,6 +424,7 @@ export const insertPhiAccessLogSchema = createInsertSchema(phiAccessLogs).omit({
 
 // Type exports
 export type User = typeof users.$inferSelect;
+export type PublicUser = Omit<User, "password">;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Office = typeof offices.$inferSelect;
 export type InsertOffice = z.infer<typeof insertOfficeSchema>;

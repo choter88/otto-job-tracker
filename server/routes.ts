@@ -23,7 +23,7 @@ import {
   insertAdminAuditLogSchema,
 } from "@shared/schema";
 import { sendSMS } from "./twilioClient";
-import { requireAdmin } from "./middleware";
+import { requireAdmin, requireAuth, requireNotViewOnly, requireOffice, requireRole, requireSameOfficeParam } from "./middleware";
 import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob } from "./notification-service";
 import { generateJobSummary, checkAndRegenerateSummary } from "./ai-summary-service";
 import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
@@ -67,6 +67,12 @@ async function logPhiAccess(
     console.error('Failed to log PHI access:', error);
     // Don't throw - logging failure shouldn't break the request
   }
+}
+
+function withoutPassword<T extends Record<string, any> | null | undefined>(user: T): Omit<NonNullable<T>, "password"> | null {
+  if (!user || typeof user !== "object") return null;
+  const { password: _password, ...rest } = user as any;
+  return rest;
 }
 
 export type AppServer = HttpServer | HttpsServer;
@@ -138,12 +144,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     res.json(getLicenseSnapshot());
   });
 
-  app.post("/api/license/activate", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (req.user.role !== "owner" && req.user.role !== "super_admin") {
-      return res.status(403).json({ error: "Only the Owner can do this" });
-    }
-
+  app.post("/api/license/activate", requireAuth, requireRole(["owner"]), async (req, res) => {
     try {
       const activationCode =
         typeof req.body?.activationCode === "string" ? req.body.activationCode.trim() : "";
@@ -155,12 +156,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/license/checkin", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (req.user.role !== "owner" && req.user.role !== "super_admin") {
-      return res.status(403).json({ error: "Only the Owner can do this" });
-    }
-
+  app.post("/api/license/checkin", requireAuth, requireRole(["owner"]), async (req, res) => {
     try {
       const snapshot = await forceCheckin();
       res.json(snapshot);
@@ -334,7 +330,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         res.status(201).json({
           ok: true,
           office: updatedOffice,
-          user,
+          user: withoutPassword(user),
           staffCode,
           license: licenseSnapshot,
           activationWarning,
@@ -482,7 +478,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         res.status(201).json({
           ok: true,
           office,
-          user,
+          user: withoutPassword(user),
           staffCode,
           importedCounts: result.importedCounts,
           license: licenseSnapshot,
@@ -494,11 +490,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/setup/staff-code/regenerate", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-    if (req.user.role !== "owner") return res.status(403).json({ error: "Only the owner can do this" });
-
+  app.post("/api/setup/staff-code/regenerate", requireOffice, requireRole(["owner"]), async (req, res) => {
     try {
       const office = await storage.getOffice(req.user.officeId);
       if (!office) return res.status(404).json({ error: "Office not found" });
@@ -520,10 +512,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Job routes
-  app.get("/api/jobs", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.get("/api/jobs", requireOffice, async (req, res) => {
     try {
       const jobs = await storage.getJobsByOffice(req.user.officeId);
       
@@ -537,10 +526,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Check for duplicate tray number
-  app.get("/api/jobs/check-tray-number", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-    
+  app.get("/api/jobs/check-tray-number", requireOffice, async (req, res) => {
     try {
       const { trayNumber, excludeJobId } = req.query;
       if (!trayNumber || typeof trayNumber !== 'string') {
@@ -559,10 +545,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/jobs", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-    
+  app.post("/api/jobs", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const requestedId = typeof req.body?.id === "string" ? req.body.id.trim() : "";
       if (requestedId) {
@@ -618,39 +601,87 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.put("/api/jobs/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.put("/api/jobs/:id", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const oldJob = await storage.getJob(req.params.id);
+      if (!oldJob || oldJob.officeId !== req.user.officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const rawBody = req.body && typeof req.body === "object" ? req.body : {};
+      const allowedFields = [
+        "patientFirstName",
+        "patientLastName",
+        "trayNumber",
+        "phone",
+        "jobType",
+        "status",
+        "orderDestination",
+        "customColumnValues",
+        "isRedoJob",
+        "originalJobId",
+        "notes",
+      ];
+
+      const updates: Record<string, any> = {};
+      for (const field of allowedFields) {
+        if (Object.prototype.hasOwnProperty.call(rawBody, field)) {
+          updates[field] = (rawBody as any)[field];
+        }
+      }
+
+      // Trim string fields.
+      for (const key of Object.keys(updates)) {
+        if (typeof updates[key] === "string") {
+          updates[key] = updates[key].trim();
+        }
+      }
+
+      for (const requiredKey of ["patientFirstName", "patientLastName", "jobType", "status", "orderDestination"]) {
+        if (Object.prototype.hasOwnProperty.call(updates, requiredKey)) {
+          const value = updates[requiredKey];
+          if (typeof value !== "string" || !value.trim()) {
+            return res.status(400).json({ error: `${requiredKey} is required` });
+          }
+        }
+      }
+
+      const trayNumberProvided = Object.prototype.hasOwnProperty.call(updates, "trayNumber");
+      const requestedTrayNumber = typeof updates.trayNumber === "string" ? updates.trayNumber : "";
       
       // Check for duplicate tray number if tray number is being updated
-      if (req.body.trayNumber && oldJob) {
+      if (trayNumberProvided) {
         const office = await storage.getOffice(oldJob.officeId);
         const officeSettings = (office?.settings || {}) as Record<string, any>;
         const jobIdentifierMode = officeSettings.jobIdentifierMode || "patientName";
         
-        if (jobIdentifierMode === "trayNumber" && req.body.trayNumber !== oldJob.trayNumber) {
-          const existingJob = await storage.getJobByTrayNumber(oldJob.officeId, req.body.trayNumber.trim(), req.params.id);
-          if (existingJob) {
-            return res.status(409).json({ 
-              error: "Duplicate tray number", 
-              message: "A job with this tray number already exists. Please check for accuracy.",
-              existingJobId: existingJob.id 
-            });
+        if (jobIdentifierMode === "trayNumber") {
+          if (!requestedTrayNumber) {
+            return res.status(400).json({ error: "Tray number is required when using tray identifier mode" });
+          }
+
+          if (requestedTrayNumber !== oldJob.trayNumber) {
+            const existingJob = await storage.getJobByTrayNumber(oldJob.officeId, requestedTrayNumber, req.params.id);
+            if (existingJob) {
+              return res.status(409).json({ 
+                error: "Duplicate tray number", 
+                message: "A job with this tray number already exists. Please check for accuracy.",
+                existingJobId: existingJob.id 
+              });
+            }
           }
         }
       }
       
-      const job = await storage.updateJob(req.params.id, req.body, req.user.id);
+      const job = await storage.updateJob(req.params.id, updates as any, req.user.id);
       
       // Log PHI access for updating patient record
       await logPhiAccess(req, 'update', 'job', job.id, job.orderId, { 
-        updatedFields: Object.keys(req.body),
+        updatedFields: Object.keys(updates),
         patientId: job.trayNumber || `${job.patientFirstName} ${job.patientLastName}`.trim()
       });
       
-      if (oldJob && req.body.status && oldJob.status !== req.body.status) {
+      if (oldJob && updates.status && oldJob.status !== updates.status) {
         // Send notifications while job still exists in database (fixes FK violation)
         await notifyJobStatusChange(job, oldJob.status, req.user, storage);
         
@@ -658,7 +689,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         await checkAndRegenerateSummary(req.params.id);
         
         // Archive and delete AFTER notifications if status is terminal
-        if (req.body.status === 'completed' || req.body.status === 'cancelled') {
+        if (updates.status === 'completed' || updates.status === 'cancelled') {
           await storage.archiveJob(job);
           await storage.deleteJob(req.params.id);
         }
@@ -671,30 +702,31 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.delete("/api/jobs/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.delete("/api/jobs/:id", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
+      const job = await storage.getJob(req.params.id);
+      if (!job || job.officeId !== req.user.officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
       // Log PHI access before deletion
-      await logPhiAccess(req, 'delete', 'job', req.params.id);
+      await logPhiAccess(req, 'delete', 'job', job.id, job.orderId);
       
-      await storage.deleteJob(req.params.id);
+      await storage.deleteJob(job.id);
       res.status(204).send();
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.post("/api/jobs/:id/archive", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.post("/api/jobs/:id/archive", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.id);
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
       if (job.officeId !== req.user.officeId) {
-        return res.status(403).json({ error: "Not authorized" });
+        return res.status(404).json({ error: "Job not found" });
       }
 
       const { finalStatus } = req.body;
@@ -718,10 +750,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Archived jobs routes
-  app.get("/api/jobs/archived", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.get("/api/jobs/archived", requireOffice, async (req, res) => {
     try {
       const { startDate, endDate, name } = req.query;
       const jobs = await storage.getArchivedJobsByOffice(
@@ -743,13 +772,23 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/jobs/archived/:id/restore", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.post("/api/jobs/archived/:id/restore", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
+      const [archived] = await db
+        .select({ id: archivedJobs.id, officeId: archivedJobs.officeId, orderId: archivedJobs.orderId })
+        .from(archivedJobs)
+        .where(eq(archivedJobs.id, req.params.id))
+        .limit(1);
+
+      if (!archived || archived.officeId !== req.user.officeId) {
+        return res.status(404).json({ error: "Archived job not found" });
+      }
+
       // newStatus is now optional - will use previousStatus from archive if not provided
       const { newStatus } = req.body;
       const job = await storage.restoreArchivedJob(req.params.id, newStatus);
+
+      await logPhiAccess(req, "update", "archived_job", archived.id, archived.orderId, { restoredJobId: job.id });
       res.json(job);
     } catch (error: any) {
       console.error(
@@ -761,10 +800,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Overdue jobs
-  app.get("/api/jobs/overdue", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.get("/api/jobs/overdue", requireOffice, async (req, res) => {
     try {
       const overdueJobs = await storage.getOverdueJobs(req.user.officeId);
       res.json(overdueJobs);
@@ -774,15 +810,17 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Job comments routes
-  app.get("/api/jobs/:jobId/comments", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.get("/api/jobs/:jobId/comments", requireOffice, async (req, res) => {
     try {
-      const comments = await storage.getJobComments(req.params.jobId);
+      const job = await storage.getJob(req.params.jobId);
+      if (!job || job.officeId !== req.user.officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const comments = await storage.getJobComments(job.id);
       
       // Log PHI access for viewing comments
-      const job = await storage.getJob(req.params.jobId);
-      await logPhiAccess(req, 'view', 'comment', req.params.jobId, job?.orderId, { commentCount: comments.length });
+      await logPhiAccess(req, 'view', 'comment', job.id, job.orderId, { commentCount: comments.length });
       
       res.json(comments);
     } catch (error: any) {
@@ -790,13 +828,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/jobs/:jobId/comments", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.post("/api/jobs/:jobId/comments", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job || job.officeId !== req.user.officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
       const requestedId = typeof req.body?.id === "string" ? req.body.id.trim() : "";
       if (requestedId) {
-        const existingComments = await storage.getJobComments(req.params.jobId);
+        const existingComments = await storage.getJobComments(job.id);
         const existing = existingComments.find((comment) => comment.id === requestedId);
         if (existing) {
           return res.json(existing);
@@ -811,15 +852,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       
       const comment = await storage.createJobComment(commentData);
       
-      const job = await storage.getJob(req.params.jobId);
-      if (job) {
-        // Log PHI access for creating comment
-        await logPhiAccess(req, 'create', 'comment', comment.id, job.orderId, { jobId: req.params.jobId });
-        
-        await notifyNewComment(job, comment, req.user, storage);
-        // Regenerate AI summary for flagged jobs when new comment is added
-        await checkAndRegenerateSummary(req.params.jobId);
-      }
+      // Log PHI access for creating comment
+      await logPhiAccess(req, 'create', 'comment', comment.id, job.orderId, { jobId: req.params.jobId });
+      
+      await notifyNewComment(job, comment, req.user, storage);
+      // Regenerate AI summary for flagged jobs when new comment is added
+      await checkAndRegenerateSummary(req.params.jobId);
       
       res.status(201).json(comment);
     } catch (error: any) {
@@ -827,14 +865,20 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.put("/api/jobs/comments/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.put("/api/jobs/comments/:id", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
-      const comments = await storage.getJobComments(req.body.jobId || "");
-      const existingComment = comments.find(c => c.id === req.params.id);
-      
+      const [existingComment] = await db
+        .select()
+        .from(jobComments)
+        .where(eq(jobComments.id, req.params.id))
+        .limit(1);
+
       if (!existingComment) {
+        return res.status(404).json({ error: "Comment not found" });
+      }
+
+      const job = await storage.getJob(existingComment.jobId);
+      if (!job || job.officeId !== req.user.officeId) {
         return res.status(404).json({ error: "Comment not found" });
       }
       
@@ -850,8 +894,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const updatedComment = await storage.updateJobComment(req.params.id, { content: content.trim() });
       
       // Log PHI access for updating comment
-      const job = await storage.getJob(req.body.jobId);
-      await logPhiAccess(req, 'update', 'comment', req.params.id, job?.orderId, { jobId: req.body.jobId });
+      await logPhiAccess(req, 'update', 'comment', req.params.id, job.orderId, { jobId: job.id });
       
       res.json(updatedComment);
     } catch (error: any) {
@@ -860,10 +903,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Comment reads routes
-  app.get("/api/jobs/unread-comments", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.get("/api/jobs/unread-comments", requireOffice, async (req, res) => {
     try {
       const unreadJobIds = await storage.getUnreadCommentJobIds(req.user.id, req.user.officeId);
       res.json(unreadJobIds);
@@ -872,10 +912,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.get("/api/jobs/comment-counts", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.get("/api/jobs/comment-counts", requireOffice, async (req, res) => {
     try {
       const commentCounts = await storage.getJobCommentCounts(req.user.officeId);
       res.json(commentCounts);
@@ -884,13 +921,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.put("/api/jobs/:jobId/comment-reads", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-
+  app.put("/api/jobs/:jobId/comment-reads", requireOffice, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
       if (!job || job.officeId !== req.user.officeId) {
-        return res.status(403).json({ error: "Access denied" });
+        return res.status(404).json({ error: "Job not found" });
       }
 
       const commentRead = await storage.updateCommentRead(req.user.id, req.params.jobId);
@@ -901,13 +936,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Job flag routes
-  app.post("/api/jobs/:jobId/flag", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-
+  app.post("/api/jobs/:jobId/flag", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
       if (!job || job.officeId !== req.user.officeId) {
-        return res.status(403).json({ error: "Access denied" });
+        return res.status(404).json({ error: "Job not found" });
       }
 
       // Create flag immediately without waiting for summary
@@ -946,13 +979,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.put("/api/jobs/:jobId/flag/note", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-
+  app.put("/api/jobs/:jobId/flag/note", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
       if (!job || job.officeId !== req.user.officeId) {
-        return res.status(403).json({ error: "Access denied" });
+        return res.status(404).json({ error: "Job not found" });
       }
 
       const note = typeof req.body?.note === "string" ? req.body.note : "";
@@ -974,13 +1005,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.delete("/api/jobs/:jobId/flag", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-
+  app.delete("/api/jobs/:jobId/flag", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
       if (!job || job.officeId !== req.user.officeId) {
-        return res.status(403).json({ error: "Access denied" });
+        return res.status(404).json({ error: "Job not found" });
       }
 
       await storage.unflagJob(req.user.id, req.params.jobId);
@@ -990,10 +1019,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.get("/api/jobs/flagged", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.get("/api/jobs/flagged", requireOffice, async (req, res) => {
     try {
       const flaggedJobs = await storage.getFlaggedJobsByOffice(req.user.officeId);
       res.json(flaggedJobs);
@@ -1002,13 +1028,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.get("/api/jobs/:jobId/flagged-by", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-
+  app.get("/api/jobs/:jobId/flagged-by", requireOffice, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
       if (!job || job.officeId !== req.user.officeId) {
-        return res.status(403).json({ error: "Access denied" });
+        return res.status(404).json({ error: "Job not found" });
       }
 
       const flaggedBy = await storage.getJobFlaggedBy(req.params.jobId);
@@ -1019,13 +1043,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // AI summary route
-  app.post("/api/jobs/:jobId/summary", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-
+  app.post("/api/jobs/:jobId/summary", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
       if (!job || job.officeId !== req.user.officeId) {
-        return res.status(403).json({ error: "Access denied" });
+        return res.status(404).json({ error: "Job not found" });
       }
 
       const office = await storage.getOffice(job.officeId);
@@ -1039,10 +1061,17 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Office routes
-  app.post("/api/offices", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.post("/api/offices", requireAuth, async (req, res) => {
     try {
+      if (req.user.officeId) {
+        return res.status(400).json({ error: "You already belong to an office." });
+      }
+
+      const existingOffices = await storage.getAllOffices();
+      if (existingOffices.length > 0) {
+        return res.status(409).json({ error: "This Host is already set up." });
+      }
+
       const office = await storage.createOffice(req.body);
       
       // Assign user as owner
@@ -1057,9 +1086,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.get("/api/offices/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.get("/api/offices/:id", requireSameOfficeParam("id"), async (req, res) => {
     try {
       const office = await storage.getOffice(req.params.id);
       if (!office) return res.status(404).json({ error: "Office not found" });
@@ -1070,11 +1097,35 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.put("/api/offices/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.put(
+    "/api/offices/:id",
+    requireSameOfficeParam("id"),
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
     try {
-      const office = await storage.updateOffice(req.params.id, req.body);
+      const rawBody = req.body && typeof req.body === "object" ? req.body : {};
+      const allowedFields = ["name", "address", "phone", "email", "settings"];
+      const updates: Record<string, any> = {};
+      for (const field of allowedFields) {
+        if (Object.prototype.hasOwnProperty.call(rawBody, field)) {
+          updates[field] = (rawBody as any)[field];
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(updates, "name")) {
+        if (typeof updates.name !== "string" || !updates.name.trim()) {
+          return res.status(400).json({ error: "Office name is required" });
+        }
+        updates.name = updates.name.trim();
+      }
+
+      for (const key of ["address", "phone", "email"]) {
+        if (Object.prototype.hasOwnProperty.call(updates, key) && typeof updates[key] === "string") {
+          updates[key] = updates[key].trim();
+        }
+      }
+
+      const office = await storage.updateOffice(req.params.id, updates);
       res.json(office);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1082,20 +1133,20 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Team management routes
-  app.get("/api/offices/:id/members", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.get("/api/offices/:id/members", requireSameOfficeParam("id"), async (req, res) => {
     try {
       const members = await storage.getUsersInOffice(req.params.id);
-      res.json(members);
+      res.json(members.map((member) => withoutPassword(member)));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get("/api/offices/:id/join-requests", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.get(
+    "/api/offices/:id/join-requests",
+    requireSameOfficeParam("id"),
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
     try {
       const requests = await storage.getJoinRequestsByOffice(req.params.id);
       res.json(requests);
@@ -1104,11 +1155,88 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  // Join request routes
-  app.post("/api/join-requests", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  // User management routes
+  app.put("/api/users/:id", requireOffice, requireRole(["owner", "manager"]), async (req, res) => {
     try {
+      const targetUser = await storage.getUser(req.params.id);
+      if (!targetUser || targetUser.officeId !== req.user.officeId) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Avoid self-edits through this endpoint (UI already blocks it).
+      if (targetUser.id === req.user.id) {
+        return res.status(400).json({ error: "You can’t update your own role here." });
+      }
+
+      const rawBody = req.body && typeof req.body === "object" ? req.body : {};
+      const roleInput = Object.prototype.hasOwnProperty.call(rawBody, "role") ? (rawBody as any).role : undefined;
+      const officeIdInput = Object.prototype.hasOwnProperty.call(rawBody, "officeId") ? (rawBody as any).officeId : undefined;
+
+      const updates: Record<string, any> = {};
+
+      if (roleInput !== undefined) {
+        if (typeof roleInput !== "string") {
+          return res.status(400).json({ error: "Invalid role" });
+        }
+
+        const allowedRoles = new Set(["owner", "manager", "staff", "view_only"]);
+        if (!allowedRoles.has(roleInput)) {
+          return res.status(400).json({ error: "Invalid role" });
+        }
+
+        updates.role = roleInput;
+      }
+
+      if (officeIdInput !== undefined) {
+        // Only support removing a user from the current office.
+        if (officeIdInput !== null) {
+          return res.status(400).json({ error: "Invalid officeId" });
+        }
+        updates.officeId = null;
+        // Normalize role when removing.
+        updates.role = "staff";
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "No changes provided" });
+      }
+
+      const actingRole = req.user.role;
+      if (actingRole === "manager") {
+        // Managers can manage staff/view-only users only.
+        if (targetUser.role === "owner" || targetUser.role === "manager") {
+          return res.status(403).json({ error: "Only an Owner can manage this user." });
+        }
+        if (updates.role && (updates.role === "owner" || updates.role === "manager")) {
+          return res.status(403).json({ error: "Only an Owner can assign that role." });
+        }
+      }
+
+      // Prevent removing/demoting the last owner.
+      const isRemoving = Object.prototype.hasOwnProperty.call(updates, "officeId") && updates.officeId === null;
+      const roleChangingAwayFromOwner = updates.role && targetUser.role === "owner" && updates.role !== "owner";
+      if (targetUser.role === "owner" && (isRemoving || roleChangingAwayFromOwner)) {
+        const members = await storage.getUsersInOffice(req.user.officeId);
+        const ownerCount = members.filter((u) => u.role === "owner").length;
+        if (ownerCount <= 1) {
+          return res.status(400).json({ error: "You can’t remove the last Owner from the office." });
+        }
+      }
+
+      const updated = await storage.updateUser(targetUser.id, updates);
+      res.json(withoutPassword(updated));
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Join request routes
+  app.post("/api/join-requests", requireAuth, async (req, res) => {
+    try {
+      if (req.user.officeId) {
+        return res.status(400).json({ error: "You already belong to an office." });
+      }
+
       const { ownerEmail, message } = req.body;
       
       // Find the owner and their office
@@ -1124,11 +1252,24 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/join-requests/:id/approve", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.post(
+    "/api/join-requests/:id/approve",
+    requireOffice,
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
     try {
-      const { role } = req.body;
+      const pending = await storage.getJoinRequestsByOffice(req.user.officeId);
+      const request = pending.find((r: any) => r.id === req.params.id);
+      if (!request) {
+        return res.status(404).json({ error: "Join request not found" });
+      }
+
+      const role = typeof req.body?.role === "string" ? req.body.role : "";
+      const allowedRoles = new Set(["manager", "staff", "view_only"]);
+      if (!allowedRoles.has(role)) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+
       await storage.approveJoinRequest(req.params.id, role);
       res.status(200).json({ success: true });
     } catch (error: any) {
@@ -1136,10 +1277,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.delete("/api/join-requests/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.delete(
+    "/api/join-requests/:id",
+    requireOffice,
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
     try {
+      const pending = await storage.getJoinRequestsByOffice(req.user.officeId);
+      const request = pending.find((r: any) => r.id === req.params.id);
+      if (!request) {
+        return res.status(404).json({ error: "Join request not found" });
+      }
+
       await storage.rejectJoinRequest(req.params.id);
       res.status(204).send();
     } catch (error: any) {
@@ -1148,11 +1297,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Invitation routes
-  app.post("/api/invitations", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-    if (req.user.role !== 'owner') return res.status(403).json({ error: "Only owners can invite users" });
-    
+  app.post("/api/invitations", requireOffice, requireRole(["owner"]), async (req, res) => {
     try {
       const invitationData = insertInvitationSchema.parse({
         ...req.body,
@@ -1180,10 +1325,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.get("/api/invitations", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-    
+  app.get("/api/invitations", requireOffice, async (req, res) => {
     try {
       const invitations = await storage.getInvitationsByOffice(req.user.officeId);
       res.json(invitations);
@@ -1192,9 +1334,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.delete("/api/invitations/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.delete("/api/invitations/:id", requireOffice, requireRole(["owner"]), async (req, res) => {
     try {
       // Verify user is owner and invitation belongs to their office
       const invitation = await storage.getInvitationById(req.params.id);
@@ -1202,7 +1342,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(404).json({ error: "Invitation not found" });
       }
       
-      if (invitation.officeId !== req.user.officeId || req.user.role !== 'owner') {
+      if (invitation.officeId !== req.user.officeId) {
         return res.status(403).json({ error: "Access denied" });
       }
       
@@ -1242,10 +1382,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/invitations/accept/:token", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.post("/api/invitations/accept/:token", requireAuth, async (req, res) => {
     try {
+      if (req.user.officeId) {
+        return res.status(400).json({ error: "You already belong to an office." });
+      }
+
       await storage.acceptInvitation(req.params.token, req.user.id);
       res.status(200).json({ success: true });
     } catch (error: any) {
@@ -1254,10 +1396,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Notification rules routes
-  app.get("/api/notification-rules", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.get("/api/notification-rules", requireOffice, async (req, res) => {
     try {
       const rules = await storage.getNotificationRulesByOffice(req.user.officeId);
       res.json(rules);
@@ -1266,10 +1405,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/notification-rules", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.post("/api/notification-rules", requireOffice, requireRole(["owner", "manager"]), async (req, res) => {
     try {
       const ruleData = insertNotificationRuleSchema.parse({
         ...req.body,
@@ -1283,10 +1419,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.put("/api/notification-rules/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-    
+  app.put("/api/notification-rules/:id", requireOffice, requireRole(["owner", "manager"]), async (req, res) => {
     try {
       // Verify rule belongs to user's office
       const existingRule = await storage.getNotificationRule(req.params.id);
@@ -1294,17 +1427,33 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(404).json({ error: "Notification rule not found" });
       }
       
-      const rule = await storage.updateNotificationRule(req.params.id, req.body);
+      const rawBody = req.body && typeof req.body === "object" ? req.body : {};
+      const allowedFields = ["status", "maxDays", "enabled", "smsEnabled", "smsTemplate", "notifyRoles", "notifyUsers"];
+      const updates: Record<string, any> = {};
+      for (const field of allowedFields) {
+        if (Object.prototype.hasOwnProperty.call(rawBody, field)) {
+          updates[field] = (rawBody as any)[field];
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(updates, "status")) {
+        if (typeof updates.status !== "string" || !updates.status.trim()) {
+          return res.status(400).json({ error: "status is required" });
+        }
+        updates.status = updates.status.trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, "smsTemplate") && typeof updates.smsTemplate === "string") {
+        updates.smsTemplate = updates.smsTemplate.trim();
+      }
+
+      const rule = await storage.updateNotificationRule(req.params.id, updates);
       res.json(rule);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.delete("/api/notification-rules/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-    
+  app.delete("/api/notification-rules/:id", requireOffice, requireRole(["owner", "manager"]), async (req, res) => {
     try {
       // Verify rule belongs to user's office
       const existingRule = await storage.getNotificationRule(req.params.id);
@@ -1320,10 +1469,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Analytics routes
-  app.get("/api/analytics/metrics", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
-
+  app.get("/api/analytics/metrics", requireOffice, async (req, res) => {
     try {
       const { startDate, endDate, jobType } = req.query;
       
@@ -1589,26 +1735,39 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/sms/send", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
-    
+  app.post("/api/sms/send", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const { phone, message, jobId } = req.body;
+
+      if (!phone || typeof phone !== "string") {
+        return res.status(400).json({ error: "phone is required" });
+      }
+
+      if (!message || typeof message !== "string" || !message.trim()) {
+        return res.status(400).json({ error: "message is required" });
+      }
+
+      if (jobId && typeof jobId === "string") {
+        const job = await storage.getJob(jobId);
+        if (!job || job.officeId !== req.user.officeId) {
+          return res.status(404).json({ error: "Job not found" });
+        }
+      }
       
       // Check if patient has opted in
-      const optIn = await storage.getSmsOptIn(phone, req.user.officeId!);
+      const optIn = await storage.getSmsOptIn(phone, req.user.officeId);
       if (!optIn) {
         return res.status(400).json({ error: "Patient has not opted in to SMS notifications" });
       }
       
       // Send SMS
-      const result = await sendSMS(phone, message);
+      const result = await sendSMS(phone, message.trim());
       
       // Log the attempt
       await storage.logSms({
         jobId: jobId || null,
         phone,
-        message,
+        message: message.trim(),
         status: result.success ? 'sent' : 'failed',
         messageSid: result.messageSid,
         errorCode: result.errorCode,

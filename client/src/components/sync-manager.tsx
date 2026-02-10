@@ -207,18 +207,47 @@ export default function SyncManager() {
           ? `Offline changes: ${pendingCount}`
           : null;
 
-  const backupLabel =
-    mode === "host"
-      ? desktopConfig?.backupEnabled === false
-        ? "Backups: disabled"
-        : desktopConfig?.backupDir
-          ? desktopConfig?.backupLastError
-            ? "Backups: error"
-            : desktopConfig?.backupLastAt
-              ? `Backups: last ${new Date(desktopConfig.backupLastAt).toLocaleDateString()}`
-              : "Backups: configured"
-          : "Backups: not set up"
-      : null;
+  const backupInfo = (() => {
+    if (mode !== "host") return null;
+
+    const networkEnabled = desktopConfig?.backupEnabled !== false;
+    const localEnabled = desktopConfig?.localBackupEnabled !== false;
+    const hasNetworkFolder = Boolean(desktopConfig?.backupDir);
+
+    if (!networkEnabled && !localEnabled) {
+      return { label: "Backups: disabled", warn: false };
+    }
+
+    if (networkEnabled && hasNetworkFolder) {
+      if (desktopConfig?.backupLastError) {
+        return { label: "Backups: error", warn: true };
+      }
+      if (desktopConfig?.backupLastAt) {
+        return { label: `Backups: last ${new Date(desktopConfig.backupLastAt).toLocaleDateString()}`, warn: false };
+      }
+      return { label: "Backups: configured", warn: false };
+    }
+
+    if (!localEnabled) {
+      return { label: networkEnabled ? "Backups: not set up" : "Backups: disabled", warn: networkEnabled };
+    }
+
+    if (desktopConfig?.localBackupLastError) {
+      return { label: "Backups: local error", warn: true };
+    }
+
+    if (desktopConfig?.localBackupLastAt) {
+      return {
+        label: `Backups: local ${new Date(desktopConfig.localBackupLastAt).toLocaleDateString()}`,
+        warn: networkEnabled,
+      };
+    }
+
+    return { label: "Backups: local only", warn: networkEnabled };
+  })();
+
+  const backupLabel = backupInfo?.label || null;
+  const backupWarn = Boolean(backupInfo?.warn);
 
   const licenseLabel =
     licenseSnapshot && String(licenseSnapshot.mode || "") !== "ACTIVE" ? String(licenseSnapshot.message || "") : null;
@@ -243,7 +272,7 @@ export default function SyncManager() {
 
         <div className="flex items-center gap-3 min-w-0 text-muted-foreground">
           {backupLabel && (
-            <span className={backupLabel.includes("not set up") || backupLabel.includes("error") ? "text-amber-600 dark:text-amber-400" : ""}>
+            <span className={backupWarn ? "text-amber-600 dark:text-amber-400" : ""}>
               {backupLabel}
             </span>
           )}

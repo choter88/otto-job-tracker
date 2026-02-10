@@ -10,7 +10,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Users, Trash2, Copy, KeyRound } from "lucide-react";
-import type { User } from "@shared/schema";
+import type { PublicUser } from "@shared/schema";
 
 export default function TeamPage() {
   const { user } = useAuth();
@@ -19,7 +19,7 @@ export default function TeamPage() {
   const [staffCodeDialogOpen, setStaffCodeDialogOpen] = useState(false);
   const [generatedStaffCode, setGeneratedStaffCode] = useState<string | null>(null);
 
-  const { data: members = [] } = useQuery<User[]>({
+  const { data: members = [] } = useQuery<PublicUser[]>({
     queryKey: ["/api/offices", user?.officeId, "members"],
     enabled: !!user?.officeId,
   });
