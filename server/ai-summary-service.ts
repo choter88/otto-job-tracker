@@ -106,7 +106,7 @@ function buildJobContext(
   statusHistory: StatusHistoryEntry[],
   officeSettings: any
 ): string {
-  const patientName = `${job.patientFirstInitial}. ${job.patientLastName}`;
+  const patientName = `${job.patientFirstName} ${job.patientLastName}`.trim();
   
   // Get job type label
   const jobTypeLabel = officeSettings?.customJobTypes?.find((t: any) => t.id === job.jobType)?.label || job.jobType;

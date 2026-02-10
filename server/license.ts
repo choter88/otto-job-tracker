@@ -21,19 +21,50 @@ export function getLicenseSnapshot(): LicenseSnapshot {
   return computeLicenseSnapshot(getState());
 }
 
+const ACTIVATION_ALLOWED = /^[A-HJ-NP-Z2-9]+$/;
+
+function normalizeActivationCode(input: string): string {
+  const raw = String(input || "").trim().toUpperCase();
+  const stripped = raw.replace(/[^A-Z0-9]/g, "").replace(/[IO01]/g, "");
+  if (stripped.length === 16 && ACTIVATION_ALLOWED.test(stripped)) {
+    return stripped.match(/.{1,4}/g)?.join("-") || stripped;
+  }
+  return raw;
+}
+
+function compactActivationCode(input: string): string {
+  const stripped = String(input || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .replace(/[IO01]/g, "");
+  return stripped;
+}
+
 export async function activateLicense(activationCode: string): Promise<LicenseSnapshot> {
-  const trimmed = String(activationCode || "").trim();
+  const trimmed = normalizeActivationCode(activationCode);
   if (!trimmed) {
     throw new Error("Activation Code is required");
   }
 
   const current = getState();
-  const result = await portalActivate({
+  let result = await portalActivate({
     activationCode: trimmed,
     installationId: current.installationId,
     hostFingerprint256: current.hostFingerprint256,
     appVersion: process.env.npm_package_version,
   });
+
+  if (!result.ok && result.error?.code === "INVALID_CODE") {
+    const compacted = compactActivationCode(trimmed);
+    if (compacted && compacted !== trimmed) {
+      result = await portalActivate({
+        activationCode: compacted,
+        installationId: current.installationId,
+        hostFingerprint256: current.hostFingerprint256,
+        appVersion: process.env.npm_package_version,
+      });
+    }
+  }
 
   if (!result.ok) {
     const err = result.error;
@@ -128,4 +159,3 @@ export function stopLicenseScheduler(): void {
   if (checkinTimer) clearInterval(checkinTimer);
   checkinTimer = null;
 }
-

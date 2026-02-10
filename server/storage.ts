@@ -411,7 +411,7 @@ export class DatabaseStorage implements IStorage {
       .values({
         id: randomUUID(),
         orderId: job.orderId,
-        patientFirstInitial: job.patientFirstInitial,
+        patientFirstName: job.patientFirstName,
         patientLastName: job.patientLastName,
         phone: job.phone,
         jobType: job.jobType,
@@ -452,7 +452,7 @@ export class DatabaseStorage implements IStorage {
     // Add name filtering
     if (name && name.trim()) {
       conditions.push(
-        sql`LOWER(${archivedJobs.patientLastName}) LIKE LOWER(${'%' + name + '%'})`
+        sql`LOWER(${archivedJobs.patientFirstName} || ' ' || ${archivedJobs.patientLastName}) LIKE LOWER(${'%' + name.trim() + '%'})`
       );
     }
     
@@ -480,7 +480,7 @@ export class DatabaseStorage implements IStorage {
       .values({
         id: randomUUID(),
         orderId: archived.orderId,
-        patientFirstInitial: archived.patientFirstInitial,
+        patientFirstName: archived.patientFirstName,
         patientLastName: archived.patientLastName,
         phone: archived.phone,
         jobType: archived.jobType,
@@ -717,7 +717,7 @@ export class DatabaseStorage implements IStorage {
       .select({
         id: jobs.id,
         orderId: jobs.orderId,
-        patientFirstInitial: jobs.patientFirstInitial,
+        patientFirstName: jobs.patientFirstName,
         patientLastName: jobs.patientLastName,
         phone: jobs.phone,
         jobType: jobs.jobType,

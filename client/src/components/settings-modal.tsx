@@ -170,7 +170,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
   const [customJobTypes, setCustomJobTypes] = useState<any[]>([]);
   const [customOrderDestinations, setCustomOrderDestinations] = useState<any[]>([]);
   const [customColumns, setCustomColumns] = useState<any[]>([]);
-  const [smsSettings, setSmsSettings] = useState<any>({});
+  const [messageTemplates, setMessageTemplates] = useState<Record<string, string>>({});
   const [jobIdentifierMode, setJobIdentifierMode] = useState<"patientName" | "trayNumber">("patientName");
   const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -215,10 +215,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
       setCustomJobTypes(mergedTypes);
       setCustomOrderDestinations(settings.customOrderDestinations || []);
       setCustomColumns(settings.customColumns || []);
-      setSmsSettings({
-        smsEnabled: settings.smsEnabled || false,
-        smsTemplates: settings.smsTemplates || {},
-      });
+      setMessageTemplates(settings.smsTemplates || {});
       setJobIdentifierMode(settings.jobIdentifierMode || "patientName");
     }
   }, [office]);
@@ -231,7 +228,9 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
       customOrderDestinations,
       customColumns,
       jobIdentifierMode,
-      ...smsSettings,
+      // Desktop/offline mode: Otto Tracker does not send SMS. We keep templates as copy helpers.
+      smsEnabled: false,
+      smsTemplates: messageTemplates,
     };
 
     updateOfficeMutation.mutate(updatedSettings);
@@ -429,76 +428,80 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-4xl h-[80vh] overflow-hidden flex flex-col animate-fade-in">
-        <DialogHeader className="border-b border-border pb-4">
+      <DialogContent className="w-[min(96vw,1100px)] max-w-none h-[min(90vh,820px)] p-0 overflow-hidden flex flex-col animate-fade-in">
+        <DialogHeader className="border-b border-border px-6 py-5 pr-12">
           <DialogTitle className="flex items-center gap-2 text-2xl">
             <Settings className="h-6 w-6" />
             Office Settings
           </DialogTitle>
         </DialogHeader>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
-          <TabsList className="border-b border-border justify-start bg-transparent p-0 h-auto">
-            <TabsTrigger 
-              value="general" 
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-              data-testid="tab-general"
-            >
-              <Settings className="mr-2 h-4 w-4" />
-              General
-            </TabsTrigger>
-            <TabsTrigger 
-              value="statuses" 
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-              data-testid="tab-statuses"
-            >
-              <ListTodo className="mr-2 h-4 w-4" />
-              Job Statuses
-            </TabsTrigger>
-            <TabsTrigger 
-              value="types"
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-              data-testid="tab-types"
-            >
-              <Tag className="mr-2 h-4 w-4" />
-              Job Types
-            </TabsTrigger>
-            <TabsTrigger 
-              value="destinations"
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-              data-testid="tab-destinations"
-            >
-              <Building className="mr-2 h-4 w-4" />
-              Destinations
-            </TabsTrigger>
-            <TabsTrigger 
-              value="customColumns"
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-              data-testid="tab-custom-columns"
-            >
-              <Columns className="mr-2 h-4 w-4" />
-              Custom Columns
-            </TabsTrigger>
-            <TabsTrigger 
-              value="notifications"
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-              data-testid="tab-notifications"
-            >
-              <Bell className="mr-2 h-4 w-4" />
-              Notifications
-            </TabsTrigger>
-            <TabsTrigger 
-              value="sms"
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent"
-              data-testid="tab-sms"
-            >
-              <MessageSquare className="mr-2 h-4 w-4" />
-              SMS Settings
-            </TabsTrigger>
-          </TabsList>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+            <div className="border-b border-border bg-muted/20 md:border-b-0 md:border-r md:w-56 md:shrink-0">
+              <TabsList className="h-auto w-full justify-start bg-transparent p-2 md:flex-col md:items-stretch md:gap-1 overflow-x-auto md:overflow-visible">
+                <TabsTrigger
+                  value="general"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  data-testid="tab-general"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span className="truncate">General</span>
+                </TabsTrigger>
+                <TabsTrigger
+                  value="statuses"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  data-testid="tab-statuses"
+                >
+                  <ListTodo className="h-4 w-4" />
+                  <span className="truncate">Job Statuses</span>
+                </TabsTrigger>
+                <TabsTrigger
+                  value="types"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  data-testid="tab-types"
+                >
+                  <Tag className="h-4 w-4" />
+                  <span className="truncate">Job Types</span>
+                </TabsTrigger>
+                <TabsTrigger
+                  value="destinations"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  data-testid="tab-destinations"
+                >
+                  <Building className="h-4 w-4" />
+                  <span className="truncate">Destinations</span>
+                </TabsTrigger>
+                <TabsTrigger
+                  value="customColumns"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  data-testid="tab-custom-columns"
+                >
+                  <Columns className="h-4 w-4" />
+                  <span className="truncate">Custom Columns</span>
+                </TabsTrigger>
+                <TabsTrigger
+                  value="notifications"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  data-testid="tab-notifications"
+                >
+                  <Bell className="h-4 w-4" />
+                  <span className="truncate">Notifications</span>
+                </TabsTrigger>
+                <TabsTrigger
+                  value="messages"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  data-testid="tab-messages"
+                >
+                  <MessageSquare className="h-4 w-4" />
+                  <span className="truncate">Messages</span>
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-          <div className="flex-1 overflow-y-auto">
-            <TabsContent value="general" className="p-6 mt-0">
+            <div className="flex-1 min-w-0 min-h-0">
+              <div className="h-full overflow-y-auto px-6 py-6">
+                <TabsContent value="general" className="mt-0">
               <div className="space-y-6">
                 <div>
                   <h3 className="text-lg font-semibold mb-2">General Settings</h3>
@@ -531,7 +534,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                   <div className="mt-4 p-4 bg-muted rounded-lg">
                     <p className="text-sm text-muted-foreground">
                       {jobIdentifierMode === "patientName" 
-                        ? "Jobs will be identified by patient first initial and last name (e.g., \"J. Smith\")."
+                        ? "Jobs will be identified by patient first and last name (e.g., \"Jane Smith\")."
                         : "Jobs will be identified by a manually-entered tray number. Patient name fields will not be required."}
                     </p>
                   </div>
@@ -539,7 +542,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
               </div>
             </TabsContent>
 
-            <TabsContent value="statuses" className="p-6 mt-0">
+            <TabsContent value="statuses" className="mt-0">
               {renderCustomItemList(
                 customStatuses,
                 'statuses',
@@ -548,7 +551,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
               )}
             </TabsContent>
 
-            <TabsContent value="types" className="p-6 mt-0">
+            <TabsContent value="types" className="mt-0">
               {renderCustomItemList(
                 customJobTypes,
                 'jobTypes',
@@ -557,7 +560,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
               )}
             </TabsContent>
 
-            <TabsContent value="destinations" className="p-6 mt-0">
+            <TabsContent value="destinations" className="mt-0">
               {renderCustomItemList(
                 customOrderDestinations,
                 'destinations',
@@ -566,7 +569,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
               )}
             </TabsContent>
 
-            <TabsContent value="customColumns" className="p-6 mt-0">
+            <TabsContent value="customColumns" className="mt-0">
               <div className="space-y-4">
                 <div className="mb-6">
                   <h3 className="text-lg font-semibold mb-2">Custom Columns</h3>
@@ -665,89 +668,62 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
               </div>
             </TabsContent>
 
-            <TabsContent value="notifications" className="p-6 mt-0">
+            <TabsContent value="notifications" className="mt-0">
               <NotificationRules />
             </TabsContent>
 
-            <TabsContent value="sms" className="p-6 mt-0">
+            <TabsContent value="messages" className="mt-0">
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-lg font-semibold mb-4">SMS Configuration</h3>
+                  <h3 className="text-lg font-semibold mb-2">Message Templates</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Otto Tracker doesn’t send texts. Use these templates to copy/paste into your office’s texting system.
+                  </p>
                   
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label htmlFor="sms-enabled" className="text-base font-medium">
-                          Enable SMS Notifications
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          Allow the system to send SMS updates to patients
-                        </p>
-                      </div>
-                      <Switch
-                        id="sms-enabled"
-                        checked={smsSettings.smsEnabled}
-                        onCheckedChange={(checked) => setSmsSettings({
-                          ...smsSettings,
-                          smsEnabled: checked
-                        })}
-                        data-testid="switch-sms-enabled"
-                      />
-                    </div>
-
-                    {smsSettings.smsEnabled && (
                       <div className="space-y-4 pt-4 border-t border-border">
                         <div>
-                          <Label htmlFor="ordered-template">Order Placed Template</Label>
+                          <Label htmlFor="ordered-template">Order placed</Label>
                           <Textarea
                             id="ordered-template"
-                            value={smsSettings.smsTemplates?.ordered || ''}
-                            onChange={(e) => setSmsSettings({
-                              ...smsSettings,
-                              smsTemplates: {
-                                ...smsSettings.smsTemplates,
-                                ordered: e.target.value
-                              }
+                            value={messageTemplates.ordered || ''}
+                            onChange={(e) => setMessageTemplates({
+                              ...messageTemplates,
+                              ordered: e.target.value
                             })}
                             placeholder="Your {job_type} order has been placed..."
                             rows={3}
-                            data-testid="textarea-ordered-template"
+                            data-testid="textarea-message-template-ordered"
                           />
                         </div>
 
                         <div>
-                          <Label htmlFor="progress-template">In Progress Template</Label>
+                          <Label htmlFor="progress-template">In progress</Label>
                           <Textarea
                             id="progress-template"
-                            value={smsSettings.smsTemplates?.in_progress || ''}
-                            onChange={(e) => setSmsSettings({
-                              ...smsSettings,
-                              smsTemplates: {
-                                ...smsSettings.smsTemplates,
-                                in_progress: e.target.value
-                              }
+                            value={messageTemplates.in_progress || ''}
+                            onChange={(e) => setMessageTemplates({
+                              ...messageTemplates,
+                              in_progress: e.target.value
                             })}
                             placeholder="Your {job_type} order is now in progress..."
                             rows={3}
-                            data-testid="textarea-progress-template"
+                            data-testid="textarea-message-template-in-progress"
                           />
                         </div>
 
                         <div>
-                          <Label htmlFor="ready-template">Ready for Pickup Template</Label>
+                          <Label htmlFor="ready-template">Ready for pickup</Label>
                           <Textarea
                             id="ready-template"
-                            value={smsSettings.smsTemplates?.ready_for_pickup || ''}
-                            onChange={(e) => setSmsSettings({
-                              ...smsSettings,
-                              smsTemplates: {
-                                ...smsSettings.smsTemplates,
-                                ready_for_pickup: e.target.value
-                              }
+                            value={messageTemplates.ready_for_pickup || ''}
+                            onChange={(e) => setMessageTemplates({
+                              ...messageTemplates,
+                              ready_for_pickup: e.target.value
                             })}
                             placeholder="Great news! Your {job_type} order is ready..."
                             rows={3}
-                            data-testid="textarea-ready-template"
+                            data-testid="textarea-message-template-ready"
                           />
                         </div>
 
@@ -761,38 +737,39 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                           </div>
                         </div>
                       </div>
-                    )}
                   </div>
                 </div>
               </div>
             </TabsContent>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="flex gap-3 border-t border-border px-6 py-4">
+            <Button
+              onClick={handleSaveSettings}
+              className="flex-1"
+              disabled={updateOfficeMutation.isPending}
+              data-testid="button-save-settings"
+            >
+              {updateOfficeMutation.isPending ? (
+                <>
+                  <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-primary" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save Changes
+                </>
+              )}
+            </Button>
+            <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-settings">
+              Cancel
+            </Button>
           </div>
         </Tabs>
-
-        {/* Footer */}
-        <div className="flex gap-3 pt-4 border-t border-border">
-          <Button
-            onClick={handleSaveSettings}
-            className="flex-1"
-            disabled={updateOfficeMutation.isPending}
-            data-testid="button-save-settings"
-          >
-            {updateOfficeMutation.isPending ? (
-              <>
-                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-primary" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                Save Changes
-              </>
-            )}
-          </Button>
-          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-settings">
-            Cancel
-          </Button>
-        </div>
       </DialogContent>
     </Dialog>
   );

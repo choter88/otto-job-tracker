@@ -1,19 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Star, MessageSquare, Sparkles } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Star, MessageSquare, NotebookPen, Save } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import CommentsSidebar from "@/components/comments-sidebar";
+import { useAuth } from "@/hooks/use-auth";
 
 interface FlaggedJob {
   id: string;
   orderId: string;
-  patientFirstInitial: string;
+  patientFirstName: string;
   patientLastName: string;
   phone: string | null;
   jobType: string;
@@ -38,18 +40,13 @@ interface FlaggedJob {
 }
 
 export default function ImportantJobs() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [commentsSidebarOpen, setCommentsSidebarOpen] = useState(false);
   const [selectedJobForComments, setSelectedJobForComments] = useState<FlaggedJob | undefined>();
 
   const { data: flaggedJobs, isLoading } = useQuery<FlaggedJob[]>({
     queryKey: ["/api/jobs/flagged"],
-    refetchInterval: (query) => {
-      // Poll every 3 seconds if there are jobs without summaries
-      const jobs = query.state.data;
-      const hasJobsWithoutSummaries = jobs?.some(job => !job.summary);
-      return hasJobsWithoutSummaries ? 3000 : false;
-    },
   });
 
   const { data: officeData } = useQuery({
@@ -77,6 +74,27 @@ export default function ImportantJobs() {
       toast({
         title: "Error",
         description: "Failed to unflag job",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateNoteMutation = useMutation({
+    mutationFn: async ({ jobId, note }: { jobId: string; note: string }) => {
+      const res = await apiRequest("PUT", `/api/jobs/${jobId}/flag/note`, { note });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/flagged"] });
+      toast({
+        title: "Saved",
+        description: "Important note updated.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save important note",
         variant: "destructive",
       });
     },
@@ -128,7 +146,7 @@ export default function ImportantJobs() {
             <Star className="h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-xl font-semibold mb-2">No jobs flagged as important</p>
             <p className="text-muted-foreground text-center max-w-md">
-              Star jobs from the All Jobs page to track them here. You and your team can flag jobs that need special attention.
+              Star jobs from the Worklist to track them here. You and your team can flag jobs that need special attention.
             </p>
           </CardContent>
         </Card>
@@ -145,6 +163,9 @@ export default function ImportantJobs() {
             job={job}
             onOpenComments={() => handleOpenComments(job)}
             onUnflag={() => unflagMutation.mutate(job.id)}
+            canEditNote={job.flaggedBy?.id === user?.id}
+            savingNote={updateNoteMutation.isPending}
+            onSaveNote={(note) => updateNoteMutation.mutate({ jobId: job.id, note })}
             getStatusLabel={getStatusLabel}
             getJobTypeLabel={getJobTypeLabel}
             getDestinationLabel={getDestinationLabel}
@@ -168,6 +189,9 @@ interface JobCardProps {
   job: FlaggedJob;
   onOpenComments: () => void;
   onUnflag: () => void;
+  canEditNote: boolean;
+  savingNote: boolean;
+  onSaveNote: (note: string) => void;
   getStatusLabel: (statusId: string) => string;
   getJobTypeLabel: (jobTypeId: string) => string;
   getDestinationLabel: (destId: string) => string;
@@ -177,14 +201,22 @@ function JobCard({
   job,
   onOpenComments,
   onUnflag,
+  canEditNote,
+  savingNote,
+  onSaveNote,
   getStatusLabel,
   getJobTypeLabel,
   getDestinationLabel,
 }: JobCardProps) {
-  const patientName = `${job.patientFirstInitial}. ${job.patientLastName}`;
+  const patientName = `${job.patientFirstName} ${job.patientLastName}`.trim();
   const statusLabel = getStatusLabel(job.status);
   const jobTypeLabel = getJobTypeLabel(job.jobType);
   const destinationLabel = getDestinationLabel(job.orderDestination);
+  const [noteDraft, setNoteDraft] = useState(job.summary || "");
+
+  useEffect(() => {
+    setNoteDraft(job.summary || "");
+  }, [job.id, job.summary]);
 
   return (
     <Card className="hover:shadow-md transition-shadow" data-testid={`card-job-${job.id}`}>
@@ -227,30 +259,49 @@ function JobCard({
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* AI Summary - Show loading state if generating, otherwise show summary */}
+        {/* Important note */}
         <div className="bg-muted/50 rounded-lg p-4" data-testid={`summary-${job.id}`}>
           <div className="flex items-center gap-2 mb-2">
-            <Sparkles className="h-4 w-4 text-primary" />
-            <span className="font-semibold text-sm">AI Summary</span>
+            <NotebookPen className="h-4 w-4 text-primary" />
+            <span className="font-semibold text-sm">Important note</span>
           </div>
-          {job.summary ? (
+          {canEditNote ? (
+            <div className="space-y-3">
+              <Textarea
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                placeholder="Add a quick note your team should see…"
+                rows={3}
+                data-testid={`textarea-important-note-${job.id}`}
+              />
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-muted-foreground">
+                  {job.summaryGeneratedAt
+                    ? `Last saved ${format(new Date(job.summaryGeneratedAt), "MMM d, h:mm a")}`
+                    : "Not saved yet"}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => onSaveNote(noteDraft)}
+                  disabled={savingNote}
+                  data-testid={`button-save-important-note-${job.id}`}
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  {savingNote ? "Saving…" : "Save note"}
+                </Button>
+              </div>
+            </div>
+          ) : job.summary ? (
             <>
-              <p className="text-sm leading-relaxed">{job.summary}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{job.summary}</p>
               {job.summaryGeneratedAt && (
                 <p className="text-xs text-muted-foreground mt-2">
-                  Generated {format(new Date(job.summaryGeneratedAt), "MMM d, h:mm a")}
+                  Last saved {format(new Date(job.summaryGeneratedAt), "MMM d, h:mm a")}
                 </p>
               )}
             </>
           ) : (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <div className="animate-spin rounded-full h-3 w-3 border-2 border-primary border-t-transparent" />
-                <span>Generating AI summary...</span>
-              </div>
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-5/6" />
-            </div>
+            <p className="text-sm text-muted-foreground">No important note yet.</p>
           )}
         </div>
 

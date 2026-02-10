@@ -6,8 +6,15 @@ import { randomBytes } from "crypto";
 import { setupAuth, validatePasswordComplexity } from "./auth";
 import { storage } from "./storage";
 import {
+  archivedJobs,
+  commentReads,
+  jobComments,
   offices,
+  jobs,
+  jobStatusHistory,
+  notificationRules,
   users,
+  jobFlags,
   insertJobSchema,
   insertJobCommentSchema,
   insertNotificationRuleSchema,
@@ -21,9 +28,10 @@ import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob } from "./not
 import { generateJobSummary, checkAndRegenerateSummary } from "./ai-summary-service";
 import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db } from "./db";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateLicense, forceCheckin, getLicenseSnapshot } from "./license";
+import { importSnapshotV1 } from "./migration-import";
 
 // PHI access logging helper for HIPAA compliance
 async function logPhiAccess(
@@ -337,6 +345,155 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  app.post("/api/setup/import-snapshot", async (req, res, next) => {
+    // Do not trust proxy headers for setup restrictions.
+    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
+    if (!isLoopbackIp(remote)) {
+      return res.status(403).json({
+        error: "Import must be completed on the Host computer.",
+      });
+    }
+
+    try {
+      const activationCode =
+        typeof req.body?.activationCode === "string" ? req.body.activationCode.trim() : "";
+      const snapshot = req.body?.snapshot;
+      const officeBody = req.body?.office || {};
+      const adminBody = req.body?.admin || {};
+
+      const officeName = typeof officeBody?.name === "string" ? officeBody.name.trim() : "";
+      const officeAddress = typeof officeBody?.address === "string" ? officeBody.address.trim() : undefined;
+      const officePhone = typeof officeBody?.phone === "string" ? officeBody.phone.trim() : undefined;
+      const officeEmail = typeof officeBody?.email === "string" ? officeBody.email.trim() : undefined;
+
+      const adminEmail =
+        typeof adminBody?.email === "string" ? adminBody.email.trim().toLowerCase() : "";
+      const adminPassword = typeof adminBody?.password === "string" ? adminBody.password : "";
+      const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
+      const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
+
+      if (!activationCode) {
+        return res.status(400).json({ error: "Activation Code is required" });
+      }
+      if (!snapshot || typeof snapshot !== "object") {
+        return res.status(400).json({ error: "Snapshot file is required" });
+      }
+      if (officeName) {
+        try {
+          const office = (snapshot as any)?.office;
+          if (office && typeof office === "object") {
+            (office as any).name = officeName;
+            if (officeAddress !== undefined) (office as any).address = officeAddress;
+            if (officePhone !== undefined) (office as any).phone = officePhone;
+            if (officeEmail !== undefined) (office as any).email = officeEmail;
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (!adminEmail) {
+        return res.status(400).json({ error: "Admin email is required" });
+      }
+      if (!adminFirstName) {
+        return res.status(400).json({ error: "Admin first name is required" });
+      }
+      if (!adminLastName) {
+        return res.status(400).json({ error: "Admin last name is required" });
+      }
+
+      const passwordValidation = validatePasswordComplexity(adminPassword);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({
+          error: "Password does not meet complexity requirements",
+          details: passwordValidation.errors,
+        });
+      }
+
+      const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
+      const [userStats] = await db.select({ count: sql`count(*)` }).from(users);
+      const [jobStats] = await db.select({ count: sql`count(*)` }).from(jobs);
+      const [archivedStats] = await db.select({ count: sql`count(*)` }).from(archivedJobs);
+
+      const officeCount = Number(officeStats?.count) || 0;
+      const userCount = Number(userStats?.count) || 0;
+      const jobCount = Number(jobStats?.count) || 0;
+      const archivedCount = Number(archivedStats?.count) || 0;
+
+      if (officeCount > 0 || userCount > 0 || jobCount > 0 || archivedCount > 0) {
+        return res.status(409).json({
+          error:
+            "This Host already has data. Import is only available on a fresh install. If you’re trying to recover, use File → Restore Data… instead.",
+        });
+      }
+
+      let licenseSnapshot = getLicenseSnapshot();
+      let activationWarning: string | null = null;
+      try {
+        licenseSnapshot = await activateLicense(activationCode);
+      } catch (error: any) {
+        const status = typeof error?.statusCode === "number" ? error.statusCode : 0;
+        const code = typeof error?.code === "string" ? error.code : "";
+        const msg = typeof error?.message === "string" ? error.message : "Activation failed";
+
+        // Hard failures the user must fix in the portal before continuing.
+        if (status === 409 || code === "HOST_ALREADY_ACTIVATED") {
+          return res.status(409).json({
+            error:
+              "This office is already activated on another Host. In the portal, click “Replace Host”, then try again.",
+          });
+        }
+        if (status >= 400 && status < 500) {
+          return res.status(status).json({ error: msg });
+        }
+
+        activationWarning =
+          "We couldn’t verify your Activation Code right now. Otto Tracker will work for up to 7 days, then become read-only until activation succeeds.";
+        licenseSnapshot = getLicenseSnapshot();
+      }
+
+      const staffCode = generateStaffCode();
+      const staffCodeHash = await hashSecret(normalizeStaffCode(staffCode));
+      const adminPasswordHash = await hashSecret(adminPassword);
+
+      const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
+      const activationVerifiedAt = activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null;
+
+      const result = importSnapshotV1({
+        snapshot,
+        admin: {
+          email: adminEmail,
+          firstName: adminFirstName,
+          lastName: adminLastName,
+          passwordHash: adminPasswordHash,
+        },
+        staffCodeHash,
+        activationCodeLast4: activationCode.slice(-4),
+        activationVerifiedAt,
+      });
+
+      const office = await storage.getOffice(result.officeId);
+      const user = await storage.getUserByEmail(result.adminEmail);
+      if (!office || !user) {
+        return res.status(500).json({ error: "Import completed but could not load the new office." });
+      }
+
+      req.login(user, (err) => {
+        if (err) return next(err);
+        res.status(201).json({
+          ok: true,
+          office,
+          user,
+          staffCode,
+          importedCounts: result.importedCounts,
+          license: licenseSnapshot,
+          activationWarning,
+        });
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Import failed" });
+    }
+  });
+
   app.post("/api/setup/staff-code/regenerate", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
     if (!req.user.officeId) return res.status(400).json({ error: "No office associated" });
@@ -436,8 +593,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           });
         }
       } else {
-        if (!req.body.patientFirstInitial || !req.body.patientLastName) {
-          return res.status(400).json({ error: "Patient first initial and last name are required" });
+        if (!req.body.patientFirstName || !req.body.patientLastName) {
+          return res.status(400).json({ error: "Patient first name and last name are required" });
         }
       }
       
@@ -452,7 +609,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Log PHI access for creating patient record
       await logPhiAccess(req, 'create', 'job', job.id, job.orderId, { 
         jobType: job.jobType,
-        patientId: job.trayNumber || `${job.patientFirstInitial}. ${job.patientLastName}`
+        patientId: job.trayNumber || `${job.patientFirstName} ${job.patientLastName}`.trim()
       });
       
       res.status(201).json(job);
@@ -490,7 +647,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Log PHI access for updating patient record
       await logPhiAccess(req, 'update', 'job', job.id, job.orderId, { 
         updatedFields: Object.keys(req.body),
-        patientId: job.trayNumber || `${job.patientFirstInitial}. ${job.patientLastName}`
+        patientId: job.trayNumber || `${job.patientFirstName} ${job.patientLastName}`.trim()
       });
       
       if (oldJob && req.body.status && oldJob.status !== req.body.status) {
@@ -756,28 +913,63 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Create flag immediately without waiting for summary
       const flag = await storage.flagJob(req.user.id, req.params.jobId);
       
-      // Generate AI summary asynchronously in the background
-      (async () => {
-        try {
-          if (process.env.OTTO_DEBUG === "true") {
-            console.log(`[AI Summary] Starting async summary generation for job ${req.params.jobId}`);
+      const shouldGenerateAiSummary =
+        process.env.OTTO_AIRGAP !== "true" &&
+        process.env.OTTO_ENABLE_AI_SUMMARY === "true" &&
+        process.env.OTTO_ALLOW_PHI_EGRESS === "true" &&
+        Boolean(process.env.OPENAI_API_KEY);
+
+      // Only generate AI summaries when explicitly enabled for a hosted/online deployment.
+      if (shouldGenerateAiSummary) {
+        // Generate AI summary asynchronously in the background
+        (async () => {
+          try {
+            if (process.env.OTTO_DEBUG === "true") {
+              console.log(`[AI Summary] Starting async summary generation for job ${req.params.jobId}`);
+            }
+            const office = await storage.getOffice(job.officeId);
+            const summary = await generateJobSummary(req.params.jobId, office?.settings || {});
+            await storage.updateJobFlagSummary(req.user.id, req.params.jobId, summary);
+            if (process.env.OTTO_DEBUG === "true") {
+              console.log(`[AI Summary] Async summary generation completed for job ${req.params.jobId}`);
+            }
+          } catch (error) {
+            console.error(`[AI Summary] Error generating async summary for job ${req.params.jobId}:`, error);
           }
-          const office = await storage.getOffice(job.officeId);
-          const summary = await generateJobSummary(req.params.jobId, office?.settings || {});
-          await storage.updateJobFlagSummary(req.user.id, req.params.jobId, summary);
-          if (process.env.OTTO_DEBUG === "true") {
-            console.log(`[AI Summary] Async summary generation completed for job ${req.params.jobId}`);
-          }
-          
-          // TODO: Broadcast via WebSocket that summary is ready
-        } catch (error) {
-          console.error(`[AI Summary] Error generating async summary for job ${req.params.jobId}:`, error);
-        }
-      })();
+        })();
+      }
       
       res.status(201).json(flag);
     } catch (error: any) {
       console.error("Error flagging job:", error);
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/jobs/:jobId/flag/note", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
+
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job || job.officeId !== req.user.officeId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const note = typeof req.body?.note === "string" ? req.body.note : "";
+      const trimmed = note.trim().slice(0, 4000);
+
+      const [existingFlag] = await db
+        .select({ id: jobFlags.id })
+        .from(jobFlags)
+        .where(and(eq(jobFlags.userId, req.user.id), eq(jobFlags.jobId, req.params.jobId)));
+
+      if (!existingFlag) {
+        return res.status(404).json({ error: "This job isn’t starred by you yet." });
+      }
+
+      await storage.updateJobFlagSummary(req.user.id, req.params.jobId, trimmed);
+      res.json({ ok: true });
+    } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });

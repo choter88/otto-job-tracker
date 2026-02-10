@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -13,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Trash2, Save, AlertTriangle, MessageSquare, Bell } from "lucide-react";
+import { Plus, Trash2, Save, AlertTriangle, Bell } from "lucide-react";
 import type { NotificationRule } from "@shared/schema";
 
 const notificationRuleSchema = z.object({
@@ -176,10 +175,16 @@ export default function NotificationRules() {
   });
 
   const onSubmit = (data: NotificationRuleFormData) => {
+    const normalized: NotificationRuleFormData = {
+      ...data,
+      // Desktop/offline mode: no automatic SMS sending.
+      smsEnabled: false,
+      smsTemplate: "",
+    };
     if (editingRule) {
-      updateRuleMutation.mutate({ id: editingRule.id, data });
+      updateRuleMutation.mutate({ id: editingRule.id, data: normalized });
     } else {
-      createRuleMutation.mutate(data);
+      createRuleMutation.mutate(normalized);
     }
   };
 
@@ -237,9 +242,9 @@ export default function NotificationRules() {
     <div className="space-y-6" data-testid="notification-rules">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold mb-2">Notification Rules</h3>
+          <h3 className="text-lg font-semibold mb-2">Overdue Rules</h3>
           <p className="text-sm text-muted-foreground">
-            Configure overdue alerts and SMS notifications for job statuses
+            Set how long a job can stay in a status before it’s considered overdue
           </p>
         </div>
         <Button onClick={handleAddNew} data-testid="button-add-rule">
@@ -373,46 +378,6 @@ export default function NotificationRules() {
                 </div>
               </div>
 
-              {/* SMS Configuration */}
-              <div className="p-4 bg-muted rounded-lg space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare className="h-4 w-4" />
-                    <Label htmlFor="smsEnabled" className="text-base font-medium">
-                      SMS Notifications
-                    </Label>
-                  </div>
-                  <Controller
-                    name="smsEnabled"
-                    control={form.control}
-                    render={({ field }) => (
-                      <Switch
-                        id="smsEnabled"
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        data-testid="switch-sms-enabled"
-                      />
-                    )}
-                  />
-                </div>
-
-                {form.watch("smsEnabled") && (
-                  <div className="space-y-2">
-                    <Label htmlFor="smsTemplate">SMS Template</Label>
-                    <Textarea
-                      id="smsTemplate"
-                      placeholder="Reminder: Your {job_type} has been {status} for {days} days. Contact us at {office_phone}"
-                      rows={3}
-                      {...form.register("smsTemplate")}
-                      data-testid="textarea-sms-template"
-                    />
-                    <div className="text-xs text-muted-foreground">
-                      Available variables: <code>{"{job_type}"}</code>, <code>{"{status}"}</code>, <code>{"{days}"}</code>, <code>{"{office_phone}"}</code>
-                    </div>
-                  </div>
-                )}
-              </div>
-
               <div className="flex gap-2 pt-4 border-t border-border">
                 <Button
                   type="submit"
@@ -494,11 +459,6 @@ export default function NotificationRules() {
                             : "None"
                         }
                       </p>
-                      <p>
-                        <span className="font-medium">SMS Enabled:</span> {
-                          rule.smsEnabled ? "Yes" : "No"
-                        }
-                      </p>
                     </div>
                   </div>
                   
@@ -523,17 +483,6 @@ export default function NotificationRules() {
                   </div>
                 </div>
 
-                {rule.smsEnabled && rule.smsTemplate && (
-                  <div className="p-3 bg-muted rounded-lg">
-                    <div className="flex items-center gap-2 mb-2">
-                      <MessageSquare className="h-4 w-4" />
-                      <span className="font-medium text-sm">SMS Template:</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground font-mono">
-                      "{rule.smsTemplate}"
-                    </p>
-                  </div>
-                )}
               </CardContent>
             </Card>
           ))

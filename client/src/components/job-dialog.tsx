@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import type { Job, Office, ArchivedJob } from "@shared/schema";
 
 const jobSchema = z.object({
-  patientFirstInitial: z.string().max(1, "Only one character allowed").optional().or(z.literal("")),
+  patientFirstName: z.string().optional().or(z.literal("")),
   patientLastName: z.string().optional().or(z.literal("")),
   trayNumber: z.string().optional().or(z.literal("")),
   phone: z.string().optional().or(z.literal("")).refine(
@@ -76,7 +76,7 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
 
   // Memoize form default values to prevent unnecessary re-creation
   const defaultValues = useMemo(() => ({
-    patientFirstInitial: job?.patientFirstInitial || "",
+    patientFirstName: job?.patientFirstName || "",
     patientLastName: job?.patientLastName || "",
     trayNumber: job?.trayNumber || "",
     phone: job?.phone || "",
@@ -98,7 +98,7 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
   useEffect(() => {
     if (open) {
       form.reset({
-        patientFirstInitial: job?.patientFirstInitial || "",
+        patientFirstName: job?.patientFirstName || "",
         patientLastName: job?.patientLastName || "",
         trayNumber: job?.trayNumber || "",
         phone: job?.phone || "",
@@ -127,8 +127,8 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
         ...rest,
         phone: data.phone ? data.phone.replace(/\D/g, '') : '', // Remove formatting
         // When using tray number mode, set placeholder values for patient name fields
-        patientFirstInitial: useTrayNumberForMutation ? "T" : (data.patientFirstInitial || "").toUpperCase(),
-        patientLastName: useTrayNumberForMutation ? (data.trayNumber || "Tray") : (data.patientLastName || ""),
+        patientFirstName: useTrayNumberForMutation ? "" : (data.patientFirstName || ""),
+        patientLastName: useTrayNumberForMutation ? "" : (data.patientLastName || ""),
         trayNumber: data.trayNumber || null,
         customColumnValues,
         originalJobId: data.originalJobId || null,
@@ -160,7 +160,6 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
             ...j, 
             ...data,
             phone: data.phone ? data.phone.replace(/\D/g, '') : '',
-            patientFirstInitial: (data.patientFirstInitial || "").toUpperCase(),
             customColumnValues: {
               ...(j.customColumnValues || {}),
               ...customColumnValues
@@ -182,7 +181,6 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
           officeId: user?.officeId || '',
           ...data,
           phone: data.phone ? data.phone.replace(/\D/g, '') : '',
-          patientFirstInitial: (data.patientFirstInitial || "").toUpperCase(),
           customColumnValues,
           originalJobId: data.originalJobId || null,
           createdAt: new Date(data.createdAt),
@@ -238,10 +236,10 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
         return;
       }
     } else {
-      if (!data.patientFirstInitial || !data.patientLastName) {
+      if (!data.patientFirstName || !data.patientLastName) {
         toast({
           title: "Validation Error",
-          description: "Patient first initial and last name are required",
+          description: "Patient first name and last name are required",
           variant: "destructive",
         });
         return;
@@ -271,7 +269,7 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
     const jobTypeLabel = customJobTypes.find((t: any) => t.id === job.jobType)?.label || 
                          job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1);
     const prefix = isArchived ? "[ARCHIVED] " : "";
-    return `${prefix}${job.orderId} - ${job.patientFirstInitial}. ${job.patientLastName} - ${jobTypeLabel}`;
+    return `${prefix}${job.orderId} - ${job.patientFirstName} ${job.patientLastName}`.trim() + ` - ${jobTypeLabel}`;
   };
 
   const customJobTypes = (office?.settings as any)?.customJobTypes || [];
@@ -322,29 +320,23 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="patientFirstInitial">First Initial *</Label>
+                  <Label htmlFor="patientFirstName">First Name *</Label>
                   <Input
-                    id="patientFirstInitial"
-                    maxLength={1}
-                    className="text-center uppercase"
-                    placeholder="J"
-                    {...form.register("patientFirstInitial")}
-                    onChange={(e) => {
-                      const value = e.target.value.toUpperCase();
-                      form.setValue("patientFirstInitial", value);
-                    }}
-                    data-testid="input-patient-initial"
+                    id="patientFirstName"
+                    placeholder="Jane"
+                    {...form.register("patientFirstName")}
+                    data-testid="input-patient-firstname"
                   />
-                  {form.formState.errors.patientFirstInitial && (
+                  {form.formState.errors.patientFirstName && (
                     <p className="text-sm text-destructive">
-                      {form.formState.errors.patientFirstInitial.message}
+                      {form.formState.errors.patientFirstName.message}
                     </p>
                   )}
                 </div>
 
-                <div className="col-span-2 space-y-2">
+                <div className="space-y-2">
                   <Label htmlFor="patientLastName">Last Name *</Label>
                   <Input
                     id="patientLastName"

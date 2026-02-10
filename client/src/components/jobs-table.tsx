@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -234,8 +234,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
       const matchesSearch = searchQuery === "" || 
         (useTrayNumber 
           ? (job.trayNumber || "").toLowerCase().includes(searchQuery.toLowerCase())
-          : `${job.patientFirstInitial}. ${job.patientLastName}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            job.patientLastName.toLowerCase().includes(searchQuery.toLowerCase())
+          : `${job.patientFirstName} ${job.patientLastName}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            job.patientLastName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            job.patientFirstName.toLowerCase().includes(searchQuery.toLowerCase())
         );
       
       const matchesStatus = statusFilter === "all" || job.status === statusFilter;
@@ -335,6 +336,25 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     setEditingJob(job);
     setJobDialogOpen(true);
   }, []);
+
+  useEffect(() => {
+    const handler = (event: any) => {
+      const jobId = event?.detail?.jobId;
+      if (typeof jobId !== "string" || !jobId) return;
+      const match = jobs.find((j) => j.id === jobId);
+      if (match) {
+        handleEditJob(match);
+        return;
+      }
+      toast({
+        title: "Job not found",
+        description: "That job may have been completed or removed.",
+      });
+    };
+
+    window.addEventListener("otto:openJob", handler as any);
+    return () => window.removeEventListener("otto:openJob", handler as any);
+  }, [jobs, handleEditJob, toast]);
 
   const handleOpenComments = useCallback((job: Job) => {
     setSelectedJobForComments(job);
@@ -465,7 +485,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
       <Card data-testid="card-jobs-table">
         {/* Table Header with Actions */}
         <div className="flex items-center justify-between p-6 pb-4 border-b border-border">
-          <h2 className="text-lg font-semibold">All Jobs</h2>
+          <h2 className="text-lg font-semibold">Worklist</h2>
           
           <div className="flex items-center gap-3">
             {/* Search */}
@@ -715,7 +735,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">
-                        {useTrayNumber ? (job.trayNumber || "—") : `${job.patientFirstInitial}. ${job.patientLastName}`}
+                        {useTrayNumber ? (job.trayNumber || "—") : `${job.patientFirstName} ${job.patientLastName}`.trim()}
                       </span>
                       {job.isRedoJob && (
                         <Badge 

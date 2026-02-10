@@ -29,6 +29,7 @@ app.use((req, res, next) => {
     "/api/license/activate",
     "/api/license/checkin",
     "/api/setup/bootstrap",
+    "/api/setup/import-snapshot",
   ]);
   if (allowlist.has(req.path)) return next();
 
@@ -117,6 +118,7 @@ declare module 'http' {
   }
 }
 app.use(express.json({
+  limit: "50mb",
   verify: (req, _res, buf) => {
     req.rawBody = buf;
   }

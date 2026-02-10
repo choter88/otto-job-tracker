@@ -1,6 +1,5 @@
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { 
@@ -10,9 +9,6 @@ import {
   AlertTriangle, 
   BarChart3, 
   Users, 
-  Settings, 
-  Shield,
-  MoreVertical,
   LogOut,
   Star
 } from "lucide-react";
@@ -57,16 +53,16 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
 
   const menuItems = [
     {
+      id: "all",
+      label: "Worklist",
+      icon: Briefcase,
+      badge: activeJobsCount > 0 ? activeJobsCount : null,
+    },
+    {
       id: "important",
       label: "Important",
       icon: Star,
       badge: flaggedCount > 0 ? flaggedCount : null,
-    },
-    {
-      id: "all",
-      label: "All Jobs",
-      icon: Briefcase,
-      badge: activeJobsCount > 0 ? activeJobsCount : null,
     },
     {
       id: "past",
@@ -98,7 +94,7 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
   ];
 
   return (
-    <aside className="w-64 bg-card border-r border-border flex flex-col" data-testid="sidebar">
+    <aside className="w-64 bg-card border-r border-border flex flex-col pb-16" data-testid="sidebar">
       {/* Office Header */}
       <div className="p-6 border-b border-border">
         <div className="flex items-center gap-3">
@@ -166,20 +162,6 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               </Button>
             );
           })}
-          
-          {/* Admin Portal - Only visible to super_admin */}
-          {user?.role === "super_admin" && (
-            <Link href="/admin">
-              <Button
-                variant="ghost"
-                className="w-full justify-start gap-3 h-10"
-                data-testid="nav-admin"
-              >
-                <Shield className="h-4 w-4" />
-                <span>Admin Portal</span>
-              </Button>
-            </Link>
-          )}
         </div>
       </nav>
 

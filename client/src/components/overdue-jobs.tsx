@@ -89,6 +89,7 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
 
   const filteredJobs = jobs.filter(job => {
     const matchesSearch = searchQuery === "" || 
+      job.patientFirstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       job.patientLastName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       job.orderId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       job.phone?.includes(searchQuery.replace(/\D/g, ''));
@@ -209,7 +210,7 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
                     {getSeverityBadge(job.severity)}
                   </div>
                   <h3 className="text-lg font-semibold">
-                    {job.patientFirstInitial}. {job.patientLastName} - {job.jobType}
+                    {`${job.patientFirstName} ${job.patientLastName}`.trim()} - {job.jobType}
                   </h3>
                   <p className="text-sm text-muted-foreground mt-1">
                     Current Status: <span className="font-medium">
@@ -276,10 +277,10 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
         <CardContent className="p-4">
           <h4 className="font-semibold mb-2 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" />
-            Notification Rules
+            Overdue Rules
           </h4>
           <p className="text-sm text-muted-foreground mb-3">
-            Overdue thresholds are based on your notification rules.
+            Overdue thresholds are based on your overdue rules.
           </p>
           <div className="grid grid-cols-3 gap-3 text-sm">
             {notificationRules.slice(0, 3).map((rule: any) => (

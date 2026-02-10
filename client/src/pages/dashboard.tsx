@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { Redirect, useLocation, useRoute } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import Sidebar from "@/components/sidebar";
 import JobsTable from "@/components/jobs-table";
 import PastJobs from "@/components/past-jobs";
@@ -12,12 +12,21 @@ import ImportantJobs from "@/pages/important-jobs";
 import NotificationBell from "@/components/notification-bell";
 import SettingsModal from "@/components/settings-modal";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Settings } from "lucide-react";
+import { ChevronDown, LogOut, Settings } from "lucide-react";
 import type { Job, ArchivedJob, Office } from "@shared/schema";
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, logoutMutation } = useAuth();
   const [location, setLocation] = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -25,20 +34,20 @@ export default function Dashboard() {
   const [, importantParams] = useRoute("/important");
   const [, dashboardParams] = useRoute("/dashboard/:tab?");
   
-  // Determine initial tab from URL or default to "important"
+  // Determine initial tab from URL or default to Worklist
   const getInitialTab = () => {
     if (importantParams) return "important";
     if (dashboardParams && dashboardParams.tab) return dashboardParams.tab;
-    return "important";
+    return "all";
   };
 
   const [activeTab, setActiveTab] = useState(getInitialTab);
 
-  // Sync activeTab with URL changes and redirect /important to /
+  // Sync activeTab with URL changes and redirect /important to canonical route
   useEffect(() => {
-    // Redirect /important to / for canonical URL
+    // Redirect legacy /important route to canonical URL
     if (location === "/important") {
-      setLocation("/");
+      setLocation("/dashboard/important");
       return;
     }
     
@@ -51,16 +60,36 @@ export default function Dashboard() {
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     // Update URL to reflect tab change
-    if (tab === "important") {
+    if (tab === "all") {
       setLocation("/");
     } else {
       setLocation(`/dashboard/${tab}`);
     }
   };
 
-  // Redirect to office setup if no office
+  // A user without an office can't use the desktop app. This can happen if they were removed by the owner.
   if (user && !user.officeId) {
-    return <Redirect to="/office-setup" />;
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8 bg-background">
+        <Card className="w-full max-w-lg">
+          <CardHeader>
+            <CardTitle>No office access</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              This login isn’t connected to an office on this Host. Ask your office owner to add you again.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button
+              className="w-full"
+              onClick={() => logoutMutation.mutate()}
+              disabled={logoutMutation.isPending}
+            >
+              Sign out
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   // Fetch jobs data
@@ -97,7 +126,7 @@ export default function Dashboard() {
       case "settings":
         return <NotificationRules />;
       default:
-        return <ImportantJobs />;
+        return <JobsTable jobs={jobs} loading={jobsLoading} />;
     }
   };
 
@@ -111,7 +140,7 @@ export default function Dashboard() {
           <div>
             <h1 className="text-2xl font-bold text-foreground" data-testid="text-dashboard-title">
               {activeTab === "important" && "Important Jobs"}
-              {activeTab === "all" && "All Jobs"}
+              {activeTab === "all" && "Worklist"}
               {activeTab === "past" && "Past Jobs"}
               {activeTab === "overdue" && "Overdue Jobs"}
               {activeTab === "analytics" && "Analytics"}
@@ -119,8 +148,8 @@ export default function Dashboard() {
               {activeTab === "settings" && "Settings"}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {activeTab === "important" && "Jobs flagged by you or your team with AI summaries"}
-              {activeTab === "all" && "Manage your jobs and orders"}
+              {activeTab === "important" && "Jobs starred by you or your team for extra attention"}
+              {activeTab === "all" && "Active jobs your team is working on"}
               {activeTab === "past" && "View archived completed and cancelled jobs"}
               {activeTab === "overdue" && "Jobs that need immediate attention"}
               {activeTab === "analytics" && "Track performance and insights"}
@@ -144,17 +173,40 @@ export default function Dashboard() {
             </Button>
 
             {/* User Menu */}
-            <Button variant="ghost" className="flex items-center gap-2" data-testid="button-user-menu">
-              <div className="w-8 h-8 bg-primary/20 rounded-full flex items-center justify-center text-primary font-semibold text-sm">
-                {user?.firstName?.[0]}{user?.lastName?.[0]}
-              </div>
-              <ChevronDown className="h-4 w-4" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="flex items-center gap-2" data-testid="button-user-menu">
+                  <div className="w-8 h-8 bg-primary/20 rounded-full flex items-center justify-center text-primary font-semibold text-sm">
+                    {user?.firstName?.[0]}{user?.lastName?.[0]}
+                  </div>
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60" data-testid="menu-user">
+                <DropdownMenuLabel className="font-normal">
+                  <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-medium leading-none">
+                      {user?.firstName} {user?.lastName}
+                    </p>
+                    <p className="text-xs leading-none text-muted-foreground truncate">{user?.email}</p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setSettingsOpen(true)} data-testid="menu-user-settings">
+                  <Settings className="h-4 w-4" />
+                  Office Settings
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => logoutMutation.mutate()} data-testid="menu-user-signout">
+                  <LogOut className="h-4 w-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-6 pb-16">
           {/* Tab Content */}
           {renderTabContent()}
         </div>

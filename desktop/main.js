@@ -16,6 +16,11 @@ const LEGACY_APP_DIR_NAME = "rest-express";
 
 app.setName(APP_DISPLAY_NAME);
 
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const guardedSessions = new WeakSet();
 const tlsTrustByWebContentsId = new Map();
@@ -728,6 +733,8 @@ function createWindow(targetUrl, config) {
     title: APP_DISPLAY_NAME,
     width: 1280,
     height: 800,
+    minWidth: 1100,
+    minHeight: 720,
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
@@ -738,6 +745,10 @@ function createWindow(targetUrl, config) {
   });
 
   mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+  setupContextMenu(win);
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event, url) => {
     try {
@@ -765,7 +776,7 @@ function createWindow(targetUrl, config) {
           (errorDescription.includes("ERR_CERT") || errorDescription.toLowerCase().includes("certificate"));
 
         const buttons = isClient ? ["Retry", "Change Connection…", "Close"] : ["Retry", "Close"];
-        const result = await dialog.showMessageBox(win, {
+        const messageBoxOpts = {
           type: "error",
           buttons,
           defaultId: 0,
@@ -777,14 +788,31 @@ function createWindow(targetUrl, config) {
               : `This Client can’t reach the Host.\n\nCheck that:\n- The Host computer is on\n- Both computers are on the same office network\n- The Host address is correct${
                   isCertError ? "\n- The Pairing code matches the Host" : ""
                 }\n\nError: ${errorDescription}\nURL: ${validatedURL}`,
-        });
+        };
+
+        let result = null;
+        try {
+          result = await dialog.showMessageBox(win, messageBoxOpts);
+        } catch {
+          result = await dialog.showMessageBox(messageBoxOpts);
+        }
+
+        if (win.isDestroyed()) return;
 
         if (result.response === 0) {
-          win.loadURL(targetUrl);
+          try {
+            win.loadURL(targetUrl);
+          } catch {
+            // ignore
+          }
         } else if (isClient && result.response === 1) {
           createSetupWindow();
         } else {
-          win.close();
+          try {
+            win.close();
+          } catch {
+            // ignore
+          }
         }
       } finally {
         showingLoadError = false;
@@ -803,6 +831,8 @@ function createBootWindow() {
     title: APP_DISPLAY_NAME,
     width: 520,
     height: 320,
+    minWidth: 520,
+    minHeight: 320,
     resizable: false,
     webPreferences: {
       contextIsolation: true,
@@ -824,6 +854,8 @@ function createSetupWindow() {
     title: `${APP_DISPLAY_NAME} Setup`,
     width: 720,
     height: 520,
+    minWidth: 720,
+    minHeight: 520,
     resizable: false,
     webPreferences: {
       contextIsolation: true,
@@ -838,6 +870,33 @@ function createSetupWindow() {
   win.loadFile(path.join(__dirname, "setup.html"));
   setupNoInternetNetworkGuard(win.webContents.session);
   return win;
+}
+
+function setupContextMenu(win) {
+  win.webContents.on("context-menu", (_event, params) => {
+    const template = [];
+
+    if (params.isEditable) {
+      template.push(
+        { role: "undo", enabled: params.editFlags.canUndo },
+        { role: "redo", enabled: params.editFlags.canRedo },
+        { type: "separator" },
+        { role: "cut", enabled: params.editFlags.canCut },
+        { role: "copy", enabled: params.editFlags.canCopy },
+        { role: "paste", enabled: params.editFlags.canPaste },
+        { role: "selectAll", enabled: params.editFlags.canSelectAll },
+      );
+    } else {
+      template.push(
+        { role: "copy", enabled: params.editFlags.canCopy },
+        { role: "selectAll", enabled: params.editFlags.canSelectAll },
+      );
+    }
+
+    if (template.length === 0) return;
+    const menu = Menu.buildFromTemplate(template);
+    menu.popup({ window: win });
+  });
 }
 
 async function waitForHostReady({ protocol, host, port, timeoutMs = 30000 }) {
@@ -1482,6 +1541,18 @@ function setAppMenu(config) {
         { role: "togglefullscreen" },
       ],
     },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
   ];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -1578,8 +1649,31 @@ app.on("window-all-closed", () => {
 });
 
 app.on("second-instance", () => {
-  if (mainWindow) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   }
+});
+
+app.on("activate", () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  if (!fs.existsSync(getConfigPath())) {
+    createSetupWindow();
+    return;
+  }
+
+  const config = readConfig();
+  setAppMenu(config);
+  const port = process.env.PORT || "5150";
+  const targetUrl =
+    config.mode === "host"
+      ? `${app.isPackaged ? "https" : "http"}://127.0.0.1:${port}`
+      : config.hostUrl;
+  createWindow(targetUrl, config);
 });

@@ -16,6 +16,8 @@ export default function SyncManager() {
   const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [desktopConfig, setDesktopConfig] = useState<any | null>(null);
+  const [licenseSnapshot, setLicenseSnapshot] = useState<any | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -52,6 +54,52 @@ export default function SyncManager() {
     window.addEventListener("otto:offlineQueued", handler as any);
     return () => window.removeEventListener("otto:offlineQueued", handler as any);
   }, [toast]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const bridge = (window as any)?.otto;
+        if (!bridge?.getConfig) return;
+        const cfg = await bridge.getConfig();
+        if (!cancelled) setDesktopConfig(cfg);
+      } catch {
+        // ignore
+      }
+    };
+
+    load();
+    const timer = window.setInterval(load, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const res = await fetch("/api/license/status", { credentials: "include" });
+        if (!res.ok) return;
+        const json = await res.json().catch(() => null);
+        if (!cancelled) setLicenseSnapshot(json);
+      } catch {
+        // ignore
+      }
+    };
+
+    load();
+    const timer = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     let disposed = false;
@@ -143,27 +191,65 @@ export default function SyncManager() {
 
   if (!user) return null;
 
-  if (!connected) {
-    return (
-      <div className="fixed bottom-4 left-4 z-50 rounded-md border bg-destructive px-3 py-2 text-sm text-destructive-foreground shadow">
-        Disconnected from Host. Changes won’t save until connection returns.
-      </div>
-    );
-  }
+  const mode = String(desktopConfig?.mode || "").toLowerCase();
+  const modeLabel = mode === "host" ? "Host" : mode === "client" ? "Client" : "Otto Tracker";
+  const modeIsClient = mode === "client";
+  const connectionLabel = modeIsClient ? (connected ? "Connected" : "Disconnected") : "Local";
 
-  if (pendingCount > 0 || syncing || syncError) {
-    const text = syncing
-      ? `Syncing offline changes… (${pendingCount})`
+  const hasPending = pendingCount > 0;
+  const syncLabel = !modeIsClient
+    ? null
+    : syncing
+      ? `Syncing… (${pendingCount})`
       : syncError
         ? `Sync paused: ${syncError}`
-        : `Offline changes pending sync: ${pendingCount}`;
+        : hasPending
+          ? `Offline changes: ${pendingCount}`
+          : null;
 
-    return (
-      <div className="fixed bottom-4 left-4 z-50 rounded-md border bg-amber-500 px-3 py-2 text-sm text-white shadow">
-        {text}
+  const backupLabel =
+    mode === "host"
+      ? desktopConfig?.backupEnabled === false
+        ? "Backups: disabled"
+        : desktopConfig?.backupDir
+          ? desktopConfig?.backupLastError
+            ? "Backups: error"
+            : desktopConfig?.backupLastAt
+              ? `Backups: last ${new Date(desktopConfig.backupLastAt).toLocaleDateString()}`
+              : "Backups: configured"
+          : "Backups: not set up"
+      : null;
+
+  const licenseLabel =
+    licenseSnapshot && String(licenseSnapshot.mode || "") !== "ACTIVE" ? String(licenseSnapshot.message || "") : null;
+
+  const connectionDotClass = !modeIsClient
+    ? "bg-emerald-500"
+    : connected
+      ? "bg-emerald-500"
+      : "bg-destructive";
+
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      <div className="flex items-center justify-between gap-4 px-4 py-2 text-xs">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="font-medium text-foreground">{modeLabel}</span>
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <span className={`h-2 w-2 rounded-full ${connectionDotClass}`} />
+            {connectionLabel}
+          </span>
+          {syncLabel && <span className="text-amber-600 dark:text-amber-400">{syncLabel}</span>}
+        </div>
+
+        <div className="flex items-center gap-3 min-w-0 text-muted-foreground">
+          {backupLabel && (
+            <span className={backupLabel.includes("not set up") || backupLabel.includes("error") ? "text-amber-600 dark:text-amber-400" : ""}>
+              {backupLabel}
+            </span>
+          )}
+          {licenseLabel && <span className="text-amber-600 dark:text-amber-400">{licenseLabel}</span>}
+        </div>
       </div>
-    );
-  }
-
-  return null;
+    </div>
+  );
 }

@@ -1,6 +1,36 @@
 import type Database from "better-sqlite3";
 
-export function bootstrapSqliteSchema(sqlite: Database): void {
+export function bootstrapSqliteSchema(sqlite: Database.Database): void {
+  const hasColumn = (table: string, column: string): boolean => {
+    try {
+      const rows = sqlite.prepare(`PRAGMA table_info(${JSON.stringify(table)})`).all() as Array<{ name?: string }>;
+      return rows.some((r) => String(r.name || "").toLowerCase() === column.toLowerCase());
+    } catch {
+      return false;
+    }
+  };
+
+  const ensurePatientFirstName = (table: string): void => {
+    const hasFirstName = hasColumn(table, "patient_first_name");
+    const hasFirstInitial = hasColumn(table, "patient_first_initial");
+    if (hasFirstName || !hasFirstInitial) return;
+
+    try {
+      sqlite.prepare(`ALTER TABLE ${table} RENAME COLUMN patient_first_initial TO patient_first_name;`).run();
+      return;
+    } catch {
+      // Fallback for older SQLite builds: add the new column and copy existing values.
+    }
+
+    sqlite.prepare(`ALTER TABLE ${table} ADD COLUMN patient_first_name TEXT NOT NULL DEFAULT '';`).run();
+    sqlite.prepare(
+      `UPDATE ${table}
+       SET patient_first_name = patient_first_initial
+       WHERE (patient_first_name IS NULL OR patient_first_name = '')
+         AND (patient_first_initial IS NOT NULL AND patient_first_initial != '');`,
+    ).run();
+  };
+
   const statements: string[] = [
     `PRAGMA foreign_keys = ON;`,
     `PRAGMA journal_mode = WAL;`,
@@ -32,7 +62,7 @@ export function bootstrapSqliteSchema(sqlite: Database): void {
     `CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
       order_id TEXT NOT NULL UNIQUE,
-      patient_first_initial TEXT NOT NULL,
+      patient_first_name TEXT NOT NULL,
       patient_last_name TEXT NOT NULL,
       tray_number TEXT,
       phone TEXT,
@@ -53,7 +83,7 @@ export function bootstrapSqliteSchema(sqlite: Database): void {
     `CREATE TABLE IF NOT EXISTS archived_jobs (
       id TEXT PRIMARY KEY,
       order_id TEXT NOT NULL,
-      patient_first_initial TEXT NOT NULL,
+      patient_first_name TEXT NOT NULL,
       patient_last_name TEXT NOT NULL,
       tray_number TEXT,
       phone TEXT,
@@ -233,6 +263,9 @@ export function bootstrapSqliteSchema(sqlite: Database): void {
     for (const statement of statements) {
       sqlite.prepare(statement).run();
     }
+
+    // Migrations / forward-compat changes for existing installs.
+    ensurePatientFirstName("jobs");
+    ensurePatientFirstName("archived_jobs");
   })();
 }
-

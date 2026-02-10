@@ -25,9 +25,16 @@ const passwordSchema = z
     "Password must contain at least one special character",
   );
 
+const ACTIVATION_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
+
 const setupSchema = z
   .object({
-    activationCode: z.string().min(1, "Activation Code is required"),
+    activationCode: z
+      .string()
+      .min(1, "Activation Code is required")
+      .refine((val) => ACTIVATION_CODE_REGEX.test(val), {
+        message: "Activation Code must look like XXXX-XXXX-XXXX-XXXX",
+      }),
     officeName: z.string().min(1, "Office name is required"),
     officeAddress: z.string().optional(),
     officePhone: z.string().optional(),
@@ -66,6 +73,16 @@ export default function SetupPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [setupMode, setSetupMode] = useState<"new" | "import">("new");
+  const [snapshot, setSnapshot] = useState<any | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [snapshotPreview, setSnapshotPreview] = useState<{
+    officeName: string;
+    users: number;
+    jobs: number;
+    archivedJobs: number;
+    comments: number;
+  } | null>(null);
   const [staffCode, setStaffCode] = useState<string | null>(null);
   const [activationCodeUsed, setActivationCodeUsed] = useState<string>("");
   const [licenseSnapshot, setLicenseSnapshot] = useState<LicenseSnapshot | null>(null);
@@ -95,6 +112,17 @@ export default function SetupPage() {
       adminPasswordConfirm: "",
     },
   });
+
+  const activationCodeValue = form.watch("activationCode");
+
+  const formatActivationCode = (raw: string) => {
+    const cleaned = String(raw || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .replace(/[IO01]/g, "");
+    const groups = cleaned.match(/.{1,4}/g) || [];
+    return groups.slice(0, 4).join("-").slice(0, 19);
+  };
 
   const bootstrapMutation = useMutation({
     mutationFn: async (data: SetupFormData) => {
@@ -162,6 +190,79 @@ export default function SetupPage() {
     },
   });
 
+  const importMutation = useMutation({
+    mutationFn: async (data: SetupFormData) => {
+      if (!snapshot) {
+        throw new Error("Please choose a migration snapshot file.");
+      }
+
+      const res = await fetch("/api/setup/import-snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          activationCode: data.activationCode,
+          snapshot,
+          office: {
+            name: data.officeName,
+            address: data.officeAddress || undefined,
+            phone: data.officePhone || undefined,
+            email: data.officeEmail || undefined,
+          },
+          admin: {
+            firstName: data.adminFirstName,
+            lastName: data.adminLastName,
+            email: data.adminEmail,
+            password: data.adminPassword,
+          },
+        }),
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message = payload?.error || payload?.message || res.statusText || "Import failed";
+        const details = Array.isArray(payload?.details) ? payload.details.join("\n") : null;
+        throw new Error(details ? `${message}\n${details}` : message);
+      }
+
+      return payload as {
+        ok: true;
+        office: any;
+        user: any;
+        staffCode: string;
+        importedCounts?: Record<string, number>;
+        license?: LicenseSnapshot;
+        activationWarning?: string | null;
+      };
+    },
+    onSuccess: (payload) => {
+      queryClient.setQueryData(["/api/user"], payload.user);
+      queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
+      setStaffCode(payload.staffCode);
+      setLicenseSnapshot(payload.license || null);
+      setActivationWarning(payload.activationWarning || null);
+
+      toast({
+        title: "Import complete",
+        description: "Your office data is imported. Save the Staff code before continuing.",
+      });
+
+      if (payload.activationWarning) {
+        toast({
+          title: "Activation not verified yet",
+          description: payload.activationWarning,
+        });
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Import failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const licenseActivateMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch("/api/license/activate", {
@@ -218,11 +319,6 @@ export default function SetupPage() {
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
-  }
-
-  if (setupStatus?.initialized) {
-    setLocation(user ? "/" : "/auth");
-    return null;
   }
 
   if (!isLocalHost) {
@@ -337,10 +433,72 @@ export default function SetupPage() {
     );
   }
 
+  if (setupStatus?.initialized) {
+    setLocation(user ? "/" : "/auth");
+    return null;
+  }
+
+  const handleSnapshotFile = async (file: File | null) => {
+    if (!file) {
+      setSnapshot(null);
+      setSnapshotError(null);
+      setSnapshotPreview(null);
+      return;
+    }
+
+    setSnapshotError(null);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("File is not a valid JSON snapshot.");
+      }
+
+      const format = (parsed as any).format;
+      const version = (parsed as any).version;
+      if (format !== "otto-snapshot" || version !== 1) {
+        throw new Error("This snapshot file is not supported.");
+      }
+
+      setSnapshot(parsed);
+
+      const office = (parsed as any).office || {};
+      const officeName = typeof office?.name === "string" ? office.name : "";
+      const officeAddress = typeof office?.address === "string" ? office.address : "";
+      const officePhone = typeof office?.phone === "string" ? office.phone : "";
+      const officeEmail = typeof office?.email === "string" ? office.email : "";
+
+      form.setValue("officeName", officeName || "", { shouldValidate: true });
+      form.setValue("officeAddress", officeAddress || "");
+      form.setValue("officePhone", officePhone || "");
+      form.setValue("officeEmail", officeEmail || "");
+
+      setSnapshotPreview({
+        officeName: officeName || "Office",
+        users: Array.isArray((parsed as any).users) ? (parsed as any).users.length : 0,
+        jobs: Array.isArray((parsed as any).jobs) ? (parsed as any).jobs.length : 0,
+        archivedJobs: Array.isArray((parsed as any).archivedJobs) ? (parsed as any).archivedJobs.length : 0,
+        comments: Array.isArray((parsed as any).jobComments) ? (parsed as any).jobComments.length : 0,
+      });
+    } catch (error: any) {
+      setSnapshot(null);
+      setSnapshotPreview(null);
+      setSnapshotError(error?.message || "Could not read this snapshot file.");
+    }
+  };
+
   const onSubmit = (data: SetupFormData) => {
     setActivationCodeUsed(data.activationCode);
-    bootstrapMutation.mutate(data);
+    if (setupMode === "import") {
+      importMutation.mutate(data);
+    } else {
+      bootstrapMutation.mutate(data);
+    }
   };
+
+  const isSubmitting = bootstrapMutation.isPending || importMutation.isPending;
+  const importMissingFile = setupMode === "import" && !snapshot;
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
@@ -373,6 +531,69 @@ export default function SetupPage() {
         </Card>
 
         <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-6 lg:grid-cols-2">
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Office migration (optional)</CardTitle>
+              <CardDescription>
+                If you used the hosted Otto web app, import a snapshot to bring your office data to this Host.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button
+                  type="button"
+                  variant={setupMode === "new" ? "default" : "secondary"}
+                  onClick={() => {
+                    setSetupMode("new");
+                    setSnapshotError(null);
+                  }}
+                >
+                  Start fresh
+                </Button>
+                <Button
+                  type="button"
+                  variant={setupMode === "import" ? "default" : "secondary"}
+                  onClick={() => setSetupMode("import")}
+                >
+                  Import snapshot
+                </Button>
+              </div>
+
+              {setupMode === "import" && (
+                <div className="space-y-2">
+                  <Label htmlFor="snapshotFile">Snapshot file *</Label>
+                  <Input
+                    id="snapshotFile"
+                    type="file"
+                    accept=".otto-snapshot.json,application/json"
+                    onChange={(event) => handleSnapshotFile(event.target.files?.[0] || null)}
+                    disabled={isSubmitting}
+                  />
+                  {snapshotError && <p className="text-sm text-destructive">{snapshotError}</p>}
+
+                  {snapshotPreview && (
+                    <div className="rounded-lg border bg-card p-3 text-sm text-muted-foreground">
+                      <div className="font-medium text-foreground mb-1">{snapshotPreview.officeName}</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>Users: {snapshotPreview.users}</div>
+                        <div>Active jobs: {snapshotPreview.jobs}</div>
+                        <div>Archived jobs: {snapshotPreview.archivedJobs}</div>
+                        <div>Comments: {snapshotPreview.comments}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <Alert>
+                    <AlertDescription>
+                      In Otto Web, export a migration snapshot file. Import is only available on a fresh Host (no existing
+                      data).
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -380,8 +601,8 @@ export default function SetupPage() {
                 Activation
               </CardTitle>
               <CardDescription>
-                Paste the Activation Code from your billing portal. This verifies your subscription (no patient data is
-                sent).
+                Paste the Activation Code from your billing portal (ottojobtracker.com/portal). This verifies your
+                subscription (no patient data is sent).
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -389,8 +610,13 @@ export default function SetupPage() {
                 <Label htmlFor="activationCode">Activation Code *</Label>
                 <Input
                   id="activationCode"
-                  placeholder="XXXX-XXXX-XXXX"
-                  {...form.register("activationCode")}
+                  placeholder="XXXX-XXXX-XXXX-XXXX"
+                  value={activationCodeValue}
+                  onChange={(event) => {
+                    form.setValue("activationCode", formatActivationCode(event.target.value), {
+                      shouldValidate: true,
+                    });
+                  }}
                   data-testid="input-activation-code"
                 />
                 {form.formState.errors.activationCode && (
@@ -406,7 +632,11 @@ export default function SetupPage() {
                 <Building2 className="h-5 w-5 text-primary" />
                 Office details
               </CardTitle>
-              <CardDescription>This is shown inside the app for your team.</CardDescription>
+              <CardDescription>
+                {setupMode === "import"
+                  ? "These are loaded from the snapshot. You can adjust them now or later in Settings."
+                  : "This is shown inside the app for your team."}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
@@ -500,12 +730,15 @@ export default function SetupPage() {
               <Button
                 type="submit"
                 className="w-full"
-                disabled={bootstrapMutation.isPending}
+                disabled={isSubmitting || importMissingFile}
                 data-testid="button-complete-setup"
               >
-                {bootstrapMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Complete setup
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {setupMode === "import" ? "Import & complete setup" : "Complete setup"}
               </Button>
+              {importMissingFile && (
+                <p className="text-xs text-muted-foreground">Choose a snapshot file above to enable import.</p>
+              )}
             </CardContent>
           </Card>
         </form>

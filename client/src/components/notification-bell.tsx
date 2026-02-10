@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Bell, CheckCheck, MessageCircle, AlertTriangle, TrendingUp, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,31 +9,54 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { formatDistanceToNow } from "date-fns";
 import { useLocation } from "wouter";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Notification } from "@shared/schema";
 
 export default function NotificationBell() {
   const [, setLocation] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
-  // NOTIFICATION SYSTEM DISABLED TO REDUCE COSTS
-  // WebSocket connections and real-time notifications are turned off
-  // To re-enable, uncomment the code below and in server/index.ts
-  
-  const notifications: Notification[] = [];
-  const notificationsLoading = false;
-  const unreadCount = 0;
+
+  const { data: unreadCountData } = useQuery<{ count: number }>({
+    queryKey: ["/api/notifications/unread-count"],
+  });
+
+  const unreadCount = unreadCountData?.count || 0;
+
+  const { data: notifications = [], isLoading: notificationsLoading } = useQuery<Notification[]>({
+    queryKey: ["/api/notifications", "recent"],
+    queryFn: async () => {
+      const res = await fetch("/api/notifications?limit=25&offset=0", {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || payload?.message || res.statusText || "Failed to load notifications");
+      }
+      return res.json();
+    },
+    enabled: isOpen,
+  });
 
   const markAsReadMutation = useMutation({
-    mutationFn: async (_notificationId: string) => {
-      // Disabled
+    mutationFn: async (notificationId: string) => {
+      const res = await apiRequest("PATCH", `/api/notifications/${notificationId}/read`, {});
+      return res.json();
     },
-    onSuccess: () => {},
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications", "recent"] });
+    },
   });
 
   const markAllAsReadMutation = useMutation({
     mutationFn: async () => {
-      // Disabled
+      const res = await apiRequest("PATCH", "/api/notifications/read-all", {});
+      return res.json();
     },
-    onSuccess: () => {},
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications", "recent"] });
+    },
   });
 
   const getNotificationIcon = (type: string) => {
@@ -60,8 +83,21 @@ export default function NotificationBell() {
     // Close popover
     setIsOpen(false);
 
-    // Navigate to the link if provided
-    if (notification.linkTo) {
+    // Navigate to the relevant job (desktop app doesn't have /jobs/:id routes)
+    const jobId = (notification as any).jobId as string | undefined;
+    if (jobId) {
+      setLocation("/");
+      window.setTimeout(() => {
+        try {
+          window.dispatchEvent(new CustomEvent("otto:openJob", { detail: { jobId } }));
+        } catch {
+          // ignore
+        }
+      }, 150);
+      return;
+    }
+
+    if (notification.linkTo && !notification.linkTo.startsWith("/jobs/")) {
       setLocation(notification.linkTo);
     }
   };

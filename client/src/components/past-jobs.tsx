@@ -129,8 +129,9 @@ export default function PastJobs() {
   const redoJobMutation = useMutation({
     mutationFn: async (archivedJob: ArchivedJob) => {
       const res = await apiRequest("POST", "/api/jobs", {
-        patientFirstInitial: archivedJob.patientFirstInitial,
+        patientFirstName: archivedJob.patientFirstName,
         patientLastName: archivedJob.patientLastName,
+        trayNumber: archivedJob.trayNumber,
         phone: archivedJob.phone,
         jobType: archivedJob.jobType,
         status: "job_created",
@@ -353,7 +354,7 @@ export default function PastJobs() {
                 </TableCell>
                 <TableCell>
                   <span className="font-medium">
-                    {job.patientFirstInitial}. {job.patientLastName}
+                    {`${job.patientFirstName} ${job.patientLastName}`.trim()}
                   </span>
                 </TableCell>
                 <TableCell>

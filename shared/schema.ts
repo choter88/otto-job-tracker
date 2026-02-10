@@ -48,7 +48,7 @@ export const jobs = sqliteTable(
   {
     id: text("id").primaryKey(),
     orderId: text("order_id").notNull(),
-    patientFirstInitial: text("patient_first_initial").notNull(),
+    patientFirstName: text("patient_first_name").notNull(),
     patientLastName: text("patient_last_name").notNull(),
     trayNumber: text("tray_number"),
     phone: text("phone"),
@@ -77,7 +77,7 @@ export const jobs = sqliteTable(
 export const archivedJobs = sqliteTable("archived_jobs", {
   id: text("id").primaryKey(),
   orderId: text("order_id").notNull(),
-  patientFirstInitial: text("patient_first_initial").notNull(),
+  patientFirstName: text("patient_first_name").notNull(),
   patientLastName: text("patient_last_name").notNull(),
   trayNumber: text("tray_number"),
   phone: text("phone"),
