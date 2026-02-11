@@ -216,17 +216,22 @@ export function hexToHSL(hex: string): string {
 }
 
 // Helper to get color for badge styling
-export function getColorForBadge(color: string): { background: string; text: string } {
+export function getColorForBadge(color: string | null | undefined): { background: string; text: string } {
+  const safeColor = typeof color === "string" ? color.trim() : "";
+  if (!safeColor) {
+    return { background: "hsl(0 0% 90% / 0.15)", text: "hsl(0 0% 40%)" };
+  }
+
   // If it's already in HSL format (from our defaults)
-  if (color.includes('%')) {
+  if (safeColor.includes('%')) {
     return {
-      background: `hsl(${color} / 0.15)`,
-      text: `hsl(${color})`
+      background: `hsl(${safeColor} / 0.15)`,
+      text: `hsl(${safeColor})`
     };
   }
   
   // If it's hex, convert to HSL and apply
-  const hsl = hexToHSL(color);
+  const hsl = hexToHSL(safeColor);
   return {
     background: `hsl(${hsl} / 0.15)`,
     text: `hsl(${hsl})`

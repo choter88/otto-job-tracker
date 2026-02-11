@@ -187,8 +187,14 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
     if (office?.settings) {
       const settings = office.settings as any;
       // Initialize with defaults if no custom settings exist
-      const existingStatuses = settings.customStatuses || [];
-      const existingTypes = settings.customJobTypes || [];
+      const existingStatuses = Array.isArray(settings.customStatuses) ? settings.customStatuses : [];
+      const existingTypes = Array.isArray(settings.customJobTypes) ? settings.customJobTypes : [];
+      const existingDestinations = Array.isArray(settings.customOrderDestinations) ? settings.customOrderDestinations : [];
+      const existingColumns = Array.isArray(settings.customColumns) ? settings.customColumns : [];
+      const existingTemplates =
+        settings.smsTemplates && typeof settings.smsTemplates === "object" && !Array.isArray(settings.smsTemplates)
+          ? settings.smsTemplates
+          : {};
       
       // Merge existing settings with defaults (existing settings take priority)
       const mergedStatuses = existingStatuses.length > 0 
@@ -213,10 +219,10 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
       
       setCustomStatuses(mergedStatuses);
       setCustomJobTypes(mergedTypes);
-      setCustomOrderDestinations(settings.customOrderDestinations || []);
-      setCustomColumns(settings.customColumns || []);
-      setMessageTemplates(settings.smsTemplates || {});
-      setJobIdentifierMode(settings.jobIdentifierMode || "patientName");
+      setCustomOrderDestinations(existingDestinations);
+      setCustomColumns(existingColumns);
+      setMessageTemplates(existingTemplates);
+      setJobIdentifierMode(settings.jobIdentifierMode === "trayNumber" ? "trayNumber" : "patientName");
     }
   }, [office]);
 
@@ -718,7 +724,8 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
 
                 <div className="space-y-4">
                   {customStatuses.map((status) => {
-                    const badgeColors = getColorForBadge(status.color);
+                    const colorValue = status?.hsl || status?.color || status?.hex || "";
+                    const badgeColors = getColorForBadge(colorValue);
                     return (
                       <div
                         key={status.id}
