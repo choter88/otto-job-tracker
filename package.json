@@ -17,6 +17,21 @@
   "build": {
     "appId": "com.ottojobtracker.desktop",
     "productName": "Otto Tracker",
+    "protocols": [
+      {
+        "name": "Otto Tracker Activation",
+        "schemes": [
+          "otto"
+        ]
+      }
+    ],
+    "fileAssociations": [
+      {
+        "ext": "otto-license",
+        "name": "Otto Tracker License",
+        "description": "Otto Tracker license file"
+      }
+    ],
     "directories": {
       "output": "release"
     },

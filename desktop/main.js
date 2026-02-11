@@ -30,6 +30,9 @@ let cachedHostTlsInfo = null;
 let automaticBackupInterval = null;
 let backupWarningShown = false;
 let mainWindow = null;
+let appReadyForOpenEvents = false;
+const pendingOpenUrls = [];
+const pendingOpenFiles = [];
 
 process.on("uncaughtException", (error) => {
   logStartup("Uncaught exception", error);
@@ -37,6 +40,36 @@ process.on("uncaughtException", (error) => {
 
 process.on("unhandledRejection", (error) => {
   logStartup("Unhandled rejection", error);
+});
+
+app.on("open-url", (event, url) => {
+  try {
+    event.preventDefault();
+  } catch {
+    // ignore
+  }
+
+  if (!url) return;
+  if (!appReadyForOpenEvents) {
+    pendingOpenUrls.push(url);
+    return;
+  }
+  void handleOpenUrl(url);
+});
+
+app.on("open-file", (event, filePath) => {
+  try {
+    event.preventDefault();
+  } catch {
+    // ignore
+  }
+
+  if (!filePath) return;
+  if (!appReadyForOpenEvents) {
+    pendingOpenFiles.push(filePath);
+    return;
+  }
+  void handleOpenFile(filePath);
 });
 
 function getStartupLogPath() {
@@ -146,6 +179,10 @@ function getConfigPath() {
   return path.join(app.getPath("userData"), "otto-config.json");
 }
 
+function getPendingActivationCodePath() {
+  return path.join(app.getPath("userData"), "pending-activation-code.txt");
+}
+
 function getDataDir() {
   return path.join(app.getPath("userData"), "data");
 }
@@ -165,6 +202,102 @@ function getLocalBackupDir() {
 function normalizeHex(value) {
   if (!value) return "";
   return String(value).replace(/[^a-fA-F0-9]/g, "").toUpperCase();
+}
+
+const ACTIVATION_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
+
+function normalizeActivationCode(value) {
+  const cleaned = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .replace(/[IO01]/g, "");
+  const groups = cleaned.match(/.{1,4}/g) || [];
+  return groups.slice(0, 4).join("-").slice(0, 19);
+}
+
+function extractActivationCodeFromText(text) {
+  const normalized = normalizeActivationCode(text);
+  if (ACTIVATION_CODE_REGEX.test(normalized)) return normalized;
+
+  const match = String(text || "")
+    .toUpperCase()
+    .match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}/);
+  return match ? match[0] : "";
+}
+
+function writePendingActivationCode(value) {
+  const code = normalizeActivationCode(value);
+  if (!code) return false;
+  fs.mkdirSync(path.dirname(getPendingActivationCodePath()), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(getPendingActivationCodePath(), code, { mode: 0o600 });
+  return true;
+}
+
+function readPendingActivationCode() {
+  try {
+    if (!fs.existsSync(getPendingActivationCodePath())) return "";
+    const raw = fs.readFileSync(getPendingActivationCodePath(), "utf-8");
+    const code = normalizeActivationCode(raw);
+    return code || "";
+  } catch {
+    return "";
+  }
+}
+
+function clearPendingActivationCode() {
+  try {
+    if (fs.existsSync(getPendingActivationCodePath())) {
+      fs.unlinkSync(getPendingActivationCodePath());
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function handleOpenUrl(url) {
+  try {
+    const parsed = new URL(String(url));
+    if (parsed.protocol !== "otto:") return;
+
+    const codeCandidate =
+      parsed.searchParams.get("activationCode") ||
+      parsed.searchParams.get("code") ||
+      parsed.searchParams.get("activation") ||
+      parsed.searchParams.get("token") ||
+      "";
+
+    const extracted = extractActivationCodeFromText(codeCandidate) || extractActivationCodeFromText(parsed.pathname);
+    if (extracted) {
+      writePendingActivationCode(extracted);
+    }
+  } catch (error) {
+    logStartup("Failed handling open-url", error);
+  }
+}
+
+async function handleOpenFile(filePath) {
+  try {
+    const resolved = path.resolve(String(filePath));
+    if (!fs.existsSync(resolved)) return;
+    const ext = path.extname(resolved).toLowerCase();
+    if (ext !== ".otto-license") return;
+
+    const raw = fs.readFileSync(resolved, "utf-8");
+    let extracted = "";
+    try {
+      const parsed = JSON.parse(raw);
+      extracted = extractActivationCodeFromText(parsed?.activationCode || parsed?.code || "");
+    } catch {
+      extracted = extractActivationCodeFromText(raw);
+    }
+
+    if (extracted) {
+      writePendingActivationCode(extracted);
+    }
+  } catch (error) {
+    logStartup("Failed handling open-file", error);
+  }
 }
 
 function formatFingerprint256(hex) {
@@ -1472,6 +1605,24 @@ ipcMain.handle("otto:connection:test", async (_event, payload) => {
   return await testHostConnection(hostUrl, pairingCode);
 });
 
+ipcMain.handle("otto:activationCode:get", async () => {
+  return readPendingActivationCode();
+});
+
+ipcMain.handle("otto:activationCode:clear", async () => {
+  clearPendingActivationCode();
+  return { ok: true };
+});
+
+ipcMain.handle("otto:hostAddresses:show", async () => {
+  await showHostAddresses();
+  return { ok: true };
+});
+
+ipcMain.handle("otto:hostInfo:get", async () => {
+  return computeHostInfo();
+});
+
 ipcMain.handle("otto:outbox:get", async () => {
   return readOutboxItems();
 });
@@ -1496,7 +1647,7 @@ ipcMain.handle("otto:supportBundle:export", async () => {
   return { ok: true };
 });
 
-async function showHostAddresses() {
+function computeHostInfo() {
   const port = process.env.PORT || "5150";
   const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
   const nets = os.networkInterfaces();
@@ -1507,11 +1658,24 @@ async function showHostAddresses() {
     .filter((n) => n.family === "IPv4" && !n.internal)
     .map((n) => `${protocol}://${n.address}:${port}`);
 
-  const unique = Array.from(new Set(addresses)).sort();
+  const urls = Array.from(new Set(addresses)).sort();
   const pairingCode =
     protocol === "https"
       ? pairingCodeFromFingerprintHex(getHostTlsInfo().fingerprint256)
       : "";
+
+  return {
+    protocol,
+    port: Number(port) || 0,
+    urls,
+    pairingCode,
+  };
+}
+
+async function showHostAddresses() {
+  const info = computeHostInfo();
+  const unique = info.urls;
+  const pairingCode = info.pairingCode;
 
   const message = (() => {
     if (unique.length === 0) {
@@ -2127,6 +2291,22 @@ app.whenReady().then(async () => {
   maybeRestoreDatabaseFromArgs();
   logStartup("App starting");
 
+  appReadyForOpenEvents = true;
+  for (const url of pendingOpenUrls.splice(0)) {
+    await handleOpenUrl(url);
+  }
+  for (const filePath of pendingOpenFiles.splice(0)) {
+    await handleOpenFile(filePath);
+  }
+  for (const arg of process.argv) {
+    if (typeof arg === "string" && arg.startsWith("otto:")) {
+      await handleOpenUrl(arg);
+    }
+    if (typeof arg === "string" && arg.toLowerCase().endsWith(".otto-license")) {
+      await handleOpenFile(arg);
+    }
+  }
+
   const config = readConfig();
   setAppMenu(config);
   if (!fs.existsSync(getConfigPath())) {
@@ -2210,7 +2390,20 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("second-instance", () => {
+app.on("second-instance", (_event, argv) => {
+  if (appReadyForOpenEvents && Array.isArray(argv)) {
+    void (async () => {
+      for (const arg of argv) {
+        if (typeof arg === "string" && arg.startsWith("otto:")) {
+          await handleOpenUrl(arg);
+        }
+        if (typeof arg === "string" && arg.toLowerCase().endsWith(".otto-license")) {
+          await handleOpenFile(arg);
+        }
+      }
+    })();
+  }
+
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();

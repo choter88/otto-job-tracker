@@ -7,6 +7,10 @@ contextBridge.exposeInMainWorld("otto", {
   outboxGet: () => ipcRenderer.invoke("otto:outbox:get"),
   outboxReplace: (items) => ipcRenderer.invoke("otto:outbox:replace", items),
   outboxClear: () => ipcRenderer.invoke("otto:outbox:clear"),
+  getPendingActivationCode: () => ipcRenderer.invoke("otto:activationCode:get"),
+  clearPendingActivationCode: () => ipcRenderer.invoke("otto:activationCode:clear"),
+  showHostAddresses: () => ipcRenderer.invoke("otto:hostAddresses:show"),
+  getHostInfo: () => ipcRenderer.invoke("otto:hostInfo:get"),
   showDiagnostics: () => ipcRenderer.invoke("otto:diagnostics:show"),
   exportSupportBundle: () => ipcRenderer.invoke("otto:supportBundle:export"),
 });

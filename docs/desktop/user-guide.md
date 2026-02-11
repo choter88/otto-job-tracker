@@ -12,7 +12,7 @@
 1. Install and open Otto Tracker.
 2. When asked, choose **“This computer is the Host”**.
 3. On the Host, complete the one-time setup:
-   - Paste your **Activation Code** (from the billing portal)
+   - Enter your **Activation Code** (from the billing portal). Tip: if you used an activation link, the code may auto-fill.
    - Enter your **office details**
    - Create the first **Admin login** (this is local to your office — it does not need to match the billing portal login)
 4. Otto Tracker will show a **Staff code**. Save it — your team will need it to create their logins.

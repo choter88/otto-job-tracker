@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -69,6 +69,13 @@ type LicenseSnapshot = {
   lastError: string | null;
 };
 
+type HostInfo = {
+  protocol: string;
+  port: number;
+  urls: string[];
+  pairingCode: string;
+};
+
 export default function SetupPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -87,6 +94,7 @@ export default function SetupPage() {
   const [activationCodeUsed, setActivationCodeUsed] = useState<string>("");
   const [licenseSnapshot, setLicenseSnapshot] = useState<LicenseSnapshot | null>(null);
   const [activationWarning, setActivationWarning] = useState<string | null>(null);
+  const [hostInfo, setHostInfo] = useState<HostInfo | null>(null);
 
   const isLocalHost = useMemo(() => {
     const host = window.location.hostname;
@@ -114,6 +122,59 @@ export default function SetupPage() {
   });
 
   const activationCodeValue = form.watch("activationCode");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const bridge = (window as any)?.otto;
+        if (!bridge?.getPendingActivationCode) return;
+        const pending = await bridge.getPendingActivationCode();
+        if (cancelled) return;
+        if (typeof pending !== "string") return;
+
+        const trimmed = pending.trim();
+        if (!trimmed) return;
+
+        const current = form.getValues("activationCode");
+        if (!current) {
+          form.setValue("activationCode", trimmed, { shouldValidate: true });
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [form]);
+
+  useEffect(() => {
+    if (!staffCode) return;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const bridge = (window as any)?.otto;
+        if (!bridge?.getHostInfo) return;
+        const info = await bridge.getHostInfo();
+        if (cancelled) return;
+        if (info && typeof info === "object") {
+          setHostInfo(info as HostInfo);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [staffCode]);
 
   const formatActivationCode = (raw: string) => {
     const cleaned = String(raw || "")
@@ -169,6 +230,11 @@ export default function SetupPage() {
       setStaffCode(payload.staffCode);
       setLicenseSnapshot(payload.license || null);
       setActivationWarning(payload.activationWarning || null);
+      try {
+        (window as any)?.otto?.clearPendingActivationCode?.();
+      } catch {
+        // ignore
+      }
       toast({
         title: "Setup complete",
         description: "Your office is ready. Save the Staff code before continuing.",
@@ -241,6 +307,11 @@ export default function SetupPage() {
       setStaffCode(payload.staffCode);
       setLicenseSnapshot(payload.license || null);
       setActivationWarning(payload.activationWarning || null);
+      try {
+        (window as any)?.otto?.clearPendingActivationCode?.();
+      } catch {
+        // ignore
+      }
 
       toast({
         title: "Import complete",
@@ -343,12 +414,23 @@ export default function SetupPage() {
   }
 
   if (staffCode) {
+    const bridge = (window as any)?.otto;
+    const canShowHostAddresses = typeof bridge?.showHostAddresses === "function";
     const onCopy = async () => {
       try {
         await navigator.clipboard.writeText(staffCode);
         toast({ title: "Copied", description: "Staff code copied to clipboard." });
       } catch {
         toast({ title: "Copy failed", description: "Please copy the code manually.", variant: "destructive" });
+      }
+    };
+
+    const onCopyValue = async (value: string, label: string) => {
+      try {
+        await navigator.clipboard.writeText(value);
+        toast({ title: "Copied", description: `${label} copied to clipboard.` });
+      } catch {
+        toast({ title: "Copy failed", description: `Please copy the ${label.toLowerCase()} manually.`, variant: "destructive" });
       }
     };
 
@@ -384,6 +466,53 @@ export default function SetupPage() {
                 Generating a new code will replace the old one.
               </AlertDescription>
             </Alert>
+
+            <div className="rounded-lg border bg-card p-4 space-y-3">
+              <div className="text-sm font-medium">Add another computer</div>
+              <div className="text-sm text-muted-foreground">
+                Install Otto Tracker on each additional computer, choose <b>Client</b>, then enter the Host address and Pairing code.
+              </div>
+
+              {hostInfo?.urls?.length ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-xs text-muted-foreground">Host address</div>
+                      <div className="font-mono text-sm truncate">{hostInfo.urls[0]}</div>
+                    </div>
+                    <Button type="button" variant="secondary" size="sm" onClick={() => onCopyValue(hostInfo.urls[0], "Host address")}>
+                      <Copy className="mr-2 h-4 w-4" />
+                      Copy
+                    </Button>
+                  </div>
+
+                  {hostInfo.pairingCode && (
+                    <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-xs text-muted-foreground">Pairing code</div>
+                        <div className="font-mono text-sm tracking-widest truncate">{hostInfo.pairingCode}</div>
+                      </div>
+                      <Button type="button" variant="secondary" size="sm" onClick={() => onCopyValue(hostInfo.pairingCode, "Pairing code")}>
+                        <Copy className="mr-2 h-4 w-4" />
+                        Copy
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <Alert>
+                  <AlertDescription>
+                    On the Host computer, open <b>File → Show Host Address…</b> to copy the Host address and Pairing code.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {canShowHostAddresses && (
+                <Button type="button" variant="secondary" onClick={() => bridge.showHostAddresses()}>
+                  Show Host Address…
+                </Button>
+              )}
+            </div>
 
             {activationWarning && (
               <Alert>

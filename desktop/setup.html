@@ -24,23 +24,26 @@
   <body>
     <h1>Otto Tracker Setup</h1>
     <p class="hint">
-      This app is designed to run with <b>no internet access</b>. One computer is the <b>Host (SOT)</b>. Other computers connect as <b>Clients</b>.
+      Otto Tracker is designed to work even with <b>no internet</b>. Choose what this computer should do.
     </p>
 
-    <div class="step">Step 1 — Choose Host or Client</div>
+    <div class="step">Step 1 — Choose Main computer or Client</div>
     <div class="box">
       <div class="row">
         <label>
           <input type="radio" name="mode" value="host" checked />
-          This computer is the Host (Single Source of Truth)
+          This is the Main computer (stores office data)
         </label>
-        <div class="hint">Runs the database and server locally on this machine. After saving, you’ll complete office setup here.</div>
+        <div class="hint">
+          Runs the database and server locally on this machine. Keep this computer on during business hours.
+          After saving, you’ll complete office setup here.
+        </div>
       </div>
 
       <div class="row">
         <label>
           <input type="radio" name="mode" value="client" />
-          This computer is a Client (connects to an existing Host)
+          This is another computer (connects to the Main computer)
         </label>
         <div class="hint">
           Does not store the office database locally. If you make changes while disconnected, Otto Tracker may keep a small <b>encrypted</b>
@@ -49,14 +52,14 @@
       </div>
 
       <div id="clientSettings" style="display:none">
-        <div class="step">Step 2 — Connect to the Host</div>
-        <label for="hostUrl">Host URL</label>
+        <div class="step">Step 2 — Connect to the Main computer</div>
+        <label for="hostUrl">Main computer address</label>
         <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
-        <div class="hint">Get this from the Host computer: <b>File → Show Host Address…</b></div>
+        <div class="hint">Get this from the Main computer: <b>File → Show Host Address…</b></div>
 
         <label for="pairingCode">Pairing code</label>
         <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
-        <div class="hint danger">Required the first time you connect. This app blocks all internet access.</div>
+        <div class="hint danger">Required the first time you connect. Otto Tracker blocks all internet access by default.</div>
 
         <div class="actions">
           <button id="testConnection">Test Connection</button>
