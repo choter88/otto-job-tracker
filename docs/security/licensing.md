@@ -1,5 +1,11 @@
 # Offline licensing (no internet)
 
+This document describes an **optional** fully-offline licensing model.
+
+Current desktop production model:
+- Host activates/checks in with the portal control plane (`/license/v1/*`).
+- Patient/workflow data remains local; licensing requests do not include PHI payloads.
+
 If the app must never connect to the internet, licensing should be **offline**:
 
 ## Recommended approach
@@ -22,4 +28,3 @@ If the app must never connect to the internet, licensing should be **offline**:
 
 - “Machine fingerprinting” should be tolerant of minor changes (OS updates, NIC changes) and should have a support override flow.
 - Avoid tying licensing to external time sources; rely on local system time + monotonic counters and keep audit logs for suspicious clock changes.
-

@@ -192,8 +192,12 @@ Optional:
    - duplicate unique keys (e.g., duplicate `orderId`)
 4. After import completes:
    - Office settings should be present.
-   - Users should be able to sign in with their existing passwords (assuming hashing matches).
+   - The setup admin account can sign in immediately.
+   - Snapshot users with legacy placeholder identities (for example `legacy+...@otto.local` or `LEGACY_IDENTITY_NO_LOGIN`) are imported as **non-login view-only identities** so historical attribution is preserved.
+   - If a snapshot references user IDs that are missing from `users`, desktop creates synthetic legacy non-login identities to preserve referential integrity.
    - Starred jobs show “Important note” based on `jobFlags.summary`.
+5. Compatibility defaults:
+   - `commentReads`, `jobFlags`, `jobStatusHistory`, and `notificationRules` may be omitted and will default to empty arrays.
 
 ---
 
@@ -202,4 +206,3 @@ Optional:
 - Licensing/activation tokens (desktop uses its own Host token via `/license/v1/*`).
 - Cross-office snapshots (desktop is single-office).
 - Cloud backups (desktop backups are local/network share).
-

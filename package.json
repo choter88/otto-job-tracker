@@ -13,6 +13,7 @@
     "dist:desktop": "npm run build && electron-builder",
     "check": "tsc",
     "test:local-first": "node --import tsx --test tests/local-first-outbox.test.ts",
+    "test:migration-import": "node --import tsx --test tests/migration-import.test.ts",
     "db:push": "drizzle-kit push"
   },
   "build": {

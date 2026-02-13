@@ -8,10 +8,15 @@ type ImportAdmin = {
   passwordHash: string;
 };
 
+const LEGACY_NO_LOGIN_MARKER = "LEGACY_IDENTITY_NO_LOGIN";
+const LEGACY_EMAIL_DOMAIN = "@otto.local";
+const ALLOWED_USER_ROLES = new Set(["owner", "manager", "staff", "view_only", "super_admin"]);
+
 export type ImportSnapshotResult = {
   officeId: string;
   adminEmail: string;
   importedCounts: Record<string, number>;
+  synthesizedLegacyUsers: number;
 };
 
 type SnapshotTopLevel = {
@@ -43,12 +48,60 @@ function requireArray(value: unknown, label: string): any[] {
   return value;
 }
 
+function arrayOrEmpty(value: unknown, label: string): any[] {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  return requireArray(value, label);
+}
+
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
 function normalizeEmail(value: unknown): string {
   return asString(value).trim().toLowerCase();
+}
+
+function normalizeRole(value: unknown, fallback: string): string {
+  const role = asString(value).trim().toLowerCase();
+  if (ALLOWED_USER_ROLES.has(role)) return role;
+  return fallback;
+}
+
+function isLegacyIdentity(values: {
+  email: string;
+  password: string;
+  role: string;
+  firstName: string;
+  lastName: string;
+}): boolean {
+  if (values.password === LEGACY_NO_LOGIN_MARKER) return true;
+  if (values.email.endsWith(LEGACY_EMAIL_DOMAIN)) return true;
+  if (values.role === "view_only") return true;
+  if (!values.firstName || !values.lastName) return true;
+  return false;
+}
+
+function legacyEmailLocalPartFromId(id: string): string {
+  const normalized = String(id || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "user";
+}
+
+function buildUniqueLegacyEmail(userId: string, usedEmails: Set<string>): string {
+  const base = `legacy+${legacyEmailLocalPartFromId(userId)}`;
+  let candidate = `${base}${LEGACY_EMAIL_DOMAIN}`;
+  let seq = 2;
+  while (usedEmails.has(candidate)) {
+    candidate = `${base}-${seq}${LEGACY_EMAIL_DOMAIN}`;
+    seq += 1;
+  }
+  return candidate;
 }
 
 function toBoolInt(value: unknown, fallback = 0): number {
@@ -120,32 +173,48 @@ export function importSnapshotV1(params: {
   if (!officeId) throw new Error("office.id is required");
   if (!officeName) throw new Error("office.name is required");
 
-  const usersRaw = requireArray(top.users, "users").map((u, idx) => ({ idx, raw: u }));
+  const usersRaw = arrayOrEmpty(top.users, "users").map((u, idx) => ({ idx, raw: u }));
   const jobsRaw = requireArray(top.jobs, "jobs").map((j, idx) => ({ idx, raw: j }));
-  const archivedJobsRaw = requireArray(top.archivedJobs, "archivedJobs").map((j, idx) => ({ idx, raw: j }));
-  const jobCommentsRaw = requireArray(top.jobComments, "jobComments").map((c, idx) => ({ idx, raw: c }));
-  const commentReadsRaw = requireArray(top.commentReads, "commentReads").map((c, idx) => ({ idx, raw: c }));
-  const jobFlagsRaw = requireArray(top.jobFlags, "jobFlags").map((f, idx) => ({ idx, raw: f }));
-  const jobStatusHistoryRaw = requireArray(top.jobStatusHistory, "jobStatusHistory").map((h, idx) => ({ idx, raw: h }));
-  const notificationRulesRaw = requireArray(top.notificationRules, "notificationRules").map((r, idx) => ({ idx, raw: r }));
+  const archivedJobsRaw = arrayOrEmpty(top.archivedJobs, "archivedJobs").map((j, idx) => ({ idx, raw: j }));
+  const jobCommentsRaw = arrayOrEmpty(top.jobComments, "jobComments").map((c, idx) => ({ idx, raw: c }));
+  const commentReadsRaw = arrayOrEmpty(top.commentReads, "commentReads").map((c, idx) => ({ idx, raw: c }));
+  const jobFlagsRaw = arrayOrEmpty(top.jobFlags, "jobFlags").map((f, idx) => ({ idx, raw: f }));
+  const jobStatusHistoryRaw = arrayOrEmpty(top.jobStatusHistory, "jobStatusHistory").map((h, idx) => ({ idx, raw: h }));
+  const notificationRulesRaw = arrayOrEmpty(top.notificationRules, "notificationRules").map((r, idx) => ({ idx, raw: r }));
 
   const userRows: any[] = [];
+  let synthesizedLegacyUsers = 0;
   for (const { idx, raw } of usersRaw) {
     const u = requireObject(raw, `users[${idx}]`);
     const id = asString(u.id).trim();
-    const email = normalizeEmail(u.email);
-    const password = asString(u.password).trim();
-    const firstName = asString(u.firstName).trim();
-    const lastName = asString(u.lastName).trim();
-    const role = asString(u.role).trim() || "staff";
+    let email = normalizeEmail(u.email);
+    let password = asString(u.password).trim();
+    let firstName = asString(u.firstName).trim();
+    let lastName = asString(u.lastName).trim();
+    let role = asString(u.role).trim().toLowerCase() || "staff";
     const createdAt = toTsMs(u.createdAt, now);
     const updatedAt = toTsMs(u.updatedAt, createdAt);
 
     if (!id) throw new Error(`users[${idx}].id is required`);
-    if (!email) throw new Error(`users[${idx}].email is required`);
-    if (!password) throw new Error(`users[${idx}].password is required`);
-    if (!firstName) throw new Error(`users[${idx}].firstName is required`);
-    if (!lastName) throw new Error(`users[${idx}].lastName is required`);
+
+    const legacyIdentity = isLegacyIdentity({ email, password, role, firstName, lastName });
+    if (!email) {
+      if (!legacyIdentity) throw new Error(`users[${idx}].email is required`);
+      email = `legacy+${legacyEmailLocalPartFromId(id)}${LEGACY_EMAIL_DOMAIN}`;
+    }
+    if (!password) {
+      if (!legacyIdentity) throw new Error(`users[${idx}].password is required`);
+      password = LEGACY_NO_LOGIN_MARKER;
+    }
+    if (!firstName) {
+      if (!legacyIdentity) throw new Error(`users[${idx}].firstName is required`);
+      firstName = "Legacy";
+    }
+    if (!lastName) {
+      if (!legacyIdentity) throw new Error(`users[${idx}].lastName is required`);
+      lastName = "User";
+    }
+    role = normalizeRole(role, legacyIdentity ? "view_only" : "staff");
 
     userRows.push({
       id,
@@ -191,6 +260,31 @@ export function importSnapshotV1(params: {
   assertNoDuplicates(userRows.map((u) => u.email), "user email");
 
   const userIdSet = new Set(userRows.map((u) => u.id));
+  const userEmailSet = new Set(userRows.map((u) => String(u.email).toLowerCase()));
+
+  function ensureLegacyUserRef(userId: string, label: string): void {
+    const normalized = asString(userId).trim();
+    if (!normalized) {
+      throw new Error(`${label} references unknown userId: ${userId}`);
+    }
+    if (userIdSet.has(normalized)) return;
+
+    const email = buildUniqueLegacyEmail(normalized, userEmailSet);
+    userRows.push({
+      id: normalized,
+      email,
+      password: LEGACY_NO_LOGIN_MARKER,
+      first_name: "Legacy",
+      last_name: "User",
+      role: "view_only",
+      office_id: officeId,
+      created_at: now,
+      updated_at: now,
+    });
+    userIdSet.add(normalized);
+    userEmailSet.add(email);
+    synthesizedLegacyUsers += 1;
+  }
 
   const jobRows: any[] = [];
   const jobOriginalLinks: { id: string; originalJobId: string }[] = [];
@@ -221,8 +315,8 @@ export function importSnapshotV1(params: {
     if (!jobType) throw new Error(`jobs[${idx}].jobType is required`);
     if (!orderDestination) throw new Error(`jobs[${idx}].orderDestination is required`);
 
-    if (createdBy && !userIdSet.has(createdBy)) {
-      throw new Error(`jobs[${idx}].createdBy references unknown userId: ${createdBy}`);
+    if (createdBy) {
+      ensureLegacyUserRef(createdBy, `jobs[${idx}].createdBy`);
     }
 
     if (originalJobId) {
@@ -290,8 +384,8 @@ export function importSnapshotV1(params: {
     if (!finalStatus) throw new Error(`archivedJobs[${idx}].finalStatus is required`);
     if (!orderDestination) throw new Error(`archivedJobs[${idx}].orderDestination is required`);
 
-    if (createdBy && !userIdSet.has(createdBy)) {
-      throw new Error(`archivedJobs[${idx}].createdBy references unknown userId: ${createdBy}`);
+    if (createdBy) {
+      ensureLegacyUserRef(createdBy, `archivedJobs[${idx}].createdBy`);
     }
 
     archivedRows.push({
@@ -334,7 +428,7 @@ export function importSnapshotV1(params: {
     if (!content) throw new Error(`jobComments[${idx}].content is required`);
 
     if (!jobIdSet.has(jobId)) throw new Error(`jobComments[${idx}] references unknown jobId: ${jobId}`);
-    if (!userIdSet.has(authorId)) throw new Error(`jobComments[${idx}] references unknown userId: ${authorId}`);
+    ensureLegacyUserRef(authorId, `jobComments[${idx}].authorId`);
 
     commentRows.push({
       id,
@@ -360,7 +454,7 @@ export function importSnapshotV1(params: {
     if (!jobId) throw new Error(`commentReads[${idx}].jobId is required`);
 
     if (!jobIdSet.has(jobId)) throw new Error(`commentReads[${idx}] references unknown jobId: ${jobId}`);
-    if (!userIdSet.has(userId)) throw new Error(`commentReads[${idx}] references unknown userId: ${userId}`);
+    ensureLegacyUserRef(userId, `commentReads[${idx}].userId`);
 
     commentReadRows.push({
       id,
@@ -393,7 +487,7 @@ export function importSnapshotV1(params: {
     if (!jobId) throw new Error(`jobFlags[${idx}].jobId is required`);
 
     if (!jobIdSet.has(jobId)) throw new Error(`jobFlags[${idx}] references unknown jobId: ${jobId}`);
-    if (!userIdSet.has(userId)) throw new Error(`jobFlags[${idx}] references unknown userId: ${userId}`);
+    ensureLegacyUserRef(userId, `jobFlags[${idx}].userId`);
 
     flagRows.push({
       id,
@@ -428,7 +522,7 @@ export function importSnapshotV1(params: {
     if (!changedBy) throw new Error(`jobStatusHistory[${idx}].changedBy is required`);
 
     if (!jobIdSet.has(jobId)) throw new Error(`jobStatusHistory[${idx}] references unknown jobId: ${jobId}`);
-    if (!userIdSet.has(changedBy)) throw new Error(`jobStatusHistory[${idx}] references unknown userId: ${changedBy}`);
+    ensureLegacyUserRef(changedBy, `jobStatusHistory[${idx}].changedBy`);
 
     historyRows.push({
       id,
@@ -521,6 +615,10 @@ export function importSnapshotV1(params: {
     notificationRules: ruleRows.length,
   };
 
+  // Defensive consistency check after synthesized legacy users are appended.
+  assertNoDuplicates(userRows.map((u) => u.id), "user id");
+  assertNoDuplicates(userRows.map((u) => u.email), "user email");
+
   const insertOffice = sqlite.prepare(
     `INSERT INTO offices (id, name, address, phone, email, enabled, settings, created_at, updated_at)
      VALUES (@id, @name, @address, @phone, @email, @enabled, @settings, @created_at, @updated_at)`,
@@ -605,5 +703,5 @@ export function importSnapshotV1(params: {
     for (const row of ruleRows) insertRule.run(row);
   })();
 
-  return { officeId, adminEmail, importedCounts };
+  return { officeId, adminEmail, importedCounts, synthesizedLegacyUsers };
 }

@@ -85,7 +85,7 @@ For each item below:
 
 **Current**
 - Host activation uses an Activation Code; desktop calls the hosted `/license/v1/*` API.
-- 7-day grace; after grace the app becomes read-only.
+- Grace/read-only behavior is enforced locally by the desktop Host API based on license state.
 
 **Recommendation: Keep + refine UX**
 
@@ -345,4 +345,3 @@ Keep the app small for the friendly-office pilot:
 - **Settings** (office workflow settings; owner/manager only)
 
 Everything else should be removed or hidden for now.
-

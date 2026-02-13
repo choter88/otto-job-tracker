@@ -88,7 +88,7 @@ We want migration to be a **one-time** office-owned operation:
 - [x] “Import from web snapshot” flow in desktop Host (Owner only).
 - [x] Validate + preview before writing.
 - [ ] Idempotency: safe to retry import (no duplicates).
-- [ ] Logging: record import events in local audit log (no PHI leaked to internet).
+- [x] Logging: record import events in local audit log (no PHI leaked to internet).
 
 ---
 

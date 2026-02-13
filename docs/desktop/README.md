@@ -76,7 +76,9 @@ For a plain-language setup walkthrough, see `docs/desktop/user-guide.md`.
 - Add encryption-at-rest options for the local database (for example OS full-disk encryption + optional DB file encryption).
 - Replace cookie sessions with token-based auth if you need cross-origin deployment patterns.
 
-### Phase 4 — licensing (web only, no PHI)
+### Phase 4 — licensing
+Default model: web-based licensing control plane only (no PHI payloads).
+
 If the app must never connect to the internet, use offline licensing instead:
 - Signed license file import + offline validation (see `docs/security/licensing.md`).
 

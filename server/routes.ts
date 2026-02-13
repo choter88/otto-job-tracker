@@ -1,8 +1,8 @@
-import type { Express, Request } from "express";
+import type { Express, Request, Response } from "express";
 import fs from "fs";
 import { createServer as createHttpServer, type Server as HttpServer } from "http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "https";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { setupAuth, validatePasswordComplexity } from "./auth";
 import { storage } from "./storage";
 import {
@@ -136,6 +136,19 @@ function normalizeStaffCode(input: string): string {
     .replace(/[^A-Z0-9]/g, "");
 }
 
+function applyNoStoreHeaders(res: Response): void {
+  res.set("Cache-Control", "no-store");
+  res.set("Pragma", "no-cache");
+}
+
+function hashSnapshotPayload(payload: unknown): string {
+  try {
+    return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  } catch {
+    return "unavailable";
+  }
+}
+
 export function registerRoutes(app: Express): { server: AppServer; sessionMiddleware: any } {
   // Setup authentication
   const sessionMiddleware = setupAuth(app);
@@ -145,10 +158,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   app.get("/api/license/status", (_req, res) => {
+    applyNoStoreHeaders(res);
     res.json(getLicenseSnapshot());
   });
 
   app.post("/api/license/activate", requireAuth, requireRole(["owner"]), async (req, res) => {
+    applyNoStoreHeaders(res);
     try {
       const activationCode =
         typeof req.body?.activationCode === "string" ? req.body.activationCode.trim() : "";
@@ -161,6 +176,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   app.post("/api/license/checkin", requireAuth, requireRole(["owner"]), async (req, res) => {
+    applyNoStoreHeaders(res);
     try {
       const snapshot = await forceCheckin();
       res.json(snapshot);
@@ -475,6 +491,26 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const user = await storage.getUserByEmail(result.adminEmail);
       if (!office || !user) {
         return res.status(500).json({ error: "Import completed but could not load the new office." });
+      }
+
+      try {
+        await storage.createAuditLog({
+          adminId: user.id,
+          action: "import_snapshot",
+          targetType: "office",
+          targetId: office.id,
+          metadata: {
+            format: (snapshot as any)?.format || "unknown",
+            version: (snapshot as any)?.version || "unknown",
+            exportedAt: (snapshot as any)?.exportedAt || null,
+            snapshotSha256: hashSnapshotPayload(snapshot),
+            importedCounts: result.importedCounts,
+            synthesizedLegacyUsers: result.synthesizedLegacyUsers,
+            activationVerified: activationSucceeded,
+          },
+        });
+      } catch (auditError) {
+        console.error("Failed to write import audit log:", auditError);
       }
 
       req.login(user, (err) => {

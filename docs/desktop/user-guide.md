@@ -4,7 +4,8 @@
 
 - All computers must be on the **same office network** (same Wi‑Fi or Ethernet).
 - Pick one computer to be the **Host (SOT)** (usually a front desk computer that stays on).
-- The **Host needs internet access at least once every 7 days** to verify the office is active (no patient data is sent). If it can’t verify, Otto Tracker switches to **read-only** until it can.
+- The Host needs periodic internet access for licensing check-ins (no patient data is sent).
+- If check-ins are overdue, Otto Tracker keeps retrying and can continue in grace mode for a limited period before switching to **read-only**.
 - The Host computer should be set so it **does not go to sleep** during business hours (sleep will disconnect Clients).
 
 ## Step 1 — Install on the Host (SOT)
