@@ -89,13 +89,12 @@ export function broadcastToOffice(officeId: string, data: any): void {
   if (!set || set.size === 0) return;
 
   const message = JSON.stringify(data);
-  for (const ws of set) {
-    if (ws.readyState !== WebSocket.OPEN) continue;
+  set.forEach((ws) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
     try {
       ws.send(message);
     } catch {
       // ignore
     }
-  }
+  });
 }
-

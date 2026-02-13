@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { subscribeOutbox, flushOutbox } from "@/lib/offline-outbox";
 import { useAuth } from "@/hooks/use-auth";
@@ -11,6 +11,7 @@ function buildSyncWsUrl(): string {
 
 export default function SyncManager() {
   const { user } = useAuth();
+  const userId = user?.id || null;
   const { toast } = useToast();
   const [connected, setConnected] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
@@ -32,6 +33,32 @@ export default function SyncManager() {
   useEffect(() => {
     syncingRef.current = syncing;
   }, [syncing]);
+
+  const attemptFlush = useCallback(async () => {
+    if (!userId) return;
+    if (syncingRef.current) return;
+    if (pendingCountRef.current <= 0) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+
+    setSyncing(true);
+    try {
+      const result = await flushOutbox(window.location.origin);
+      if (result.flushed > 0) {
+        toast({
+          title: "Synced changes",
+          description: `Synced ${result.flushed} offline change${result.flushed === 1 ? "" : "s"}.`,
+        });
+        queryClient.invalidateQueries();
+      }
+      if (result.lastError) {
+        setSyncError(result.lastError);
+      } else if (result.remaining === 0) {
+        setSyncError(null);
+      }
+    } finally {
+      setSyncing(false);
+    }
+  }, [toast, userId]);
 
   useEffect(() => {
     return subscribeOutbox((items) => {
@@ -164,30 +191,26 @@ export default function SyncManager() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user) return;
-    if (!connected) return;
-    if (syncingRef.current) return;
-    if (pendingCountRef.current <= 0) return;
+    if (!userId) return;
+    void attemptFlush();
+  }, [attemptFlush, connected, pendingCount, userId]);
 
-    setSyncing(true);
-    void flushOutbox(window.location.origin)
-      .then((result) => {
-        setSyncing(false);
-        if (result.flushed > 0) {
-          toast({
-            title: "Synced changes",
-            description: `Synced ${result.flushed} offline change${result.flushed === 1 ? "" : "s"}.`,
-          });
-          queryClient.invalidateQueries();
-        }
-        if (result.lastError) {
-          setSyncError(result.lastError);
-        }
-      })
-      .catch(() => {
-        setSyncing(false);
-      });
-  }, [user?.id, connected, pendingCount, toast]);
+  useEffect(() => {
+    if (!userId) return;
+    const onOnline = () => {
+      void attemptFlush();
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [attemptFlush, userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const timer = window.setInterval(() => {
+      void attemptFlush();
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [attemptFlush, userId]);
 
   if (!user) return null;
 

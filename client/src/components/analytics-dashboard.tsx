@@ -288,7 +288,7 @@ export default function AnalyticsDashboard() {
       flaggedBy: flagged?.flaggedBy?.firstName
         ? `${String(flagged.flaggedBy.firstName)} ${String(flagged.flaggedBy.lastName || "")}`.trim()
         : "",
-      hasNote: Boolean(String(flagged.summary || "").trim()),
+      hasNote: Boolean(String(flagged.importantNote || "").trim()),
     }));
 
   const periodLabel = `${format(dateRange.from, "MMM d")} – ${format(dateRange.to, "MMM d, yyyy")}`;

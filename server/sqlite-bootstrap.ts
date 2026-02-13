@@ -31,6 +31,31 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     ).run();
   };
 
+  const ensureJobFlagNoteColumns = (): void => {
+    if (!hasColumn("job_flags", "important_note")) {
+      sqlite.prepare(`ALTER TABLE job_flags ADD COLUMN important_note TEXT;`).run();
+    }
+    if (!hasColumn("job_flags", "important_note_updated_at")) {
+      sqlite.prepare(`ALTER TABLE job_flags ADD COLUMN important_note_updated_at INTEGER;`).run();
+    }
+
+    // Preserve existing user-entered notes from legacy `summary`.
+    sqlite.prepare(
+      `UPDATE job_flags
+       SET important_note = summary
+       WHERE (important_note IS NULL OR important_note = '')
+         AND summary IS NOT NULL
+         AND summary != '';`,
+    ).run();
+
+    sqlite.prepare(
+      `UPDATE job_flags
+       SET important_note_updated_at = COALESCE(important_note_updated_at, summary_generated_at, created_at)
+       WHERE important_note IS NOT NULL
+         AND important_note != '';`,
+    ).run();
+  };
+
   const ensureHighContrastOfficeColors = (): void => {
     const normalizeHexColor = (value: unknown) =>
       String(typeof value === "string" ? value : "").trim().toLowerCase();
@@ -221,6 +246,8 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
       job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
       summary TEXT,
       summary_generated_at INTEGER,
+      important_note TEXT,
+      important_note_updated_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
       UNIQUE(user_id, job_id)
     );`,
@@ -342,6 +369,7 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     // Migrations / forward-compat changes for existing installs.
     ensurePatientFirstName("jobs");
     ensurePatientFirstName("archived_jobs");
+    ensureJobFlagNoteColumns();
     ensureHighContrastOfficeColors();
   })();
 }

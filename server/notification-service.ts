@@ -1,6 +1,6 @@
 import type { Job, User, JobComment, NotificationRule } from "@shared/schema";
 import type { IStorage } from "./storage";
-import { broadcastToUser } from "./websocket";
+import { broadcastToOffice } from "./sync-websocket";
 
 function debugLog(message: string): void {
   if (process.env.OTTO_DEBUG === "true") {
@@ -47,21 +47,10 @@ export async function notifyJobStatusChange(
     
     debugLog(`[notifyJobStatusChange] created=${notifications.length}`);
     
-    notifications.forEach(notification => {
-      try {
-        broadcastToUser(notification.userId, {
-          type: 'notification',
-          data: notification
-        });
-      } catch (error) {
-        console.error(`Failed to broadcast notification to user ${notification.userId}:`, error);
-      }
-    });
     
   } catch (error) {
     console.error("Error sending job status change notifications:", error);
-    // Re-throw the error so the route handler knows notification failed
-    throw error;
+    // Notification delivery is best-effort and should not fail job updates.
   }
 }
 
@@ -98,16 +87,6 @@ export async function notifyNewComment(
       )
     );
     
-    notifications.forEach(notification => {
-      try {
-        broadcastToUser(notification.userId, {
-          type: 'notification',
-          data: notification
-        });
-      } catch (error) {
-        console.error(`Failed to broadcast notification to user ${notification.userId}:`, error);
-      }
-    });
   } catch (error) {
     console.error("Error sending new comment notifications:", error);
   }
@@ -140,16 +119,9 @@ export async function notifyOverdueJob(
       )
     );
     
-    notifications.forEach(notification => {
-      try {
-        broadcastToUser(notification.userId, {
-          type: 'notification',
-          data: notification
-        });
-      } catch (error) {
-        console.error(`Failed to broadcast notification to user ${notification.userId}:`, error);
-      }
-    });
+    if (notifications.length > 0) {
+      broadcastToOffice(job.officeId, { type: "office_updated", ts: Date.now(), source: "overdue_alert" });
+    }
   } catch (error) {
     console.error("Error sending overdue job notifications:", error);
   }

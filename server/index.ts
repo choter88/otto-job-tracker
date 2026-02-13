@@ -6,9 +6,6 @@ import { broadcastToOffice, setupSyncWebSocket } from "./sync-websocket";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
-// NOTIFICATION SYSTEM DISABLED TO REDUCE COSTS
-// import { setupWebSocket } from "./websocket";
-// import { startBackgroundJobs } from "./background-jobs";
 
 const app = express();
 
@@ -175,8 +172,6 @@ app.use((req, res, next) => {
 (async () => {
   const { server, sessionMiddleware } = await registerRoutes(app);
   
-  // NOTIFICATION SYSTEM DISABLED TO REDUCE COSTS
-  // setupWebSocket(server, sessionMiddleware);
   setupSyncWebSocket(server as any, sessionMiddleware);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -221,8 +216,12 @@ app.use((req, res, next) => {
     host,
   }, () => {
     log(`serving on ${host}:${port}`);
-    // NOTIFICATION SYSTEM DISABLED TO REDUCE COSTS
-    // Background jobs (overdue detection, analytics) are disabled
-    // startBackgroundJobs();
+    if (process.env.OTTO_ENABLE_BACKGROUND_JOBS !== "false") {
+      void import("./background-jobs")
+        .then(({ startBackgroundJobs }) => startBackgroundJobs())
+        .catch((error) => {
+          console.error("Failed to start background jobs:", process.env.OTTO_DEBUG === "true" ? error : error?.message);
+        });
+    }
   });
 })();

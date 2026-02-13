@@ -25,7 +25,11 @@ import {
 import { sendSMS } from "./twilioClient";
 import { requireAdmin, requireAuth, requireNotViewOnly, requireOffice, requireRole, requireSameOfficeParam } from "./middleware";
 import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob } from "./notification-service";
-import { generateJobSummary, checkAndRegenerateSummary } from "./ai-summary-service";
+import {
+  generateJobSummary,
+  checkAndRegenerateSummary,
+  isAiSummaryEnabled,
+} from "./ai-summary-service";
 import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db } from "./db";
 import { and, eq, sql } from "drizzle-orm";
@@ -685,8 +689,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         // Send notifications while job still exists in database (fixes FK violation)
         await notifyJobStatusChange(job, oldJob.status, req.user, storage);
         
-        // Regenerate AI summary BEFORE archiving (while job still exists)
-        await checkAndRegenerateSummary(req.params.id);
+        if (isAiSummaryEnabled()) {
+          // Regenerate AI summary BEFORE archiving (while job still exists)
+          await checkAndRegenerateSummary(req.params.id);
+        }
         
         // Archive and delete AFTER notifications if status is terminal
         if (updates.status === 'completed' || updates.status === 'cancelled') {
@@ -856,8 +862,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       await logPhiAccess(req, 'create', 'comment', comment.id, job.orderId, { jobId: req.params.jobId });
       
       await notifyNewComment(job, comment, req.user, storage);
-      // Regenerate AI summary for flagged jobs when new comment is added
-      await checkAndRegenerateSummary(req.params.jobId);
+      if (isAiSummaryEnabled()) {
+        // Regenerate AI summary for flagged jobs when new comment is added
+        await checkAndRegenerateSummary(req.params.jobId);
+      }
       
       res.status(201).json(comment);
     } catch (error: any) {
@@ -946,11 +954,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Create flag immediately without waiting for summary
       const flag = await storage.flagJob(req.user.id, req.params.jobId);
       
-      const shouldGenerateAiSummary =
-        process.env.OTTO_AIRGAP !== "true" &&
-        process.env.OTTO_ENABLE_AI_SUMMARY === "true" &&
-        process.env.OTTO_ALLOW_PHI_EGRESS === "true" &&
-        Boolean(process.env.OPENAI_API_KEY);
+      const shouldGenerateAiSummary = isAiSummaryEnabled();
 
       // Only generate AI summaries when explicitly enabled for a hosted/online deployment.
       if (shouldGenerateAiSummary) {
@@ -962,7 +966,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
             }
             const office = await storage.getOffice(job.officeId);
             const summary = await generateJobSummary(req.params.jobId, office?.settings || {});
-            await storage.updateJobFlagSummary(req.user.id, req.params.jobId, summary);
+            await storage.updateJobFlagAiSummary(req.user.id, req.params.jobId, summary);
             if (process.env.OTTO_DEBUG === "true") {
               console.log(`[AI Summary] Async summary generation completed for job ${req.params.jobId}`);
             }
@@ -998,7 +1002,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(404).json({ error: "This job isn’t starred by you yet." });
       }
 
-      await storage.updateJobFlagSummary(req.user.id, req.params.jobId, trimmed);
+      await storage.updateJobFlagImportantNote(req.user.id, req.params.jobId, trimmed);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1045,6 +1049,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // AI summary route
   app.post("/api/jobs/:jobId/summary", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
+      if (!isAiSummaryEnabled()) {
+        return res.status(503).json({
+          error: "AI summaries are disabled for this deployment.",
+          code: "AI_DISABLED",
+        });
+      }
+
       const job = await storage.getJob(req.params.jobId);
       if (!job || job.officeId !== req.user.officeId) {
         return res.status(404).json({ error: "Job not found" });

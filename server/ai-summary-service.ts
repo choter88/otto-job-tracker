@@ -3,16 +3,16 @@ import type { Job, JobCommentWithAuthor } from "@shared/schema";
 import { storage } from "./storage";
 import { db } from "./db";
 import { jobStatusHistory, users, jobFlags, jobComments } from "@shared/schema";
-import { eq, and, or, desc } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
-function aiSummaryEnabled(): boolean {
+export function isAiSummaryEnabled(): boolean {
   if (process.env.OTTO_AIRGAP === "true") return false;
   if (process.env.OTTO_ENABLE_AI_SUMMARY !== "true") return false;
   if (process.env.OTTO_ALLOW_PHI_EGRESS !== "true") return false;
   return Boolean(process.env.OPENAI_API_KEY);
 }
 
-const openai = aiSummaryEnabled()
+const openai = isAiSummaryEnabled()
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
 
@@ -35,15 +35,9 @@ export async function generateJobSummary(jobId: string, officeSettings: any): Pr
     }
 
     if (!openai) {
-      const statusLabel =
-        officeSettings?.customStatuses?.find((s: any) => s.id === job.status)?.label || job.status;
-      const jobTypeLabel =
-        officeSettings?.customJobTypes?.find((t: any) => t.id === job.jobType)?.label || job.jobType;
-      const daysInStatus = Math.floor(
-        (Date.now() - new Date(job.statusChangedAt).getTime()) / (1000 * 60 * 60 * 24),
-      );
-
-      return `AI summaries are disabled. Job ${job.orderId} is ${jobTypeLabel} in status “${statusLabel}” (${daysInStatus} day(s)).`;
+      const err = new Error("AI summaries are disabled.");
+      (err as any).code = "AI_DISABLED";
+      throw err;
     }
 
     // Fetch comments
@@ -156,8 +150,11 @@ Created: ${new Date(job.createdAt).toLocaleDateString()}
 }
 
 export async function checkAndRegenerateSummary(jobId: string): Promise<void> {
+  if (!isAiSummaryEnabled()) return;
+
+  const debug = process.env.OTTO_DEBUG === "true";
   try {
-    console.log(`[AI Summary] Checking if summary needs regeneration for job ${jobId}`);
+    if (debug) console.log(`[AI Summary] Checking if summary needs regeneration for job ${jobId}`);
     
     // Get all flag records for this job
     const flags = await db
@@ -169,11 +166,11 @@ export async function checkAndRegenerateSummary(jobId: string): Promise<void> {
       .where(eq(jobFlags.jobId, jobId));
 
     if (flags.length === 0) {
-      console.log(`[AI Summary] Job ${jobId} is not flagged, skipping regeneration`);
+      if (debug) console.log(`[AI Summary] Job ${jobId} is not flagged, skipping regeneration`);
       return;
     }
     
-    console.log(`[AI Summary] Found ${flags.length} flag(s) for job ${jobId}`);
+    if (debug) console.log(`[AI Summary] Found ${flags.length} flag(s) for job ${jobId}`);
 
     // Get the latest status change timestamp
     const latestStatusChange = await db
@@ -214,13 +211,17 @@ export async function checkAndRegenerateSummary(jobId: string): Promise<void> {
       const needsRegeneration = !flag.summaryGeneratedAt || 
         (mostRecentActivity && new Date(flag.summaryGeneratedAt) < mostRecentActivity);
 
-      console.log(`[AI Summary] Flag for user ${flag.userId}: summaryGeneratedAt=${flag.summaryGeneratedAt}, mostRecentActivity=${mostRecentActivity}, needsRegeneration=${needsRegeneration}`);
+      if (debug) {
+        console.log(
+          `[AI Summary] Flag for user ${flag.userId}: summaryGeneratedAt=${flag.summaryGeneratedAt}, mostRecentActivity=${mostRecentActivity}, needsRegeneration=${needsRegeneration}`,
+        );
+      }
 
       if (needsRegeneration) {
-        console.log(`[AI Summary] Regenerating summary for user ${flag.userId} on job ${jobId}`);
+        if (debug) console.log(`[AI Summary] Regenerating summary for user ${flag.userId} on job ${jobId}`);
         const summary = await generateJobSummary(jobId, office?.settings || {});
-        await storage.updateJobFlagSummary(flag.userId, jobId, summary);
-        console.log(`[AI Summary] Summary regenerated successfully for user ${flag.userId}`);
+        await storage.updateJobFlagAiSummary(flag.userId, jobId, summary);
+        if (debug) console.log(`[AI Summary] Summary regenerated successfully for user ${flag.userId}`);
       }
     }
   } catch (error) {

@@ -159,8 +159,12 @@ export const jobFlags = sqliteTable(
     id: text("id").primaryKey(),
     userId: text("user_id").references(() => users.id).notNull(),
     jobId: text("job_id").references(() => jobs.id, { onDelete: "cascade" }).notNull(),
+    // Legacy AI summary fields (kept for backward compatibility).
     summary: text("summary"),
     summaryGeneratedAt: integer("summary_generated_at", { mode: "timestamp_ms" }),
+    // User-authored note shown in the Important view.
+    importantNote: text("important_note"),
+    importantNoteUpdatedAt: integer("important_note_updated_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
   },
   (table) => ({

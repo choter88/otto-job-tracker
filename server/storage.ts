@@ -82,10 +82,11 @@ export interface IStorage {
   getJobCommentCounts(officeId: string): Promise<Record<string, number>>;
 
   // Job flags
-  flagJob(userId: string, jobId: string, summary?: string): Promise<JobFlag>;
+  flagJob(userId: string, jobId: string, importantNote?: string): Promise<JobFlag>;
   unflagJob(userId: string, jobId: string): Promise<void>;
   getFlaggedJobsByOffice(officeId: string): Promise<any[]>;
-  updateJobFlagSummary(userId: string, jobId: string, summary: string): Promise<void>;
+  updateJobFlagImportantNote(userId: string, jobId: string, note: string): Promise<void>;
+  updateJobFlagAiSummary(userId: string, jobId: string, summary: string): Promise<void>;
   getJobFlaggedBy(jobId: string): Promise<{ id: string; userId: string; firstName: string; lastName: string }[]>;
 
   // Join requests
@@ -680,15 +681,15 @@ export class DatabaseStorage implements IStorage {
     }, {} as Record<string, number>);
   }
 
-  async flagJob(userId: string, jobId: string, summary?: string): Promise<JobFlag> {
+  async flagJob(userId: string, jobId: string, importantNote?: string): Promise<JobFlag> {
     const inserted = await db
       .insert(jobFlags)
       .values({ 
         id: randomUUID(),
         userId, 
         jobId,
-        summary,
-        summaryGeneratedAt: summary ? new Date() : null
+        importantNote: importantNote?.trim() || null,
+        importantNoteUpdatedAt: importantNote?.trim() ? new Date() : null,
       })
       .onConflictDoNothing()
       .returning();
@@ -736,8 +737,10 @@ export class DatabaseStorage implements IStorage {
         notes: jobs.notes,
         createdAt: jobs.createdAt,
         updatedAt: jobs.updatedAt,
-        summary: jobFlags.summary,
-        summaryGeneratedAt: jobFlags.summaryGeneratedAt,
+        importantNote: jobFlags.importantNote,
+        importantNoteUpdatedAt: jobFlags.importantNoteUpdatedAt,
+        aiSummary: jobFlags.summary,
+        aiSummaryGeneratedAt: jobFlags.summaryGeneratedAt,
         flaggedBy: {
           id: jobFlags.userId,
           firstName: users.firstName,
@@ -753,12 +756,26 @@ export class DatabaseStorage implements IStorage {
     return flaggedJobs;
   }
 
-  async updateJobFlagSummary(userId: string, jobId: string, summary: string): Promise<void> {
+  async updateJobFlagImportantNote(userId: string, jobId: string, note: string): Promise<void> {
+    const trimmed = String(note || "").trim();
     await db
       .update(jobFlags)
       .set({ 
+        importantNote: trimmed || null,
+        importantNoteUpdatedAt: trimmed ? new Date() : null,
+      })
+      .where(and(
+        eq(jobFlags.userId, userId),
+        eq(jobFlags.jobId, jobId)
+      ));
+  }
+
+  async updateJobFlagAiSummary(userId: string, jobId: string, summary: string): Promise<void> {
+    await db
+      .update(jobFlags)
+      .set({
         summary,
-        summaryGeneratedAt: new Date()
+        summaryGeneratedAt: new Date(),
       })
       .where(and(
         eq(jobFlags.userId, userId),

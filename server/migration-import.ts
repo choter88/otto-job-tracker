@@ -377,8 +377,15 @@ export function importSnapshotV1(params: {
     const id = asString(f.id).trim();
     const userId = asString(f.userId || f.user_id).trim();
     const jobId = asString(f.jobId || f.job_id).trim();
-    const summary = asString(f.summary).trim() || null;
-    const summaryGeneratedAt = f.summaryGeneratedAt || f.summary_generated_at;
+    const summary = asString(f.aiSummary ?? f.ai_summary ?? f.summary).trim() || null;
+    const summaryGeneratedAt =
+      f.aiSummaryGeneratedAt ?? f.ai_summary_generated_at ?? f.summaryGeneratedAt ?? f.summary_generated_at;
+    const importantNote = asString(f.importantNote ?? f.important_note ?? f.summary).trim() || null;
+    const importantNoteUpdatedAt =
+      f.importantNoteUpdatedAt ??
+      f.important_note_updated_at ??
+      f.summaryGeneratedAt ??
+      f.summary_generated_at;
     const createdAt = toTsMs(f.createdAt, now);
 
     if (!id) throw new Error(`jobFlags[${idx}].id is required`);
@@ -395,6 +402,11 @@ export function importSnapshotV1(params: {
       summary,
       summary_generated_at:
         summaryGeneratedAt === null || summaryGeneratedAt === undefined ? null : toTsMs(summaryGeneratedAt, now),
+      important_note: importantNote,
+      important_note_updated_at:
+        importantNoteUpdatedAt === null || importantNoteUpdatedAt === undefined
+          ? null
+          : toTsMs(importantNoteUpdatedAt, now),
       created_at: createdAt,
     });
   }
@@ -558,8 +570,11 @@ export function importSnapshotV1(params: {
   );
 
   const insertFlag = sqlite.prepare(
-    `INSERT INTO job_flags (id, user_id, job_id, summary, summary_generated_at, created_at)
-     VALUES (@id, @user_id, @job_id, @summary, @summary_generated_at, @created_at)`,
+    `INSERT INTO job_flags (
+        id, user_id, job_id, summary, summary_generated_at, important_note, important_note_updated_at, created_at
+     ) VALUES (
+        @id, @user_id, @job_id, @summary, @summary_generated_at, @important_note, @important_note_updated_at, @created_at
+     )`,
   );
 
   const insertHistory = sqlite.prepare(

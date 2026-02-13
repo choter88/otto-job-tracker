@@ -16,6 +16,7 @@ import { and, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { sendSMS } from './twilioClient';
 import { storage } from './storage';
 import { randomUUID } from "crypto";
+import { broadcastToOffice } from "./sync-websocket";
 
 function substituteTemplate(template: string, variables: Record<string, any>): string {
   return template.replace(/\{(\w+)\}/g, (match, key) => {
@@ -28,6 +29,7 @@ cron.schedule('0 0 * * *', async () => {
   
   try {
     const rules = await db.select().from(notificationRules).where(eq(notificationRules.enabled, true));
+    const updatedOffices = new Set<string>();
     
     for (const rule of rules) {
       const cutoffDate = new Date();
@@ -80,6 +82,9 @@ cron.schedule('0 0 * * *', async () => {
             }
           });
         }
+        if (recipients.length > 0) {
+          updatedOffices.add(rule.officeId);
+        }
         
         if (rule.smsEnabled && rule.smsTemplate) {
           const optIn = await db.select()
@@ -113,6 +118,10 @@ cron.schedule('0 0 * * *', async () => {
         }
       }
     }
+
+    updatedOffices.forEach((officeId) => {
+      broadcastToOffice(officeId, { type: "office_updated", ts: Date.now(), source: "overdue_alert" });
+    });
     
     console.log(`Overdue detection job completed. Processed ${rules.length} rules.`);
   } catch (error) {

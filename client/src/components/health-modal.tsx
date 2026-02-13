@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { subscribeOutbox } from "@/lib/offline-outbox";
+import { clearOutboxItems, subscribeOutbox } from "@/lib/offline-outbox";
 import { useAuth } from "@/hooks/use-auth";
 import { Activity, ClipboardList, FileDown, Trash2 } from "lucide-react";
 
@@ -13,7 +13,6 @@ type MaybeBridge = {
   getConfig?: () => Promise<any>;
   showDiagnostics?: () => Promise<any>;
   exportSupportBundle?: () => Promise<any>;
-  outboxClear?: () => Promise<any>;
 };
 
 function formatWhen(ts: number | null | undefined): string {
@@ -136,7 +135,7 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
   };
 
   const handleClearOutbox = async () => {
-    if (!bridge?.outboxClear) {
+    if (!isDesktop) {
       toast({ title: "Not available", description: "Offline outbox is only available in the desktop app." });
       return;
     }
@@ -147,8 +146,16 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
     );
     if (!ok) return;
 
-    await bridge.outboxClear();
-    toast({ title: "Cleared", description: "Offline queue cleared." });
+    try {
+      await clearOutboxItems();
+      toast({ title: "Cleared", description: "Offline queue cleared." });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to clear offline queue.",
+        variant: "destructive",
+      });
+    }
   };
 
   if (!user) return null;
@@ -234,7 +241,7 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
                   <FileDown className="h-4 w-4" />
                   Export support bundle
                 </Button>
-                <Button variant="destructive" onClick={handleClearOutbox} disabled={!outboxCount || !bridge?.outboxClear}>
+                <Button variant="destructive" onClick={handleClearOutbox} disabled={!outboxCount || !isDesktop}>
                   <Trash2 className="h-4 w-4" />
                   Clear offline queue
                 </Button>
@@ -249,4 +256,3 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
     </Dialog>
   );
 }
-

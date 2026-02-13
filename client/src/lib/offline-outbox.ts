@@ -61,20 +61,21 @@ function withApiBase(url: string): string {
 
 let cache: OutboxItem[] | null = null;
 let loadPromise: Promise<OutboxItem[]> | null = null;
+let flushPromise: Promise<OutboxFlushResult> | null = null;
 const listeners = new Set<(items: OutboxItem[]) => void>();
 
 function emit(items: OutboxItem[]) {
-  for (const listener of listeners) {
+  listeners.forEach((listener) => {
     try {
       listener(items);
     } catch {
       // ignore
     }
-  }
+  });
 }
 
-async function load(): Promise<OutboxItem[]> {
-  if (cache) return cache;
+async function load(force = false): Promise<OutboxItem[]> {
+  if (!force && cache) return cache;
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
@@ -116,6 +117,10 @@ export async function listOutboxItems(): Promise<OutboxItem[]> {
   return await load();
 }
 
+export async function refreshOutboxItems(): Promise<OutboxItem[]> {
+  return await load(true);
+}
+
 export function subscribeOutbox(listener: (items: OutboxItem[]) => void): () => void {
   listeners.add(listener);
   void load().then((items) => listener(items));
@@ -152,7 +157,18 @@ export async function enqueueOutboxItem(input: {
   await save(next);
 }
 
+export async function clearOutboxItems(): Promise<void> {
+  const bridge = getBridge();
+  if (!bridge?.outboxReplace) {
+    throw new Error("Offline outbox is not available in this environment.");
+  }
+  await save([]);
+}
+
 export async function flushOutbox(origin: string): Promise<OutboxFlushResult> {
+  if (flushPromise) return await flushPromise;
+
+  flushPromise = (async () => {
   const items = await load();
   const matching = items.filter((item) => item.origin === origin);
   const other = items.filter((item) => item.origin !== origin);
@@ -218,4 +234,11 @@ export async function flushOutbox(origin: string): Promise<OutboxFlushResult> {
 
   await save([...other, ...remaining]);
   return { flushed, remaining: other.length + remaining.length, blockedByAuth, lastError };
+  })();
+
+  try {
+    return await flushPromise;
+  } finally {
+    flushPromise = null;
+  }
 }

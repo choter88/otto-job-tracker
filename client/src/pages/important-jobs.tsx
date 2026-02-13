@@ -32,8 +32,10 @@ interface FlaggedJob {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
-  summary?: string | null;
-  summaryGeneratedAt?: string | null;
+  importantNote?: string | null;
+  importantNoteUpdatedAt?: string | null;
+  aiSummary?: string | null;
+  aiSummaryGeneratedAt?: string | null;
   flaggedBy?: {
     id: string;
     firstName: string;
@@ -259,24 +261,24 @@ function JobCard({
   const statusLabel = getStatusLabel(job.status);
   const jobTypeLabel = getJobTypeLabel(job.jobType);
   const destinationLabel = getDestinationLabel(job.orderDestination);
-  const [noteDraft, setNoteDraft] = useState(job.summary || "");
+  const [noteDraft, setNoteDraft] = useState(job.importantNote || "");
   const [noteDialogOpen, setNoteDialogOpen] = useState(false);
 
   useEffect(() => {
-    setNoteDraft(job.summary || "");
-  }, [job.id, job.summary]);
+    setNoteDraft(job.importantNote || "");
+  }, [job.id, job.importantNote]);
 
   const statusBadgeStyle = getStatusBadgeStyle(job.status);
   const jobTypeBadgeStyle = getJobTypeBadgeStyle(job.jobType);
   const destinationBadgeStyle = getDestinationBadgeStyle(job.orderDestination);
 
-  const summaryText = (job.summary || "").trim();
-  const summaryPreview = summaryText.replace(/\s+/g, " ");
+  const noteText = (job.importantNote || "").trim();
+  const notePreview = noteText.replace(/\s+/g, " ");
   const noteActionLabel = canEditNote
-    ? summaryText
+    ? noteText
       ? "Edit note"
       : "Add note"
-    : summaryText
+    : noteText
       ? "View note"
       : null;
 
@@ -364,11 +366,11 @@ function JobCard({
             <div className="flex items-center gap-2 min-w-0">
               <NotebookPen className="h-4 w-4 text-primary flex-shrink-0" />
               <p
-                className={`text-sm truncate ${summaryText ? "text-foreground" : "text-muted-foreground"}`}
+                className={`text-sm truncate ${noteText ? "text-foreground" : "text-muted-foreground"}`}
                 data-testid={`summary-${job.id}`}
-                title={summaryText || "No important note yet."}
+                title={noteText || "No important note yet."}
               >
-                {summaryText ? summaryPreview : "No important note yet."}
+                {noteText ? notePreview : "No important note yet."}
               </p>
             </div>
 
@@ -418,8 +420,8 @@ function JobCard({
             {canEditNote && (
               <div className="flex items-center justify-between gap-3">
                 <div className="text-xs text-muted-foreground">
-                  {job.summaryGeneratedAt
-                    ? `Last saved ${format(new Date(job.summaryGeneratedAt), "MMM d, h:mm a")}`
+                  {job.importantNoteUpdatedAt
+                    ? `Last saved ${format(new Date(job.importantNoteUpdatedAt), "MMM d, h:mm a")}`
                     : "Not saved yet"}
                 </div>
                 <Button
