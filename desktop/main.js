@@ -7,7 +7,7 @@ import https from "https";
 import net from "net";
 import { execFileSync } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
-import { createCipheriv, createDecipheriv, randomBytes, X509Certificate } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, X509Certificate } from "crypto";
 import selfsigned from "selfsigned";
 import Database from "better-sqlite3";
 
@@ -319,6 +319,52 @@ function normalizePairingCodeHex(value) {
   return normalized.length >= 12 ? normalized.slice(0, 12) : normalized;
 }
 
+function fingerprintHexFromCertificate(cert) {
+  if (!cert || typeof cert !== "object") return "";
+
+  const fromFingerprint = normalizeHex(cert.fingerprint256 || cert.fingerprint);
+  if (fromFingerprint) return fromFingerprint;
+
+  if (Buffer.isBuffer(cert.raw)) {
+    return createHash("sha256").update(cert.raw).digest("hex").toUpperCase();
+  }
+
+  return "";
+}
+
+function getPeerFingerprintHex(socket) {
+  if (!socket) return "";
+
+  try {
+    if (typeof socket.getPeerX509Certificate === "function") {
+      const cert = socket.getPeerX509Certificate();
+      const fromX509 = normalizeHex(cert?.fingerprint256 || cert?.fingerprint);
+      if (fromX509) return fromX509;
+      if (cert?.raw && Buffer.isBuffer(cert.raw)) {
+        return createHash("sha256").update(cert.raw).digest("hex").toUpperCase();
+      }
+    }
+  } catch {
+    // ignore and try legacy API
+  }
+
+  try {
+    if (typeof socket.getPeerCertificate === "function") {
+      const detailed = socket.getPeerCertificate(true);
+      const fromDetailed = fingerprintHexFromCertificate(detailed);
+      if (fromDetailed) return fromDetailed;
+
+      const basic = socket.getPeerCertificate();
+      const fromBasic = fingerprintHexFromCertificate(basic);
+      if (fromBasic) return fromBasic;
+    }
+  } catch {
+    // ignore
+  }
+
+  return "";
+}
+
 function isPrivateIpv4(hostname) {
   const parts = String(hostname || "").split(".").map((p) => Number(p));
   if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
@@ -378,14 +424,17 @@ async function testHostConnection(hostUrl, pairingCode) {
         rejectUnauthorized: false,
       },
       (res) => {
+        const peerFingerprintHex = isHttps
+          ? getPeerFingerprintHex(res.socket) || getPeerFingerprintHex(req.socket)
+          : "";
+
         let body = "";
         res.on("data", (chunk) => {
           body += chunk.toString();
         });
         res.on("end", () => {
           if (isHttps) {
-            const cert = res.socket?.getPeerCertificate?.();
-            const certFp = normalizeHex(cert?.fingerprint256 || cert?.fingerprint);
+            const certFp = peerFingerprintHex || getPeerFingerprintHex(res.socket) || getPeerFingerprintHex(req.socket);
             if (!certFp) {
               return resolve({ ok: false, message: "Could not read the Host certificate." });
             }
@@ -959,10 +1008,10 @@ function createWindow(targetUrl, config) {
 
   const win = new BrowserWindow({
     title: APP_DISPLAY_NAME,
-    width: 1280,
-    height: 800,
-    minWidth: 1100,
-    minHeight: 720,
+    width: 1320,
+    height: 864,
+    minWidth: 1320,
+    minHeight: 864,
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),

@@ -104,13 +104,22 @@
       });
       render();
 
+      function formatPairingCode(value) {
+        const cleaned = String(value || "")
+          .toUpperCase()
+          .replace(/[^A-F0-9]/g, "")
+          .slice(0, 12);
+        const groups = cleaned.match(/.{1,4}/g) || [];
+        return groups.join("-");
+      }
+
       (async () => {
         const config = await window.otto.getConfig();
         existingConfig = config;
         const modeInput = document.querySelector(`input[name="mode"][value="${config.mode}"]`);
         if (modeInput) modeInput.checked = true;
         hostUrl.value = config.hostUrl || "";
-        pairingCode.value = config.pairingCode || "";
+        pairingCode.value = formatPairingCode(config.pairingCode || "");
         render();
       })();
 
@@ -124,7 +133,13 @@
       }
 
       hostUrl.addEventListener("input", resetTestStatus);
-      pairingCode.addEventListener("input", resetTestStatus);
+      pairingCode.addEventListener("input", () => {
+        const formatted = formatPairingCode(pairingCode.value);
+        if (pairingCode.value !== formatted) {
+          pairingCode.value = formatted;
+        }
+        resetTestStatus();
+      });
 
       async function runConnectionTest() {
         if (!testStatus) return;

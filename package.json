@@ -11,6 +11,7 @@
     "desktop": "electron .",
     "pack:desktop": "npm run build && electron-builder --dir",
     "dist:desktop": "npm run build && electron-builder",
+    "release:mac": "bash scripts/release-mac.sh",
     "check": "tsc",
     "test:local-first": "node --import tsx --test tests/local-first-outbox.test.ts",
     "test:migration-import": "node --import tsx --test tests/migration-import.test.ts",
