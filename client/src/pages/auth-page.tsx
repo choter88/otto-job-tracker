@@ -1,17 +1,15 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Redirect } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Glasses } from "lucide-react";
+import { Loader2, Glasses, MonitorCog, Building2, UserPlus } from "lucide-react";
 
 const loginSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -21,7 +19,8 @@ const loginSchema = z.object({
 const registerSchema = z.object({
   staffCode: z.string().min(1, "Staff code is required"),
   email: z.string().email("Please enter a valid email address"),
-  password: z.string()
+  password: z
+    .string()
     .min(12, "Password must be at least 12 characters")
     .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
     .regex(/[a-z]/, "Password must contain at least one lowercase letter")
@@ -41,9 +40,12 @@ type SetupStatus = {
   staffSignupConfigured: boolean;
 };
 
+type DesktopMode = "host" | "client" | "unknown";
+
 export default function AuthPage() {
   const { user, isLoading, loginMutation, registerMutation } = useAuth();
-  const [activeTab, setActiveTab] = useState("login");
+  const [showSignup, setShowSignup] = useState(false);
+  const [desktopMode, setDesktopMode] = useState<DesktopMode>("unknown");
 
   const { data: setupStatus, isLoading: setupLoading } = useQuery<SetupStatus>({
     queryKey: ["/api/setup/status"],
@@ -53,6 +55,34 @@ export default function AuthPage() {
     const host = window.location.hostname;
     return host === "127.0.0.1" || host === "localhost" || host === "::1";
   })();
+
+  useEffect(() => {
+    let active = true;
+    const bridge = (window as any)?.otto;
+    if (!bridge?.getConfig) return () => undefined;
+
+    void bridge
+      .getConfig()
+      .then((config: any) => {
+        if (!active) return;
+        const mode = String(config?.mode || "").toLowerCase();
+        if (mode === "host" || mode === "client") {
+          setDesktopMode(mode);
+        }
+      })
+      .catch(() => {
+        // Ignore bridge errors and use hostname fallback.
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const effectiveMode: "host" | "client" = useMemo(() => {
+    if (desktopMode === "host" || desktopMode === "client") return desktopMode;
+    return isLocalHost ? "host" : "client";
+  }, [desktopMode, isLocalHost]);
 
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -64,7 +94,6 @@ export default function AuthPage() {
     defaultValues: { staffCode: "", email: "", password: "", firstName: "", lastName: "" },
   });
 
-  // Redirect if already logged in
   if (user) {
     return <Redirect to="/" />;
   }
@@ -109,265 +138,211 @@ export default function AuthPage() {
     registerMutation.mutate(data);
   };
 
+  const officeName = setupStatus?.officeName || "your office";
+  const modeLabel = effectiveMode === "host" ? "Host" : "Client";
+  const modeDescription =
+    effectiveMode === "host"
+      ? "This is the main Host workstation for this office."
+      : "This workstation syncs to the Host over the office network.";
+
   return (
-    <div className="min-h-screen grid lg:grid-cols-2">
-      {/* Left side - Forms */}
-      <div className="flex items-center justify-center p-8">
-        <div className="w-full max-w-md space-y-8">
-          {/* Logo & Header */}
-          <div className="text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-primary rounded-xl mb-4">
-              <Glasses className="h-8 w-8 text-primary-foreground" />
+    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-accent/10">
+      <div className="mx-auto flex min-h-screen w-full max-w-6xl items-center p-6 lg:p-10">
+        <div className="grid w-full gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+          <section className="space-y-5">
+            <div className="inline-flex items-center justify-center w-14 h-14 bg-primary rounded-xl">
+              <Glasses className="h-7 w-7 text-primary-foreground" />
             </div>
-            <h1 className="text-3xl font-bold text-foreground mb-2">Otto Tracker</h1>
-            <p className="text-muted-foreground">Job management for optometry practices</p>
-          </div>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="login">Sign In</TabsTrigger>
-              <TabsTrigger value="register">Sign Up</TabsTrigger>
-            </TabsList>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-primary">Otto Tracker Desktop</p>
+              <h1 className="text-3xl font-bold tracking-tight">Welcome to {officeName}</h1>
+              <p className="text-muted-foreground text-base max-w-xl">
+                Sign in to continue working in this office workspace.
+              </p>
+            </div>
 
-            <TabsContent value="login" className="space-y-4">
+            <Card className="border-primary/20 bg-card/90">
+              <CardContent className="p-4 space-y-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-foreground font-medium">
+                    <MonitorCog className="h-4 w-4 text-primary" />
+                    Station mode
+                  </div>
+                  <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+                    {modeLabel}
+                  </span>
+                </div>
+                <p className="text-muted-foreground">{modeDescription}</p>
+                <div className="flex items-center gap-2 text-foreground">
+                  <Building2 className="h-4 w-4 text-primary" />
+                  <span className="font-medium">{officeName}</span>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Sign in</CardTitle>
+                <p className="text-sm text-muted-foreground">Use your office credentials to open your workspace.</p>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="you@example.com"
+                      {...loginForm.register("email")}
+                      data-testid="input-email"
+                    />
+                    {loginForm.formState.errors.email && (
+                      <p className="text-sm text-destructive">{loginForm.formState.errors.email.message}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="••••••••"
+                      {...loginForm.register("password")}
+                      data-testid="input-password"
+                    />
+                    {loginForm.formState.errors.password && (
+                      <p className="text-sm text-destructive">{loginForm.formState.errors.password.message}</p>
+                    )}
+                  </div>
+
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={loginMutation.isPending}
+                    data-testid="button-sign-in"
+                  >
+                    {loginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Continue
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+
+            {setupStatus.staffSignupConfigured ? (
               <Card>
-                <CardHeader>
-                  <CardTitle>Welcome back</CardTitle>
-                  <p className="text-sm text-muted-foreground">
-                    Sign in to your account to continue
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="you@example.com"
-                        {...loginForm.register("email")}
-                        data-testid="input-email"
-                      />
-                      {loginForm.formState.errors.email && (
-                        <p className="text-sm text-destructive">
-                          {loginForm.formState.errors.email.message}
-                        </p>
-                      )}
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="password">Password</Label>
-                      <Input
-                        id="password"
-                        type="password"
-                        placeholder="••••••••"
-                        {...loginForm.register("password")}
-                        data-testid="input-password"
-                      />
-                      {loginForm.formState.errors.password && (
-                        <p className="text-sm text-destructive">
-                          {loginForm.formState.errors.password.message}
-                        </p>
-                      )}
-                    </div>
+                <CardContent className="p-4 space-y-3">
+                  <Button
+                    type="button"
+                    variant={showSignup ? "secondary" : "outline"}
+                    className="w-full"
+                    onClick={() => setShowSignup((prev) => !prev)}
+                    data-testid="button-toggle-signup"
+                  >
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    {showSignup ? "Hide account setup" : "First time here? Create your account"}
+                  </Button>
 
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <Checkbox id="remember" />
-                        <Label htmlFor="remember" className="text-sm">
-                          Remember me
-                        </Label>
+                  {showSignup && (
+                    <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4 pt-1">
+                      <div className="space-y-2">
+                        <Label htmlFor="staffCode">Staff code</Label>
+                        <Input
+                          id="staffCode"
+                          placeholder="Ask your office admin"
+                          {...registerForm.register("staffCode")}
+                          data-testid="input-staffCode"
+                        />
+                        {registerForm.formState.errors.staffCode && (
+                          <p className="text-sm text-destructive">
+                            {registerForm.formState.errors.staffCode.message}
+                          </p>
+                        )}
                       </div>
-                      <Button variant="link" className="px-0 text-sm">
-                        Forgot password?
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="firstName">First Name</Label>
+                          <Input
+                            id="firstName"
+                            placeholder="Jane"
+                            {...registerForm.register("firstName")}
+                            data-testid="input-firstName"
+                          />
+                          {registerForm.formState.errors.firstName && (
+                            <p className="text-sm text-destructive">
+                              {registerForm.formState.errors.firstName.message}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="lastName">Last Name</Label>
+                          <Input
+                            id="lastName"
+                            placeholder="Doe"
+                            {...registerForm.register("lastName")}
+                            data-testid="input-lastName"
+                          />
+                          {registerForm.formState.errors.lastName && (
+                            <p className="text-sm text-destructive">
+                              {registerForm.formState.errors.lastName.message}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="reg-email">Email</Label>
+                        <Input
+                          id="reg-email"
+                          type="email"
+                          placeholder="you@example.com"
+                          {...registerForm.register("email")}
+                          data-testid="input-reg-email"
+                        />
+                        {registerForm.formState.errors.email && (
+                          <p className="text-sm text-destructive">{registerForm.formState.errors.email.message}</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="reg-password">Password</Label>
+                        <Input
+                          id="reg-password"
+                          type="password"
+                          placeholder="••••••••••••"
+                          {...registerForm.register("password")}
+                          data-testid="input-reg-password"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          12+ characters with uppercase, lowercase, number, and symbol.
+                        </p>
+                        {registerForm.formState.errors.password && (
+                          <p className="text-sm text-destructive">{registerForm.formState.errors.password.message}</p>
+                        )}
+                      </div>
+
+                      <Button
+                        type="submit"
+                        className="w-full"
+                        disabled={registerMutation.isPending}
+                        data-testid="button-sign-up"
+                      >
+                        {registerMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Create Account
                       </Button>
-                    </div>
-
-                    <Button
-                      type="submit"
-                      className="w-full"
-                      disabled={loginMutation.isPending}
-                      data-testid="button-sign-in"
-                    >
-                      {loginMutation.isPending && (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      )}
-                      Sign In
-                    </Button>
-                  </form>
+                    </form>
+                  )}
                 </CardContent>
               </Card>
-            </TabsContent>
-
-            <TabsContent value="register" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Create Account</CardTitle>
-                  <p className="text-sm text-muted-foreground">
-                    Get started with Otto Tracker
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="staffCode">Staff code</Label>
-                      <Input
-                        id="staffCode"
-                        placeholder="Ask your office admin"
-                        {...registerForm.register("staffCode")}
-                        data-testid="input-staffCode"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        You only need this code once to create your login.
-                      </p>
-                      {registerForm.formState.errors.staffCode && (
-                        <p className="text-sm text-destructive">
-                          {registerForm.formState.errors.staffCode.message}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="firstName">First Name</Label>
-                        <Input
-                          id="firstName"
-                          placeholder="John"
-                          {...registerForm.register("firstName")}
-                          data-testid="input-firstName"
-                        />
-                        {registerForm.formState.errors.firstName && (
-                          <p className="text-sm text-destructive">
-                            {registerForm.formState.errors.firstName.message}
-                          </p>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="lastName">Last Name</Label>
-                        <Input
-                          id="lastName"
-                          placeholder="Doe"
-                          {...registerForm.register("lastName")}
-                          data-testid="input-lastName"
-                        />
-                        {registerForm.formState.errors.lastName && (
-                          <p className="text-sm text-destructive">
-                            {registerForm.formState.errors.lastName.message}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-email">Email</Label>
-                      <Input
-                        id="reg-email"
-                        type="email"
-                        placeholder="you@example.com"
-                        {...registerForm.register("email")}
-                        data-testid="input-reg-email"
-                      />
-                      {registerForm.formState.errors.email && (
-                        <p className="text-sm text-destructive">
-                          {registerForm.formState.errors.email.message}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-password">Password</Label>
-                      <Input
-                        id="reg-password"
-                        type="password"
-                        placeholder="••••••••"
-                        {...registerForm.register("password")}
-                        data-testid="input-reg-password"
-                      />
-                      <p className="text-xs text-muted-foreground">At least 8 characters</p>
-                      {registerForm.formState.errors.password && (
-                        <p className="text-sm text-destructive">
-                          {registerForm.formState.errors.password.message}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="flex items-start space-x-2">
-                      <Checkbox id="terms" required />
-                      <Label htmlFor="terms" className="text-sm leading-relaxed">
-                        I agree to the{" "}
-                        <Button variant="link" className="px-0 h-auto text-sm">
-                          Terms of Service
-                        </Button>{" "}
-                        and{" "}
-                        <Button variant="link" className="px-0 h-auto text-sm">
-                          Privacy Policy
-                        </Button>
-                      </Label>
-                    </div>
-
-                    <Button
-                      type="submit"
-                      className="w-full"
-                      disabled={registerMutation.isPending}
-                      data-testid="button-sign-up"
-                    >
-                      {registerMutation.isPending && (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      )}
-                      Create Account
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-
-          <p className="text-xs text-center text-muted-foreground">
-            By signing in, you agree to our Terms of Service and Privacy Policy
-          </p>
-        </div>
-      </div>
-
-      {/* Right side - Hero */}
-      <div className="hidden lg:flex items-center justify-center bg-gradient-to-br from-primary/10 to-accent p-8">
-        <div className="max-w-md text-center space-y-6">
-          <div className="inline-flex items-center justify-center w-24 h-24 bg-primary/20 rounded-full mb-6">
-            <Glasses className="h-12 w-12 text-primary" />
-          </div>
-          <h2 className="text-3xl font-bold">Streamline Your Practice</h2>
-          <p className="text-lg text-muted-foreground">
-            Manage jobs, track orders, and communicate with patients seamlessly. 
-            Otto Tracker helps optometry practices stay organized and efficient.
-          </p>
-          <div className="grid grid-cols-1 gap-4 text-left">
-            <div className="flex items-center gap-3 p-4 bg-background/50 rounded-lg">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-semibold text-sm">✓</span>
-              </div>
-              <div>
-                <h3 className="font-semibold">Job Management</h3>
-                <p className="text-sm text-muted-foreground">Track orders from creation to completion</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-4 bg-background/50 rounded-lg">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-semibold text-sm">✓</span>
-              </div>
-              <div>
-                <h3 className="font-semibold">Team Collaboration</h3>
-                <p className="text-sm text-muted-foreground">Role-based access and real-time updates</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-4 bg-background/50 rounded-lg">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-semibold text-sm">✓</span>
-              </div>
-              <div>
-                <h3 className="font-semibold">SMS Notifications</h3>
-                <p className="text-sm text-muted-foreground">Keep patients informed automatically</p>
-              </div>
-            </div>
-          </div>
+            ) : (
+              <p className="text-sm text-muted-foreground px-1">
+                Account self-signup is disabled for this office. Ask the office owner for an invite.
+              </p>
+            )}
+          </section>
         </div>
       </div>
     </div>

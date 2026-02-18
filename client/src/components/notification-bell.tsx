@@ -86,10 +86,11 @@ export default function NotificationBell() {
     // Navigate to the relevant job (desktop app doesn't have /jobs/:id routes)
     const jobId = (notification as any).jobId as string | undefined;
     if (jobId) {
+      const panel = notification.type === "comment" ? "comments" : "overview";
       setLocation("/");
       window.setTimeout(() => {
         try {
-          window.dispatchEvent(new CustomEvent("otto:openJob", { detail: { jobId } }));
+          window.dispatchEvent(new CustomEvent("otto:openJob", { detail: { jobId, panel } }));
         } catch {
           // ignore
         }

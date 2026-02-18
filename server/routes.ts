@@ -32,10 +32,11 @@ import {
 } from "./ai-summary-service";
 import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db } from "./db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateLicense, forceCheckin, getLicenseSnapshot } from "./license";
 import { importSnapshotV1 } from "./migration-import";
+import { normalizePatientNamePart } from "@shared/name-format";
 
 // PHI access logging helper for HIPAA compliance
 async function logPhiAccess(
@@ -599,6 +600,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const office = await storage.getOffice(req.user.officeId);
       const officeSettings = (office?.settings || {}) as Record<string, any>;
       const jobIdentifierMode = officeSettings.jobIdentifierMode || "patientName";
+      const normalizedFirstName = normalizePatientNamePart(req.body?.patientFirstName);
+      const normalizedLastName = normalizePatientNamePart(req.body?.patientLastName);
       
       // Validate based on identifier mode
       if (jobIdentifierMode === "trayNumber") {
@@ -616,13 +619,22 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           });
         }
       } else {
-        if (!req.body.patientFirstName || !req.body.patientLastName) {
+        if (!normalizedFirstName || !normalizedLastName) {
           return res.status(400).json({ error: "Patient first name and last name are required" });
         }
       }
+
+      const normalizedBody =
+        jobIdentifierMode === "trayNumber"
+          ? { ...req.body, patientFirstName: "", patientLastName: "" }
+          : {
+              ...req.body,
+              patientFirstName: normalizedFirstName,
+              patientLastName: normalizedLastName,
+            };
       
       const jobData = insertJobSchema.parse({
-        ...req.body,
+        ...normalizedBody,
         officeId: req.user.officeId,
         createdBy: req.user.id
       });
@@ -675,6 +687,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         if (typeof updates[key] === "string") {
           updates[key] = updates[key].trim();
         }
+      }
+
+      if (typeof updates.patientFirstName === "string") {
+        updates.patientFirstName = normalizePatientNamePart(updates.patientFirstName);
+      }
+      if (typeof updates.patientLastName === "string") {
+        updates.patientLastName = normalizePatientNamePart(updates.patientLastName);
       }
 
       for (const requiredKey of ["patientFirstName", "patientLastName", "jobType", "status", "orderDestination"]) {
@@ -846,6 +865,51 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       const overdueJobs = await storage.getOverdueJobs(req.user.officeId);
       res.json(overdueJobs);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/jobs/:jobId/status-history", requireOffice, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job || job.officeId !== req.user.officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const rows = await db
+        .select({
+          id: jobStatusHistory.id,
+          jobId: jobStatusHistory.jobId,
+          oldStatus: jobStatusHistory.oldStatus,
+          newStatus: jobStatusHistory.newStatus,
+          changedAt: jobStatusHistory.changedAt,
+          changedBy: jobStatusHistory.changedBy,
+          changedByFirstName: users.firstName,
+          changedByLastName: users.lastName,
+        })
+        .from(jobStatusHistory)
+        .leftJoin(users, eq(jobStatusHistory.changedBy, users.id))
+        .where(eq(jobStatusHistory.jobId, job.id))
+        .orderBy(desc(jobStatusHistory.changedAt));
+
+      res.json(
+        rows.map((row) => ({
+          id: row.id,
+          jobId: row.jobId,
+          oldStatus: row.oldStatus,
+          newStatus: row.newStatus,
+          changedAt: row.changedAt,
+          changedBy: row.changedBy,
+          changedByUser:
+            row.changedByFirstName || row.changedByLastName
+              ? {
+                  firstName: row.changedByFirstName,
+                  lastName: row.changedByLastName,
+                }
+              : null,
+        })),
+      );
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

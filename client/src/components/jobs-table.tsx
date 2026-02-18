@@ -6,22 +6,34 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Edit, Trash2, MessageSquare, MessageSquareText, ChevronUp, ChevronDown, Star } from "lucide-react";
+import { Search, Plus, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical } from "lucide-react";
 import JobDialog from "./job-dialog";
-import CommentsSidebar from "./comments-sidebar";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
+import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
 import type { Job, Office } from "@shared/schema";
 import { format } from "date-fns";
 import { getDefaultStatusColor, getDefaultJobTypeColor, getDefaultDestinationColor, getColorForBadge } from "@/lib/default-colors";
 import { cn } from "@/lib/utils";
+import { formatPatientDisplayName } from "@shared/name-format";
 
 interface JobsTableProps {
   jobs: Job[];
   loading?: boolean;
+}
+
+interface OpenJobEventDetail {
+  jobId?: string;
+  panel?: JobDetailsTab;
 }
 
 export default function JobsTable({ jobs, loading }: JobsTableProps) {
@@ -40,10 +52,20 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | undefined>();
-  const [commentsSidebarOpen, setCommentsSidebarOpen] = useState(false);
-  const [selectedJobForComments, setSelectedJobForComments] = useState<Job | undefined>();
+  const [jobDetailsOpen, setJobDetailsOpen] = useState(false);
+  const [jobDetailsTab, setJobDetailsTab] = useState<JobDetailsTab>("overview");
+  const [selectedDetailsJobId, setSelectedDetailsJobId] = useState<string | null>(null);
   const [messageTemplatesOpen, setMessageTemplatesOpen] = useState(false);
-  const [selectedJobForMessages, setSelectedJobForMessages] = useState<Job | undefined>();
+  const [selectedMessagesJobId, setSelectedMessagesJobId] = useState<string | null>(null);
+
+  const selectedJobForDetails = useMemo(
+    () => jobs.find((job) => job.id === selectedDetailsJobId),
+    [jobs, selectedDetailsJobId],
+  );
+  const selectedJobForMessages = useMemo(
+    () => jobs.find((job) => job.id === selectedMessagesJobId),
+    [jobs, selectedMessagesJobId],
+  );
 
   const { data: office } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
@@ -335,18 +357,29 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     }
   }, [deleteJobMutation]);
 
-  const handleEditJob = useCallback((job: Job) => {
+  const handleStartEditingJob = useCallback((job: Job) => {
     setEditingJob(job);
     setJobDialogOpen(true);
   }, []);
 
+  const handleOpenJobDetails = useCallback((job: Job, panel: JobDetailsTab = "overview") => {
+    setSelectedDetailsJobId(job.id);
+    setJobDetailsTab(panel);
+    setJobDetailsOpen(true);
+  }, []);
+
   useEffect(() => {
-    const handler = (event: any) => {
+    const handler = (event: CustomEvent<OpenJobEventDetail>) => {
       const jobId = event?.detail?.jobId;
       if (typeof jobId !== "string" || !jobId) return;
       const match = jobs.find((j) => j.id === jobId);
       if (match) {
-        handleEditJob(match);
+        const requestedPanel = event?.detail?.panel;
+        const panel: JobDetailsTab =
+          requestedPanel === "comments" || requestedPanel === "history" || requestedPanel === "overview"
+            ? requestedPanel
+            : "overview";
+        handleOpenJobDetails(match, panel);
         return;
       }
       toast({
@@ -357,17 +390,28 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
     window.addEventListener("otto:openJob", handler as any);
     return () => window.removeEventListener("otto:openJob", handler as any);
-  }, [jobs, handleEditJob, toast]);
+  }, [jobs, handleOpenJobDetails, toast]);
 
   const handleOpenComments = useCallback((job: Job) => {
-    setSelectedJobForComments(job);
-    setCommentsSidebarOpen(true);
-  }, []);
+    handleOpenJobDetails(job, "comments");
+  }, [handleOpenJobDetails]);
 
   const handleOpenMessageTemplates = useCallback((job: Job) => {
-    setSelectedJobForMessages(job);
+    setSelectedMessagesJobId(job.id);
     setMessageTemplatesOpen(true);
   }, []);
+
+  useEffect(() => {
+    if (jobDetailsOpen && !selectedJobForDetails) {
+      setJobDetailsOpen(false);
+    }
+  }, [jobDetailsOpen, selectedJobForDetails]);
+
+  useEffect(() => {
+    if (messageTemplatesOpen && !selectedJobForMessages) {
+      setMessageTemplatesOpen(false);
+    }
+  }, [messageTemplatesOpen, selectedJobForMessages]);
 
   const handleToggleFlag = useCallback((jobId: string) => {
     if (flaggedJobIds.includes(jobId)) {
@@ -477,6 +521,14 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     // Final fallback
     return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
   };
+
+  const getPatientLabel = useCallback(
+    (job: Job) =>
+      useTrayNumber
+        ? job.trayNumber || "—"
+        : formatPatientDisplayName(job.patientFirstName, job.patientLastName) || "—",
+    [useTrayNumber],
+  );
 
   if (loading) {
     return (
@@ -621,12 +673,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
         {/* Jobs Table */}
         <div className="overflow-x-auto">
-          <Table>
+          <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-12">
+                <TableHead className="w-10">
                   <Checkbox
-                    checked={selectedJobs.length === filteredJobs.length}
+                    className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
+                    checked={filteredJobs.length > 0 && selectedJobs.length === filteredJobs.length}
                     onCheckedChange={(checked) => {
                       if (checked) {
                         setSelectedJobs(filteredJobs.map(job => job.id));
@@ -637,10 +690,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     data-testid="checkbox-select-all"
                   />
                 </TableHead>
-                <TableHead className="w-12">
-                  Important
+                <TableHead className="w-10 text-center">
+                  <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary" onClick={() => handleSort(useTrayNumber ? "trayNumber" : "patientLastName")}>
+                <TableHead
+                  className="cursor-pointer hover:text-primary min-w-[160px]"
+                  onClick={() => handleSort(useTrayNumber ? "trayNumber" : "patientLastName")}
+                >
                   <div className="flex items-center gap-1">
                     {useTrayNumber ? "Tray #" : "Patient"}
                     {(sortBy === "patientLastName" || sortBy === "trayNumber") && (
@@ -648,7 +704,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     )}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary" onClick={() => handleSort("jobType")}>
+                <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("jobType")}>
                   <div className="flex items-center gap-1">
                     Job Type
                     {sortBy === "jobType" && (
@@ -656,7 +712,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     )}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary" onClick={() => handleSort("status")}>
+                <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("status")}>
                   <div className="flex items-center gap-1">
                     Status
                     {sortBy === "status" && (
@@ -664,7 +720,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     )}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary" onClick={() => handleSort("orderDestination")}>
+                <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("orderDestination")}>
                   <div className="flex items-center gap-1">
                     Destination
                     {sortBy === "orderDestination" && (
@@ -675,14 +731,14 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 {customColumns.map((column: any) => (
                   <TableHead 
                     key={column.id}
-                    className="cursor-pointer hover:text-primary"
-                    onClick={() => setSortBy(`custom-${column.id}`)}
+                    className="cursor-pointer hover:text-primary min-w-[96px]"
+                    onClick={() => handleSort(`custom-${column.id}`)}
                     data-testid={`table-header-custom-${column.id}`}
                   >
-                    {column.name}
+                    <span className="truncate block">{column.name}</span>
                   </TableHead>
                 ))}
-                <TableHead className="cursor-pointer hover:text-primary" onClick={() => handleSort("createdAt")}>
+                <TableHead className="cursor-pointer hover:text-primary min-w-[104px]" onClick={() => handleSort("createdAt")}>
                   <div className="flex items-center gap-1">
                     Created
                     {sortBy === "createdAt" && (
@@ -690,7 +746,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     )}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary" onClick={() => handleSort("statusChangedAt")}>
+                <TableHead className="cursor-pointer hover:text-primary min-w-[116px]" onClick={() => handleSort("statusChangedAt")}>
                   <div className="flex items-center gap-1">
                     Last Updated
                     {sortBy === "statusChangedAt" && (
@@ -698,7 +754,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     )}
                   </div>
                 </TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="w-12 text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -709,11 +765,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     "table-row-hover cursor-pointer transition-colors",
                     index % 2 === 0 ? "bg-muted/30" : "bg-background"
                   )}
-                  onClick={() => handleEditJob(job)}
+                  onClick={() => handleOpenJobDetails(job, "overview")}
                   data-testid={`row-job-${job.id}`}
                 >
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
+                      className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
                       checked={selectedJobs.includes(job.id)}
                       onCheckedChange={(checked) => {
                         if (checked) {
@@ -728,7 +785,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 w-8 p-0"
+                      className="h-7 w-7 p-0"
                       onClick={() => handleToggleFlag(job.id)}
                       data-testid={`button-flag-${job.id}`}
                     >
@@ -741,13 +798,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     </Button>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">
-                        {useTrayNumber ? (job.trayNumber || "—") : `${job.patientFirstName} ${job.patientLastName}`.trim()}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-medium truncate">
+                        {getPatientLabel(job)}
                       </span>
                       {job.isRedoJob && (
                         <Badge 
-                          className="text-xs px-1.5 py-0 h-5 border-0"
+                          className="text-[10px] px-1.5 py-0 h-5 border-0"
                           style={{
                             backgroundColor: 'hsl(38 92% 50% / 0.15)',
                             color: 'hsl(38 92% 40%)'
@@ -759,7 +816,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       )}
                       {isJobOverdue(job) && (
                         <Badge 
-                          className="text-xs px-1.5 py-0 h-5 border-0"
+                          className="text-[10px] px-1.5 py-0 h-5 border-0"
                           style={{
                             backgroundColor: 'hsl(0 84% 60% / 0.15)',
                             color: 'hsl(0 84% 50%)'
@@ -773,7 +830,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   </TableCell>
                   <TableCell>
                     <Badge 
-                      className="status-badge border-0"
+                      className="status-badge border-0 max-w-[130px] truncate"
                       style={{
                         backgroundColor: getTypeBadgeColor(job.jobType).background,
                         color: getTypeBadgeColor(job.jobType).text
@@ -788,9 +845,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       value={job.status}
                       onValueChange={(newStatus) => handleStatusChange(job.id, newStatus)}
                     >
-                      <SelectTrigger className="w-auto border-none p-1 h-auto">
+                      <SelectTrigger className="w-auto border-none p-0 h-auto min-h-0">
                         <Badge 
-                          className="status-badge border-0"
+                          className="status-badge border-0 max-w-[136px] truncate"
                           style={{
                             backgroundColor: 'transparent',
                             color: getStatusBadgeColor(job.status).text
@@ -823,7 +880,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   </TableCell>
                   <TableCell>
                     <Badge 
-                      className="status-badge border-0"
+                      className="status-badge border-0 max-w-[140px] truncate"
                       style={{
                         backgroundColor: getDestinationBadgeColor(job.orderDestination).background,
                         color: getDestinationBadgeColor(job.orderDestination).text
@@ -836,11 +893,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   {customColumns.map((column: any) => (
                     <TableCell 
                       key={column.id}
+                      className="max-w-[140px]"
                       data-testid={`table-cell-custom-${column.id}-${job.id}`}
                       onClick={column.type === 'checkbox' ? (e) => e.stopPropagation() : undefined}
                     >
                       {column.type === 'checkbox' ? (
                         <Checkbox
+                          className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
                           checked={!!(job.customColumnValues as Record<string, any>)?.[column.id]}
                           onCheckedChange={(checked) => {
                             const currentValues = (job.customColumnValues as Record<string, any>) || {};
@@ -856,34 +915,34 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                           data-testid={`checkbox-custom-${column.id}-${job.id}`}
                         />
                       ) : (
-                        <span className="text-sm">
+                        <span className="truncate block">
                           {(job.customColumnValues as Record<string, any>)?.[column.id] || '-'}
                         </span>
                       )}
                     </TableCell>
                   ))}
-                  <TableCell className="text-sm text-muted-foreground">
+                  <TableCell className="text-muted-foreground leading-tight">
                     <div>{format(new Date(job.createdAt), 'MMM d, yyyy')}</div>
-                    <div className="text-xs">{format(new Date(job.createdAt), 'h:mm a')}</div>
+                    <div className="text-[11px]">{format(new Date(job.createdAt), 'h:mm a')}</div>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
+                  <TableCell className="text-muted-foreground leading-tight">
                     <div>{format(new Date(job.statusChangedAt || job.createdAt), 'MMM d, yyyy')}</div>
-                    <div className="text-xs">{format(new Date(job.statusChangedAt || job.createdAt), 'h:mm a')}</div>
+                    <div className="text-[11px]">{format(new Date(job.statusChangedAt || job.createdAt), 'h:mm a')}</div>
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center justify-center gap-1">
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 relative"
+                        className="h-7 w-7 relative"
                         onClick={() => handleOpenComments(job)}
                         data-testid={`button-comments-${job.id}`}
                       >
-                        <MessageSquare className="h-4 w-4" />
+                        <MessageSquare className="h-3.5 w-3.5" />
                         {commentCounts[job.id] > 0 && (
                           <span 
                             className={cn(
-                              "absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-medium px-1",
+                              "absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full text-[9px] font-semibold px-1",
                               unreadCommentJobIds.includes(job.id) 
                                 ? "bg-red-500 text-white" 
                                 : "bg-gray-400 dark:bg-gray-600 text-white"
@@ -894,33 +953,39 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                           </span>
                         )}
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleOpenMessageTemplates(job)}
-                        data-testid={`button-messages-${job.id}`}
-                      >
-                        <MessageSquareText className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleEditJob(job)}
-                        data-testid={`button-edit-${job.id}`}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleDeleteJob(job.id)}
-                        data-testid={`button-delete-${job.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            data-testid={`button-actions-${job.id}`}
+                          >
+                            <EllipsisVertical className="h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onSelect={() => handleOpenMessageTemplates(job)}
+                            data-testid={`menu-messages-${job.id}`}
+                          >
+                            Messages
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => handleOpenJobDetails(job, "overview")}
+                            data-testid={`menu-edit-${job.id}`}
+                          >
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={() => handleDeleteJob(job.id)}
+                            data-testid={`menu-delete-${job.id}`}
+                          >
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -963,12 +1028,15 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         job={editingJob}
       />
 
-      {/* Comments Sidebar */}
-      {selectedJobForComments && (
-        <CommentsSidebar
-          open={commentsSidebarOpen}
-          onOpenChange={setCommentsSidebarOpen}
-          job={selectedJobForComments}
+      {/* Job Details Modal */}
+      {selectedJobForDetails && (
+        <JobDetailsModal
+          open={jobDetailsOpen}
+          onOpenChange={setJobDetailsOpen}
+          job={selectedJobForDetails}
+          activeTab={jobDetailsTab}
+          onActiveTabChange={setJobDetailsTab}
+          onEditJob={handleStartEditingJob}
         />
       )}
 

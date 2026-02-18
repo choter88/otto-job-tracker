@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,9 +10,13 @@ import { BarChart, Bar, PieChart, Pie, LineChart, Line, XAxis, YAxis, CartesianG
 import { endOfDay, endOfWeek, format, startOfDay, startOfMonth, startOfWeek, subDays, endOfMonth } from "date-fns";
 import { AlertTriangle, CalendarIcon, CheckCircle2, Clock, Package, Star, TrendingUp, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  getColorForBadge,
+  getDefaultDestinationColor,
+  getDefaultJobTypeColor,
+  getDefaultStatusColor,
+} from "@/lib/default-colors";
 import type { Job, ArchivedJob } from "@shared/schema";
-
-const COLORS = ['hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))'];
 
 export default function AnalyticsDashboard() {
   const { user } = useAuth();
@@ -91,6 +95,103 @@ export default function AnalyticsDashboard() {
     customOrderDestinations.find((d) => d?.id === destIdOrLabel || d?.label === destIdOrLabel)?.label ||
     destinationLabelById.get(destIdOrLabel) ||
     toTitleCase(destIdOrLabel);
+
+  const paletteFallback = useMemo(
+    () => [
+      "hsl(var(--chart-1))",
+      "hsl(var(--chart-2))",
+      "hsl(var(--chart-3))",
+      "hsl(var(--chart-4))",
+      "hsl(var(--chart-5))",
+    ],
+    [],
+  );
+
+  const toChartColor = (colorValue: string | null | undefined) => getColorForBadge(colorValue).text;
+  const resolveConfiguredColor = (entry: any) => entry?.hsl || entry?.color || entry?.hex || null;
+
+  const fallbackColorFromKey = useCallback(
+    (key: string) => {
+      if (!paletteFallback.length) return "hsl(var(--primary))";
+      const normalized = String(key || "default");
+      let hash = 0;
+      for (let i = 0; i < normalized.length; i += 1) {
+        hash += normalized.charCodeAt(i);
+      }
+      return paletteFallback[hash % paletteFallback.length];
+    },
+    [paletteFallback],
+  );
+
+  const statusColorById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const status of customStatuses) {
+      if (!status?.id) continue;
+      const color = resolveConfiguredColor(status);
+      if (color) map.set(String(status.id), toChartColor(color));
+    }
+    return map;
+  }, [customStatuses]);
+
+  const jobTypeColorById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const type of customJobTypes) {
+      if (!type?.id) continue;
+      const color = resolveConfiguredColor(type);
+      if (color) map.set(String(type.id), toChartColor(color));
+    }
+    return map;
+  }, [customJobTypes]);
+
+  const destinationColorByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const destination of customOrderDestinations) {
+      const color = resolveConfiguredColor(destination);
+      if (!color) continue;
+      const chartColor = toChartColor(color);
+      if (destination?.id) map.set(String(destination.id), chartColor);
+      if (destination?.label) map.set(String(destination.label), chartColor);
+    }
+    return map;
+  }, [customOrderDestinations]);
+
+  const getStatusChartColor = useCallback(
+    (statusId: string) => {
+      const configured = statusColorById.get(statusId);
+      if (configured) return configured;
+      const fallback = getDefaultStatusColor(statusId);
+      if (fallback) return toChartColor(fallback.hsl);
+      return fallbackColorFromKey(statusId);
+    },
+    [fallbackColorFromKey, statusColorById],
+  );
+
+  const getJobTypeChartColor = useCallback(
+    (jobTypeId: string) => {
+      const configured = jobTypeColorById.get(jobTypeId);
+      if (configured) return configured;
+      const fallback = getDefaultJobTypeColor(jobTypeId);
+      if (fallback) return toChartColor(fallback.hsl);
+      return fallbackColorFromKey(jobTypeId);
+    },
+    [fallbackColorFromKey, jobTypeColorById],
+  );
+
+  const getDestinationChartColor = useCallback(
+    (destination: string) => {
+      const configured = destinationColorByKey.get(destination);
+      if (configured) return configured;
+
+      const destinationLabel = getDestinationLabel(destination);
+      const configuredLabel = destinationColorByKey.get(destinationLabel);
+      if (configuredLabel) return configuredLabel;
+
+      const fallback = getDefaultDestinationColor(destinationLabel) || getDefaultDestinationColor(destination);
+      if (fallback) return toChartColor(fallback.hsl);
+      return fallbackColorFromKey(destination);
+    },
+    [destinationColorByKey, fallbackColorFromKey, getDestinationLabel],
+  );
 
   const jobTypeOptions = useMemo(() => {
     const defaults = ["contacts", "glasses", "sunglasses", "prescription"].map((id) => ({
@@ -313,8 +414,10 @@ export default function AnalyticsDashboard() {
 
   const statusChartData = Object.entries(statusDistribution)
     .map(([statusId, value]) => ({
+      id: statusId,
       name: getStatusLabel(statusId),
       value,
+      color: getStatusChartColor(statusId),
     }))
     .sort((a, b) => b.value - a.value);
 
@@ -326,8 +429,10 @@ export default function AnalyticsDashboard() {
 
   const jobTypeChartData = Object.entries(jobTypeDistribution)
     .map(([jobTypeId, value]) => ({
+      id: jobTypeId,
       name: getJobTypeLabel(jobTypeId),
       count: value,
+      color: getJobTypeChartColor(jobTypeId),
     }))
     .sort((a, b) => b.count - a.count);
 
@@ -339,8 +444,10 @@ export default function AnalyticsDashboard() {
 
   const destinationChartData = Object.entries(destinationDistribution)
     .map(([destId, value]) => ({
+      id: destId,
       name: getDestinationLabel(destId),
       count: value,
+      color: getDestinationChartColor(destId),
     }))
     .sort((a, b) => b.count - a.count);
 
@@ -359,8 +466,10 @@ export default function AnalyticsDashboard() {
 
   const completionTimeByTypeChartData = Object.entries(completionTimeByType)
     .map(([jobTypeId, stats]) => ({
+      id: jobTypeId,
       name: getJobTypeLabel(jobTypeId),
       days: Number((stats.totalDays / Math.max(1, stats.count)).toFixed(1)),
+      color: getJobTypeChartColor(jobTypeId),
     }))
     .sort((a, b) => b.days - a.days);
 
@@ -651,11 +760,10 @@ export default function AnalyticsDashboard() {
                         cy="50%"
                         innerRadius={55}
                         outerRadius={90}
-                        fill="#8884d8"
                         dataKey="value"
                       >
-                        {statusChartData.map((_, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        {statusChartData.map((entry) => (
+                          <Cell key={`cell-${entry.id}`} fill={entry.color} />
                         ))}
                       </Pie>
                       <Tooltip />
@@ -664,12 +772,12 @@ export default function AnalyticsDashboard() {
                 </div>
 
                 <div className="space-y-2">
-                  {statusChartData.slice(0, 6).map((entry, index) => (
-                    <div key={`${entry.name}-${index}`} className="flex items-center justify-between gap-3 text-sm">
+                  {statusChartData.slice(0, 6).map((entry) => (
+                    <div key={entry.id} className="flex items-center justify-between gap-3 text-sm">
                       <div className="flex items-center gap-2 min-w-0">
                         <span
                           className="h-2 w-2 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                          style={{ backgroundColor: entry.color }}
                         />
                         <span className="truncate">{entry.name}</span>
                       </div>
@@ -706,7 +814,11 @@ export default function AnalyticsDashboard() {
                   />
                   <YAxis allowDecimals={false} />
                   <Tooltip />
-                  <Bar dataKey="count" fill="hsl(var(--primary))" />
+                  <Bar dataKey="count">
+                    {jobTypeChartData.map((entry) => (
+                      <Cell key={`job-type-${entry.id}`} fill={entry.color} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -737,7 +849,11 @@ export default function AnalyticsDashboard() {
                   />
                   <YAxis allowDecimals={false} />
                   <Tooltip />
-                  <Bar dataKey="count" fill="hsl(var(--chart-2))" />
+                  <Bar dataKey="count">
+                    {destinationChartData.map((entry) => (
+                      <Cell key={`destination-${entry.id}`} fill={entry.color} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -765,7 +881,11 @@ export default function AnalyticsDashboard() {
                   />
                   <YAxis />
                   <Tooltip formatter={(value) => [`${value} days`, "Avg completion"]} />
-                  <Bar dataKey="days" fill="hsl(var(--chart-3))" />
+                  <Bar dataKey="days">
+                    {completionTimeByTypeChartData.map((entry) => (
+                      <Cell key={`completion-type-${entry.id}`} fill={entry.color} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : (

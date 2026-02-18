@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, User, Briefcase, Save, Check, ChevronsUpDown, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Job, Office, ArchivedJob } from "@shared/schema";
+import { formatPatientDisplayName, normalizePatientNamePart } from "@shared/name-format";
 
 const jobSchema = z.object({
   patientFirstName: z.string().optional().or(z.literal("")),
@@ -123,12 +124,14 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
   const createJobMutation = useMutation({
     mutationFn: async (data: JobMutationData) => {
       const { createdAt, ...rest } = data;
+      const normalizedFirstName = normalizePatientNamePart(data.patientFirstName);
+      const normalizedLastName = normalizePatientNamePart(data.patientLastName);
       const formattedData = {
         ...rest,
         phone: data.phone ? data.phone.replace(/\D/g, '') : '', // Remove formatting
         // When using tray number mode, set placeholder values for patient name fields
-        patientFirstName: useTrayNumberForMutation ? "" : (data.patientFirstName || ""),
-        patientLastName: useTrayNumberForMutation ? "" : (data.patientLastName || ""),
+        patientFirstName: useTrayNumberForMutation ? "" : normalizedFirstName,
+        patientLastName: useTrayNumberForMutation ? "" : normalizedLastName,
         trayNumber: data.trayNumber || null,
         customColumnValues,
         originalJobId: data.originalJobId || null,
@@ -225,6 +228,9 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
   });
 
   const onSubmit = (data: JobFormData) => {
+    const normalizedFirstName = normalizePatientNamePart(data.patientFirstName);
+    const normalizedLastName = normalizePatientNamePart(data.patientLastName);
+
     // Validate based on identifier mode
     if (useTrayNumberForMutation) {
       if (!data.trayNumber || data.trayNumber.trim() === "") {
@@ -236,7 +242,7 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
         return;
       }
     } else {
-      if (!data.patientFirstName || !data.patientLastName) {
+      if (!normalizedFirstName || !normalizedLastName) {
         toast({
           title: "Validation Error",
           description: "Patient first name and last name are required",
@@ -245,11 +251,20 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
         return;
       }
     }
+
+    const normalizedData = useTrayNumberForMutation
+      ? data
+      : {
+          ...data,
+          patientFirstName: normalizedFirstName,
+          patientLastName: normalizedLastName,
+        };
+
     if (job) {
-      createJobMutation.mutate(data);
+      createJobMutation.mutate(normalizedData);
     } else {
       const id = (globalThis as any)?.crypto?.randomUUID?.() || `job-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      createJobMutation.mutate({ ...data, clientJobId: id });
+      createJobMutation.mutate({ ...normalizedData, clientJobId: id });
     }
   };
 
@@ -269,7 +284,8 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
     const jobTypeLabel = customJobTypes.find((t: any) => t.id === job.jobType)?.label || 
                          job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1);
     const prefix = isArchived ? "[ARCHIVED] " : "";
-    return `${prefix}${job.orderId} - ${job.patientFirstName} ${job.patientLastName}`.trim() + ` - ${jobTypeLabel}`;
+    const patientName = formatPatientDisplayName(job.patientFirstName, job.patientLastName);
+    return `${prefix}${job.orderId} - ${patientName}`.trim() + ` - ${jobTypeLabel}`;
   };
 
   const customJobTypes = (office?.settings as any)?.customJobTypes || [];
@@ -326,7 +342,13 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
                   <Input
                     id="patientFirstName"
                     placeholder="Jane"
-                    {...form.register("patientFirstName")}
+                    {...form.register("patientFirstName", {
+                      onBlur: (e) => {
+                        form.setValue("patientFirstName", normalizePatientNamePart(e.target.value), {
+                          shouldDirty: true,
+                        });
+                      },
+                    })}
                     data-testid="input-patient-firstname"
                   />
                   {form.formState.errors.patientFirstName && (
@@ -341,7 +363,13 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
                   <Input
                     id="patientLastName"
                     placeholder="Doe"
-                    {...form.register("patientLastName")}
+                    {...form.register("patientLastName", {
+                      onBlur: (e) => {
+                        form.setValue("patientLastName", normalizePatientNamePart(e.target.value), {
+                          shouldDirty: true,
+                        });
+                      },
+                    })}
                     data-testid="input-patient-lastname"
                   />
                   {form.formState.errors.patientLastName && (
