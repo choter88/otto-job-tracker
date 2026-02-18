@@ -319,15 +319,36 @@ function normalizePairingCodeHex(value) {
   return normalized.length >= 12 ? normalized.slice(0, 12) : normalized;
 }
 
+function normalizeFingerprint256Hex(value) {
+  const normalized = normalizeHex(value);
+  if (normalized.length < 64) return "";
+  return normalized.slice(0, 64);
+}
+
 function fingerprintHexFromCertificate(cert) {
   if (!cert || typeof cert !== "object") return "";
 
-  const fromFingerprint = normalizeHex(cert.fingerprint256 || cert.fingerprint);
-  if (fromFingerprint) return fromFingerprint;
+  const fromFingerprint256 = normalizeFingerprint256Hex(cert.fingerprint256);
+  if (fromFingerprint256) return fromFingerprint256;
+
+  if (typeof cert.data === "string" && cert.data.trim()) {
+    try {
+      const fromPem = new X509Certificate(cert.data).fingerprint256;
+      const normalizedFromPem = normalizeFingerprint256Hex(fromPem);
+      if (normalizedFromPem) return normalizedFromPem;
+    } catch {
+      // ignore
+    }
+  }
 
   if (Buffer.isBuffer(cert.raw)) {
-    return createHash("sha256").update(cert.raw).digest("hex").toUpperCase();
+    const fromRaw = createHash("sha256").update(cert.raw).digest("hex").toUpperCase();
+    const normalizedFromRaw = normalizeFingerprint256Hex(fromRaw);
+    if (normalizedFromRaw) return normalizedFromRaw;
   }
+
+  const fromFingerprint = normalizeFingerprint256Hex(cert.fingerprint);
+  if (fromFingerprint) return fromFingerprint;
 
   return "";
 }
@@ -338,10 +359,12 @@ function getPeerFingerprintHex(socket) {
   try {
     if (typeof socket.getPeerX509Certificate === "function") {
       const cert = socket.getPeerX509Certificate();
-      const fromX509 = normalizeHex(cert?.fingerprint256 || cert?.fingerprint);
+      const fromX509 = fingerprintHexFromCertificate(cert);
       if (fromX509) return fromX509;
       if (cert?.raw && Buffer.isBuffer(cert.raw)) {
-        return createHash("sha256").update(cert.raw).digest("hex").toUpperCase();
+        const fromRaw = createHash("sha256").update(cert.raw).digest("hex").toUpperCase();
+        const normalizedFromRaw = normalizeFingerprint256Hex(fromRaw);
+        if (normalizedFromRaw) return normalizedFromRaw;
       }
     }
   } catch {
@@ -911,9 +934,8 @@ function registerTlsTrustForWindow(win, targetUrl, config) {
             return callback(-3);
           }
 
-          const certFpHex = normalizeHex(
-            request?.certificate?.fingerprint256 || request?.certificate?.fingerprint,
-          );
+          const certFpHex = fingerprintHexFromCertificate(request?.certificate);
+          if (!certFpHex) return callback(-3);
 
           if (current.fingerprintHex && certFpHex && certFpHex === current.fingerprintHex) {
             return callback(0);
@@ -967,7 +989,7 @@ app.on("certificate-error", (event, webContents, url, _error, certificate, callb
     const requestOrigin = new URL(url).origin;
     if (requestOrigin !== trust.origin) return callback(false);
 
-    const certFpHex = normalizeHex(certificate?.fingerprint256 || certificate?.fingerprint);
+    const certFpHex = fingerprintHexFromCertificate(certificate);
     if (!certFpHex) return callback(false);
 
     if (trust.fingerprintHex && certFpHex === trust.fingerprintHex) {
