@@ -106,6 +106,12 @@ export default function AuthPage() {
     );
   }
 
+  useEffect(() => {
+    if (!setupStatus?.staffSignupConfigured && showSignup) {
+      setShowSignup(false);
+    }
+  }, [setupStatus?.staffSignupConfigured, showSignup]);
+
   if (!setupStatus?.initialized) {
     if (isLocalHost) {
       return <Redirect to="/setup" />;
@@ -183,16 +189,38 @@ export default function AuthPage() {
           </section>
 
           <section className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>{showSignup ? "Create your account" : "Sign in"}</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  {showSignup
-                    ? "Use your Staff code from the office owner to create your login."
-                    : "Use your office credentials to open your workspace."}
-                </p>
+            <Card className="flex h-[620px] flex-col">
+              <CardHeader className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <CardTitle>{showSignup ? "Create your account" : "Sign in"}</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      {showSignup
+                        ? "Use your Staff code from the office owner to create your login."
+                        : "Use your office credentials to open your workspace."}
+                    </p>
+                  </div>
+                  {setupStatus.staffSignupConfigured && (
+                    <Button
+                      type="button"
+                      variant={showSignup ? "secondary" : "outline"}
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => setShowSignup((prev) => !prev)}
+                      data-testid="button-toggle-signup"
+                    >
+                      <UserPlus className="mr-2 h-4 w-4" />
+                      {showSignup ? "Back to sign in" : "First time here?"}
+                    </Button>
+                  )}
+                </div>
+                {!setupStatus.staffSignupConfigured && (
+                  <p className="text-sm text-muted-foreground">
+                    Account self-signup is disabled for this office. Ask the office owner for an invite.
+                  </p>
+                )}
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="flex-1 overflow-y-auto">
                 {!showSignup ? (
                   <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
                     <div className="space-y-2">
@@ -322,23 +350,6 @@ export default function AuthPage() {
                       Create Account
                     </Button>
                   </form>
-                )}
-
-                {setupStatus.staffSignupConfigured ? (
-                  <Button
-                    type="button"
-                    variant={showSignup ? "secondary" : "outline"}
-                    className="w-full"
-                    onClick={() => setShowSignup((prev) => !prev)}
-                    data-testid="button-toggle-signup"
-                  >
-                    <UserPlus className="mr-2 h-4 w-4" />
-                    {showSignup ? "Back to sign in" : "First time here? Create your account"}
-                  </Button>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Account self-signup is disabled for this office. Ask the office owner for an invite.
-                  </p>
                 )}
               </CardContent>
             </Card>
