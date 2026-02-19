@@ -229,9 +229,22 @@
       }
 
       function setConnectionBusy(isBusy) {
-        // Keep action buttons clickable so users can retry immediately.
-        // We intentionally avoid toggling disabled state here.
-        void isBusy;
+        if (testBtn) testBtn.disabled = !!isBusy;
+        if (discoverBtn) discoverBtn.disabled = !!isBusy;
+      }
+
+      function formatSeconds(ms) {
+        const seconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+        return `${seconds}s`;
+      }
+
+      function getDiscoveryProgressMessage(elapsedMs) {
+        const elapsed = Number(elapsedMs) || 0;
+        if (elapsed < 1200) return "Preparing auto-detect…";
+        if (elapsed < 5000) return "Checking the Main computer address you entered…";
+        if (elapsed < 12000) return "Scanning nearby office-network addresses…";
+        if (elapsed < 25000) return "Validating possible Main computers…";
+        return "Still scanning the office network…";
       }
 
       hostUrl.addEventListener("input", resetTestStatus);
@@ -250,8 +263,17 @@
           return;
         }
 
+        if (discoverBtn) discoverBtn.disabled = true;
+        if (testBtn) testBtn.disabled = true;
         clearDiscoveredHosts();
-        setDiscoverStatus("Scanning the office network for the Main computer...");
+        const startedAt = Date.now();
+        const updateDiscoveryProgress = () => {
+          const elapsedMs = Date.now() - startedAt;
+          const message = getDiscoveryProgressMessage(elapsedMs);
+          setDiscoverStatus(`${message} (${formatSeconds(elapsedMs)})`);
+        };
+        updateDiscoveryProgress();
+        const progressTimer = window.setInterval(updateDiscoveryProgress, 1000);
 
         try {
           const result = await window.otto.discoverHosts({
@@ -261,32 +283,39 @@
 
           const hosts = Array.isArray(result?.hosts) ? result.hosts : [];
           discoveredHosts = hosts;
+          const scanMs = Number(result?.scanMs) || Date.now() - startedAt;
+          const scanText = `(${formatSeconds(scanMs)})`;
 
           if (hosts.length === 0) {
             setDiscoverStatus(
-              "No Main computer found. Make sure the Host computer has Otto running and try again. If that fails, enter the Host address and Pairing code manually from File → Show Host Address….",
+              `No Main computer found ${scanText}. Make sure the Host computer has Otto running and try again. If that fails, then manually enter the Host address and Pairing code from File → Show Host Address….`,
               "err",
             );
             return;
           }
 
           if (hosts.length === 1) {
-            setDiscoverStatus(`Found Main computer at ${hosts[0].url}.`, "ok");
+            setDiscoverStatus(`Found Main computer at ${hosts[0].url} ${scanText}.`, "ok");
             applyDiscoveredHostByIndex(0, { runTest: true });
             return;
           }
 
-          setDiscoverStatus(`Found ${hosts.length} possible Main computers. Select one below.`, "ok");
+          setDiscoverStatus(`Found ${hosts.length} possible Main computers ${scanText}. Select one below.`, "ok");
           renderDiscoveredHosts();
           applyDiscoveredHostByIndex(0, { runTest: false });
         } catch {
           clearDiscoveredHosts();
+          const elapsedMs = Date.now() - startedAt;
           setDiscoverStatus(
-            "Auto-detect failed. Make sure the Host computer has Otto running and try again. If that fails, enter the Host address and Pairing code manually from File → Show Host Address….",
+            `Auto-detect failed after ${formatSeconds(elapsedMs)}. Make sure the Host computer has Otto running and try again. If that fails, then manually enter the Host address and Pairing code from File → Show Host Address….`,
             "err",
           );
+        } finally {
+          window.clearInterval(progressTimer);
+          if (discoverBtn) discoverBtn.disabled = false;
+          if (testBtn) testBtn.disabled = false;
+          render();
         }
-        render();
       }
 
       async function runConnectionTest() {

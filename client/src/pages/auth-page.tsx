@@ -185,55 +185,146 @@ export default function AuthPage() {
           <section className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Sign in</CardTitle>
-                <p className="text-sm text-muted-foreground">Use your office credentials to open your workspace.</p>
+                <CardTitle>{showSignup ? "Create your account" : "Sign in"}</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  {showSignup
+                    ? "Use your Staff code from the office owner to create your login."
+                    : "Use your office credentials to open your workspace."}
+                </p>
               </CardHeader>
-              <CardContent>
-                <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="you@example.com"
-                      {...loginForm.register("email")}
-                      data-testid="input-email"
-                    />
-                    {loginForm.formState.errors.email && (
-                      <p className="text-sm text-destructive">{loginForm.formState.errors.email.message}</p>
-                    )}
-                  </div>
+              <CardContent className="space-y-4">
+                {!showSignup ? (
+                  <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="you@example.com"
+                        {...loginForm.register("email")}
+                        data-testid="input-email"
+                      />
+                      {loginForm.formState.errors.email && (
+                        <p className="text-sm text-destructive">{loginForm.formState.errors.email.message}</p>
+                      )}
+                    </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      {...loginForm.register("password")}
-                      data-testid="input-password"
-                    />
-                    {loginForm.formState.errors.password && (
-                      <p className="text-sm text-destructive">{loginForm.formState.errors.password.message}</p>
-                    )}
-                  </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="password">Password</Label>
+                      <Input
+                        id="password"
+                        type="password"
+                        placeholder="••••••••"
+                        {...loginForm.register("password")}
+                        data-testid="input-password"
+                      />
+                      {loginForm.formState.errors.password && (
+                        <p className="text-sm text-destructive">{loginForm.formState.errors.password.message}</p>
+                      )}
+                    </div>
 
-                  <Button
-                    type="submit"
-                    className="w-full"
-                    disabled={loginMutation.isPending}
-                    data-testid="button-sign-in"
-                  >
-                    {loginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Continue
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={loginMutation.isPending}
+                      data-testid="button-sign-in"
+                    >
+                      {loginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Continue
+                    </Button>
+                  </form>
+                ) : (
+                  <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="staffCode">Staff code</Label>
+                      <Input
+                        id="staffCode"
+                        placeholder="Ask your office admin"
+                        {...registerForm.register("staffCode")}
+                        data-testid="input-staffCode"
+                      />
+                      {registerForm.formState.errors.staffCode && (
+                        <p className="text-sm text-destructive">
+                          {registerForm.formState.errors.staffCode.message}
+                        </p>
+                      )}
+                    </div>
 
-            {setupStatus.staffSignupConfigured ? (
-              <Card>
-                <CardContent className="p-4 space-y-3">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="firstName">First Name</Label>
+                        <Input
+                          id="firstName"
+                          placeholder="Jane"
+                          {...registerForm.register("firstName")}
+                          data-testid="input-firstName"
+                        />
+                        {registerForm.formState.errors.firstName && (
+                          <p className="text-sm text-destructive">
+                            {registerForm.formState.errors.firstName.message}
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="lastName">Last Name</Label>
+                        <Input
+                          id="lastName"
+                          placeholder="Doe"
+                          {...registerForm.register("lastName")}
+                          data-testid="input-lastName"
+                        />
+                        {registerForm.formState.errors.lastName && (
+                          <p className="text-sm text-destructive">
+                            {registerForm.formState.errors.lastName.message}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-email">Email</Label>
+                      <Input
+                        id="reg-email"
+                        type="email"
+                        placeholder="you@example.com"
+                        {...registerForm.register("email")}
+                        data-testid="input-reg-email"
+                      />
+                      {registerForm.formState.errors.email && (
+                        <p className="text-sm text-destructive">{registerForm.formState.errors.email.message}</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-password">Password</Label>
+                      <Input
+                        id="reg-password"
+                        type="password"
+                        placeholder="••••••••••••"
+                        {...registerForm.register("password")}
+                        data-testid="input-reg-password"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        12+ characters with uppercase, lowercase, number, and symbol.
+                      </p>
+                      {registerForm.formState.errors.password && (
+                        <p className="text-sm text-destructive">{registerForm.formState.errors.password.message}</p>
+                      )}
+                    </div>
+
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={registerMutation.isPending}
+                      data-testid="button-sign-up"
+                    >
+                      {registerMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Create Account
+                    </Button>
+                  </form>
+                )}
+
+                {setupStatus.staffSignupConfigured ? (
                   <Button
                     type="button"
                     variant={showSignup ? "secondary" : "outline"}
@@ -242,106 +333,15 @@ export default function AuthPage() {
                     data-testid="button-toggle-signup"
                   >
                     <UserPlus className="mr-2 h-4 w-4" />
-                    {showSignup ? "Hide account setup" : "First time here? Create your account"}
+                    {showSignup ? "Back to sign in" : "First time here? Create your account"}
                   </Button>
-
-                  {showSignup && (
-                    <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4 pt-1">
-                      <div className="space-y-2">
-                        <Label htmlFor="staffCode">Staff code</Label>
-                        <Input
-                          id="staffCode"
-                          placeholder="Ask your office admin"
-                          {...registerForm.register("staffCode")}
-                          data-testid="input-staffCode"
-                        />
-                        {registerForm.formState.errors.staffCode && (
-                          <p className="text-sm text-destructive">
-                            {registerForm.formState.errors.staffCode.message}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="firstName">First Name</Label>
-                          <Input
-                            id="firstName"
-                            placeholder="Jane"
-                            {...registerForm.register("firstName")}
-                            data-testid="input-firstName"
-                          />
-                          {registerForm.formState.errors.firstName && (
-                            <p className="text-sm text-destructive">
-                              {registerForm.formState.errors.firstName.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="lastName">Last Name</Label>
-                          <Input
-                            id="lastName"
-                            placeholder="Doe"
-                            {...registerForm.register("lastName")}
-                            data-testid="input-lastName"
-                          />
-                          {registerForm.formState.errors.lastName && (
-                            <p className="text-sm text-destructive">
-                              {registerForm.formState.errors.lastName.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="reg-email">Email</Label>
-                        <Input
-                          id="reg-email"
-                          type="email"
-                          placeholder="you@example.com"
-                          {...registerForm.register("email")}
-                          data-testid="input-reg-email"
-                        />
-                        {registerForm.formState.errors.email && (
-                          <p className="text-sm text-destructive">{registerForm.formState.errors.email.message}</p>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="reg-password">Password</Label>
-                        <Input
-                          id="reg-password"
-                          type="password"
-                          placeholder="••••••••••••"
-                          {...registerForm.register("password")}
-                          data-testid="input-reg-password"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          12+ characters with uppercase, lowercase, number, and symbol.
-                        </p>
-                        {registerForm.formState.errors.password && (
-                          <p className="text-sm text-destructive">{registerForm.formState.errors.password.message}</p>
-                        )}
-                      </div>
-
-                      <Button
-                        type="submit"
-                        className="w-full"
-                        disabled={registerMutation.isPending}
-                        data-testid="button-sign-up"
-                      >
-                        {registerMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Create Account
-                      </Button>
-                    </form>
-                  )}
-                </CardContent>
-              </Card>
-            ) : (
-              <p className="text-sm text-muted-foreground px-1">
-                Account self-signup is disabled for this office. Ask the office owner for an invite.
-              </p>
-            )}
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Account self-signup is disabled for this office. Ask the office owner for an invite.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           </section>
         </div>
       </div>

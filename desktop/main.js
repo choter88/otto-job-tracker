@@ -500,9 +500,14 @@ async function requestJsonWithFingerprint(targetUrl, options = {}) {
 
   return await new Promise((resolve) => {
     let settled = false;
+    let totalTimeoutHandle = null;
     const done = (result) => {
       if (settled) return;
       settled = true;
+      if (totalTimeoutHandle) {
+        clearTimeout(totalTimeoutHandle);
+        totalTimeoutHandle = null;
+      }
       resolve(result);
     };
 
@@ -589,6 +594,21 @@ async function requestJsonWithFingerprint(targetUrl, options = {}) {
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error("Connection timed out"));
     });
+
+    totalTimeoutHandle = setTimeout(() => {
+      done({
+        ok: false,
+        status: 0,
+        json: null,
+        fingerprintHex: "",
+        error: "Connection timed out",
+      });
+      try {
+        req.destroy(new Error("Connection timed out"));
+      } catch {
+        // ignore
+      }
+    }, timeoutMs + 50);
 
     if (body) {
       req.write(body);
