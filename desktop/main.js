@@ -492,6 +492,7 @@ async function requestJsonWithFingerprint(targetUrl, options = {}) {
   const method = String(options?.method || "GET").trim().toUpperCase() || "GET";
   const body = typeof options?.body === "string" ? options.body : "";
   const expectedPairingHex = normalizePairingCodeHex(options?.expectedPairingCode || options?.expectedPairingHex || "");
+  const allowMissingFingerprint = Boolean(options?.allowMissingFingerprint);
   const extraHeaders = options?.headers && typeof options.headers === "object" ? options.headers : {};
   const isHttps = url.protocol === "https:";
   const client = isHttps ? https : http;
@@ -511,6 +512,8 @@ async function requestJsonWithFingerprint(targetUrl, options = {}) {
         port,
         path: `${url.pathname}${url.search}`,
         method,
+        // Use a one-off socket so TLS certificate details are available on every request.
+        agent: false,
         rejectUnauthorized: false,
         headers: {
           Accept: "application/json",
@@ -531,15 +534,28 @@ async function requestJsonWithFingerprint(targetUrl, options = {}) {
 
         res.on("end", () => {
           const status = Number(res.statusCode) || 0;
-          if (isHttps && expectedPairingHex && (!fingerprintHex || !fingerprintHex.startsWith(expectedPairingHex))) {
-            done({
-              ok: false,
-              status: 495,
-              json: null,
-              fingerprintHex: fingerprintHex || "",
-              error: "Pairing code does not match this Host.",
-            });
-            return;
+          if (isHttps && expectedPairingHex) {
+            if (!fingerprintHex) {
+              if (!allowMissingFingerprint) {
+                done({
+                  ok: false,
+                  status: 496,
+                  json: null,
+                  fingerprintHex: "",
+                  error: "Could not read the Host certificate.",
+                });
+                return;
+              }
+            } else if (!fingerprintHex.startsWith(expectedPairingHex)) {
+              done({
+                ok: false,
+                status: 495,
+                json: null,
+                fingerprintHex: fingerprintHex || "",
+                error: "Pairing code does not match this Host.",
+              });
+              return;
+            }
           }
 
           let json = null;
@@ -755,6 +771,7 @@ async function requestHostSetupApproval(payload) {
     {
       method: "POST",
       expectedPairingCode: pairingCode,
+      allowMissingFingerprint: true,
       timeoutMs: 6000,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -807,6 +824,7 @@ async function requestHostSetupApproval(payload) {
 
     const statusResult = await requestJsonWithFingerprint(statusUrl.toString(), {
       expectedPairingCode: pairingCode,
+      allowMissingFingerprint: true,
       timeoutMs: 6000,
     });
 
@@ -1054,63 +1072,54 @@ async function testHostConnection(hostUrl, pairingCode) {
   }
 
   const healthUrl = new URL("/api/health", url);
-  const port = healthUrl.port || (isHttps ? "443" : "80");
-
-  return await new Promise((resolve) => {
-    const client = isHttps ? https : http;
-    const req = client.request(
-      {
-        hostname: healthUrl.hostname,
-        port,
-        path: `${healthUrl.pathname}${healthUrl.search}`,
-        method: "GET",
-        rejectUnauthorized: false,
-      },
-      (res) => {
-        const peerFingerprintHex = isHttps
-          ? getPeerFingerprintHex(res.socket) || getPeerFingerprintHex(req.socket)
-          : "";
-
-        let body = "";
-        res.on("data", (chunk) => {
-          body += chunk.toString();
-        });
-        res.on("end", () => {
-          if (isHttps) {
-            const certFp = peerFingerprintHex || getPeerFingerprintHex(res.socket) || getPeerFingerprintHex(req.socket);
-            if (!certFp) {
-              return resolve({ ok: false, message: "Could not read the Host certificate." });
-            }
-            if (!certFp.startsWith(pairingHex)) {
-              return resolve({
-                ok: false,
-                message: "Pairing code does not match this Host. Check the code from the Host computer.",
-              });
-            }
-          }
-
-          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
-            return resolve({
-              ok: false,
-              message: `Host responded with ${res.statusCode || "an error"}.`,
-            });
-          }
-
-          return resolve({ ok: true, message: "Connection successful." });
-        });
-      },
-    );
-
-    req.on("error", (err) => {
-      resolve({ ok: false, message: `Could not connect: ${err?.message || "Unknown error"}` });
-    });
-
-    req.setTimeout(5000, () => {
-      req.destroy(new Error("Connection timed out"));
-    });
-
-    req.end();
+  const result = await requestJsonWithFingerprint(healthUrl.toString(), {
+    expectedPairingCode: pairingCode,
+    // Some platforms intermittently do not expose peer cert details on resumed TLS sessions.
+    // In that case, continue to Host approval for final confirmation.
+    allowMissingFingerprint: true,
+    timeoutMs: 5000,
   });
+
+  if (!result.ok) {
+    if (result.status === 495) {
+      return {
+        ok: false,
+        message: "Pairing code does not match this Host. Check the code from the Host computer.",
+      };
+    }
+    if (result.status === 496) {
+      return {
+        ok: false,
+        message: "Could not read the Host certificate. Please retry from this screen.",
+      };
+    }
+    if (!result.status) {
+      return {
+        ok: false,
+        message: `Could not connect: ${result?.error || "Unknown error"}`,
+      };
+    }
+    return {
+      ok: false,
+      message:
+        result?.json?.error ||
+        result?.json?.message ||
+        result?.error ||
+        `Host responded with ${result.status || "an error"}.`,
+    };
+  }
+
+  if (result?.json?.ok !== true) {
+    return { ok: false, message: "Main computer responded unexpectedly. Please try again." };
+  }
+
+  const certificateVerified = !isHttps || Boolean(result.fingerprintHex);
+  return {
+    ok: true,
+    message: certificateVerified
+      ? "Connection successful."
+      : "Connection successful. Waiting for Main computer approval…",
+  };
 }
 
 function getTlsDir() {

@@ -76,6 +76,7 @@
           </div>
         </div>
         <div id="testStatus" class="status"></div>
+        <div id="manualLookupNote" class="hint danger" style="display:none; margin-top: 8px;"></div>
 
         <div class="step">Step 3 — Sign In</div>
         <div class="hint">After saving, you’ll sign in or create a login using the Staff code from your office admin.</div>
@@ -98,6 +99,7 @@
       const discoveredHostSelect = document.getElementById("discoveredHostSelect");
       const useDiscoveredHostBtn = document.getElementById("useDiscoveredHost");
       const testStatus = document.getElementById("testStatus");
+      const manualLookupNote = document.getElementById("manualLookupNote");
       let existingConfig = null;
       let testPassed = false;
       let discoveredHosts = [];
@@ -115,6 +117,7 @@
           setDiscoverStatus("");
           clearDiscoveredHosts();
         }
+        updateManualLookupNote();
       }
 
       document.querySelectorAll('input[name="mode"]').forEach((el) => {
@@ -141,6 +144,31 @@
         discoveredHosts = [];
         if (discoverResults) discoverResults.style.display = "none";
         if (discoveredHostSelect) discoveredHostSelect.innerHTML = "";
+      }
+
+      function updateManualLookupNote() {
+        if (!manualLookupNote) return;
+        if (selectedMode() !== "client") {
+          manualLookupNote.style.display = "none";
+          manualLookupNote.textContent = "";
+          return;
+        }
+
+        const hasHost = Boolean(hostUrl?.value?.trim());
+        const hasPairing = Boolean(pairingCode?.value?.trim());
+        if (hasHost && hasPairing) {
+          manualLookupNote.style.display = "none";
+          manualLookupNote.textContent = "";
+          return;
+        }
+
+        let missing = "Main computer address or Pairing code";
+        if (!hasHost && !hasPairing) missing = "Main computer address and Pairing code";
+        else if (!hasHost) missing = "Main computer address";
+        else if (!hasPairing) missing = "Pairing code";
+
+        manualLookupNote.style.display = "block";
+        manualLookupNote.textContent = `${missing} not found yet. On the Main computer, open File → Show Host Address… and copy both values manually.`;
       }
 
       function describeDiscoveredHost(host) {

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, KeyRound, Building2, UserPlus, Copy, CheckCircle2, ShieldAlert } from "lucide-react";
+import { Loader2, KeyRound, Building2, UserPlus, ShieldAlert } from "lucide-react";
 
 const passwordSchema = z
   .string()
@@ -59,23 +59,6 @@ type SetupStatus = {
   staffSignupConfigured: boolean;
 };
 
-type LicenseSnapshot = {
-  mode: string;
-  writeAllowed: boolean;
-  message: string;
-  hostTokenPresent: boolean;
-  nextCheckinDueAt: number | null;
-  graceEndsAt: number | null;
-  lastError: string | null;
-};
-
-type HostInfo = {
-  protocol: string;
-  port: number;
-  urls: string[];
-  pairingCode: string;
-};
-
 export default function SetupPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -90,11 +73,6 @@ export default function SetupPage() {
     archivedJobs: number;
     comments: number;
   } | null>(null);
-  const [staffCode, setStaffCode] = useState<string | null>(null);
-  const [activationCodeUsed, setActivationCodeUsed] = useState<string>("");
-  const [licenseSnapshot, setLicenseSnapshot] = useState<LicenseSnapshot | null>(null);
-  const [activationWarning, setActivationWarning] = useState<string | null>(null);
-  const [hostInfo, setHostInfo] = useState<HostInfo | null>(null);
 
   const isLocalHost = useMemo(() => {
     const host = window.location.hostname;
@@ -152,30 +130,6 @@ export default function SetupPage() {
     };
   }, [form]);
 
-  useEffect(() => {
-    if (!staffCode) return;
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const bridge = (window as any)?.otto;
-        if (!bridge?.getHostInfo) return;
-        const info = await bridge.getHostInfo();
-        if (cancelled) return;
-        if (info && typeof info === "object") {
-          setHostInfo(info as HostInfo);
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [staffCode]);
-
   const formatActivationCode = (raw: string) => {
     const cleaned = String(raw || "")
       .toUpperCase()
@@ -219,17 +173,12 @@ export default function SetupPage() {
         ok: true;
         office: any;
         user: any;
-        staffCode: string;
-        license?: LicenseSnapshot;
         activationWarning?: string | null;
       };
     },
     onSuccess: (payload) => {
       queryClient.setQueryData(["/api/user"], payload.user);
       queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
-      setStaffCode(payload.staffCode);
-      setLicenseSnapshot(payload.license || null);
-      setActivationWarning(payload.activationWarning || null);
       try {
         (window as any)?.otto?.clearPendingActivationCode?.();
       } catch {
@@ -237,7 +186,7 @@ export default function SetupPage() {
       }
       toast({
         title: "Setup complete",
-        description: "Your office is ready. Save the Staff code before continuing.",
+        description: "Your office is ready.",
       });
 
       if (payload.activationWarning) {
@@ -246,6 +195,8 @@ export default function SetupPage() {
           description: payload.activationWarning,
         });
       }
+
+      setLocation("/");
     },
     onError: (error: Error) => {
       toast({
@@ -295,18 +246,13 @@ export default function SetupPage() {
         ok: true;
         office: any;
         user: any;
-        staffCode: string;
         importedCounts?: Record<string, number>;
-        license?: LicenseSnapshot;
         activationWarning?: string | null;
       };
     },
     onSuccess: (payload) => {
       queryClient.setQueryData(["/api/user"], payload.user);
       queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
-      setStaffCode(payload.staffCode);
-      setLicenseSnapshot(payload.license || null);
-      setActivationWarning(payload.activationWarning || null);
       try {
         (window as any)?.otto?.clearPendingActivationCode?.();
       } catch {
@@ -315,7 +261,7 @@ export default function SetupPage() {
 
       toast({
         title: "Import complete",
-        description: "Your office data is imported. Save the Staff code before continuing.",
+        description: "Your office data is imported.",
       });
 
       if (payload.activationWarning) {
@@ -324,6 +270,8 @@ export default function SetupPage() {
           description: payload.activationWarning,
         });
       }
+
+      setLocation("/");
     },
     onError: (error: Error) => {
       toast({
@@ -331,55 +279,6 @@ export default function SetupPage() {
         description: error.message,
         variant: "destructive",
       });
-    },
-  });
-
-  const licenseActivateMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/license/activate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ activationCode: activationCodeUsed }),
-      });
-
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(payload?.error || payload?.message || res.statusText || "Activation failed");
-      }
-      return payload as LicenseSnapshot;
-    },
-    onSuccess: (snapshot) => {
-      setLicenseSnapshot(snapshot);
-      setActivationWarning(null);
-      toast({ title: "Activation verified", description: "This Host is now activated." });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Activation failed", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const licenseCheckinMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/license/checkin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({}),
-      });
-
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(payload?.error || payload?.message || res.statusText || "Check-in failed");
-      }
-      return payload as LicenseSnapshot;
-    },
-    onSuccess: (snapshot) => {
-      setLicenseSnapshot(snapshot);
-      toast({ title: "License checked", description: snapshot.message });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Check-in failed", description: error.message, variant: "destructive" });
     },
   });
 
@@ -407,155 +306,6 @@ export default function SetupPage() {
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground space-y-2">
             <p>After the Host is set up, come back to this computer and sign in.</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (staffCode) {
-    const bridge = (window as any)?.otto;
-    const canShowHostAddresses = typeof bridge?.showHostAddresses === "function";
-    const onCopy = async () => {
-      try {
-        await navigator.clipboard.writeText(staffCode);
-        toast({ title: "Copied", description: "Staff code copied to clipboard." });
-      } catch {
-        toast({ title: "Copy failed", description: "Please copy the code manually.", variant: "destructive" });
-      }
-    };
-
-    const onCopyValue = async (value: string, label: string) => {
-      try {
-        await navigator.clipboard.writeText(value);
-        toast({ title: "Copied", description: `${label} copied to clipboard.` });
-      } catch {
-        toast({ title: "Copy failed", description: `Please copy the ${label.toLowerCase()} manually.`, variant: "destructive" });
-      }
-    };
-
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
-        <Card className="w-full max-w-xl">
-          <CardHeader>
-            <div className="flex items-center justify-center w-16 h-16 bg-primary/10 rounded-xl mb-4 mx-auto">
-              <CheckCircle2 className="h-8 w-8 text-primary" />
-            </div>
-            <CardTitle className="text-center">Office is ready</CardTitle>
-            <CardDescription className="text-center">
-              Save this Staff code. Each team member will need it once to create their login.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="rounded-lg border bg-card p-4 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-xs text-muted-foreground">Staff code</div>
-                <div className="text-2xl font-semibold tracking-widest" data-testid="text-staff-code">
-                  {staffCode}
-                </div>
-              </div>
-              <Button variant="secondary" onClick={onCopy} data-testid="button-copy-staff-code">
-                <Copy className="mr-2 h-4 w-4" />
-                Copy
-              </Button>
-            </div>
-
-            <Alert>
-              <AlertDescription>
-                If you ever lose this code, go to <b>Team</b> inside Otto Tracker and generate a new Staff code.
-                Generating a new code will replace the old one.
-              </AlertDescription>
-            </Alert>
-
-            <div className="rounded-lg border bg-card p-4 space-y-3">
-              <div className="text-sm font-medium">Add another computer</div>
-              <div className="text-sm text-muted-foreground">
-                Install Otto Tracker on each additional computer, choose <b>Client</b>, then enter the Host address and Pairing code.
-              </div>
-
-              {hostInfo?.urls?.length ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-                    <div className="min-w-0">
-                      <div className="text-xs text-muted-foreground">Host address</div>
-                      <div className="font-mono text-sm truncate">{hostInfo.urls[0]}</div>
-                    </div>
-                    <Button type="button" variant="secondary" size="sm" onClick={() => onCopyValue(hostInfo.urls[0], "Host address")}>
-                      <Copy className="mr-2 h-4 w-4" />
-                      Copy
-                    </Button>
-                  </div>
-
-                  {hostInfo.pairingCode && (
-                    <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="text-xs text-muted-foreground">Pairing code</div>
-                        <div className="font-mono text-sm tracking-widest truncate">{hostInfo.pairingCode}</div>
-                      </div>
-                      <Button type="button" variant="secondary" size="sm" onClick={() => onCopyValue(hostInfo.pairingCode, "Pairing code")}>
-                        <Copy className="mr-2 h-4 w-4" />
-                        Copy
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <Alert>
-                  <AlertDescription>
-                    On the Host computer, open <b>File → Show Host Address…</b> to copy the Host address and Pairing code.
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {canShowHostAddresses && (
-                <Button type="button" variant="secondary" onClick={() => bridge.showHostAddresses()}>
-                  Show Host Address…
-                </Button>
-              )}
-            </div>
-
-            {activationWarning && (
-              <Alert>
-                <AlertDescription>{activationWarning}</AlertDescription>
-              </Alert>
-            )}
-
-            {licenseSnapshot && (
-              <div className="rounded-lg border bg-card p-4 space-y-3">
-                <div className="text-sm font-medium">Activation status</div>
-                <div className="text-sm text-muted-foreground">{licenseSnapshot.message}</div>
-                {licenseSnapshot.lastError && (
-                  <div className="text-xs text-muted-foreground">Last error: {licenseSnapshot.lastError}</div>
-                )}
-                {licenseSnapshot.mode !== "ACTIVE" && (
-                  <div className="flex gap-2">
-                    {!licenseSnapshot.hostTokenPresent ? (
-                      <Button
-                        variant="secondary"
-                        onClick={() => licenseActivateMutation.mutate()}
-                        disabled={licenseActivateMutation.isPending || !activationCodeUsed}
-                      >
-                        {licenseActivateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Retry activation
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        onClick={() => licenseCheckinMutation.mutate()}
-                        disabled={licenseCheckinMutation.isPending}
-                      >
-                        {licenseCheckinMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Check license now
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <Button className="w-full" onClick={() => setLocation("/")} data-testid="button-continue">
-              Continue to Otto Tracker
-            </Button>
           </CardContent>
         </Card>
       </div>
@@ -618,7 +368,6 @@ export default function SetupPage() {
   };
 
   const onSubmit = (data: SetupFormData) => {
-    setActivationCodeUsed(data.activationCode);
     if (setupMode === "import") {
       importMutation.mutate(data);
     } else {
@@ -649,7 +398,7 @@ export default function SetupPage() {
             <ol className="list-decimal pl-5 space-y-1">
               <li>Enter your Activation Code to verify your subscription (no patient data is sent).</li>
               <li>Create your office record and first admin login (local to this office).</li>
-              <li>After setup, you’ll get a Staff code to share with your team for sign‑ups.</li>
+              <li>After setup, generate a Staff code in <b>Team</b> to onboard additional users.</li>
             </ol>
             <Alert>
               <AlertDescription>

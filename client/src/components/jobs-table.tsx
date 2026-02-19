@@ -619,8 +619,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
       if (!element) return;
       if (element.clientWidth <= 0 || element.scrollWidth <= 0) return;
 
-      const windowChromeWidth = Math.max(0, window.outerWidth - element.clientWidth);
-      const requestedWidth = Math.ceil(windowChromeWidth + element.scrollWidth + 8);
+      // Only request additional width for actual horizontal clipping.
+      // Using full scrollWidth directly can cause a feedback loop where min width keeps growing.
+      const overflowPx = Math.ceil(element.scrollWidth - element.clientWidth);
+      if (!Number.isFinite(overflowPx) || overflowPx <= 0) return;
+
+      const requestedWidth = Math.ceil(window.outerWidth + overflowPx + 8);
 
       if (!Number.isFinite(requestedWidth) || requestedWidth <= 0) return;
       if (Math.abs(requestedWidth - lastRequestedWidth) < 8) return;
