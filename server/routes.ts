@@ -37,6 +37,7 @@ import { hashSecret } from "./secret-hash";
 import { activateLicense, forceCheckin, getLicenseSnapshot } from "./license";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
+import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 
 // PHI access logging helper for HIPAA compliance
 async function logPhiAccess(
@@ -150,6 +151,107 @@ function hashSnapshotPayload(payload: unknown): string {
   }
 }
 
+type SetupHandshakeStatus = "pending" | "approved" | "denied" | "expired";
+
+type SetupHandshakeRequest = {
+  id: string;
+  token: string;
+  status: SetupHandshakeStatus;
+  createdAt: number;
+  expiresAt: number;
+  decidedAt: number | null;
+  decisionNote: string | null;
+  clientName: string;
+  clientHost: string;
+  clientVersion: string;
+  requestedByIp: string;
+};
+
+const SETUP_HANDSHAKE_PENDING_LIMIT = 64;
+const SETUP_HANDSHAKE_TTL_MS = 2 * 60 * 1000;
+const SETUP_HANDSHAKE_RETENTION_MS = 10 * 60 * 1000;
+const setupHandshakeRequests = new Map<string, SetupHandshakeRequest>();
+
+function generateSetupHandshakeId() {
+  return randomBytes(16).toString("hex");
+}
+
+function sanitizeSetupHandshakeText(value: unknown, fallback: string, max = 120): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  return trimmed.slice(0, max);
+}
+
+function cleanupSetupHandshakeRequests(now = Date.now()) {
+  const idsToDelete: string[] = [];
+  setupHandshakeRequests.forEach((req, id) => {
+    if (req.status === "pending" && req.expiresAt <= now) {
+      req.status = "expired";
+      req.decidedAt = req.expiresAt;
+      req.decisionNote = req.decisionNote || "Approval timed out on the Host.";
+      setupHandshakeRequests.set(id, req);
+      return;
+    }
+
+    if (req.status !== "pending") {
+      const finalizedAt = req.decidedAt || req.expiresAt || req.createdAt;
+      if (now - finalizedAt > SETUP_HANDSHAKE_RETENTION_MS) {
+        idsToDelete.push(id);
+      }
+    }
+  });
+  for (const id of idsToDelete) {
+    setupHandshakeRequests.delete(id);
+  }
+}
+
+function buildSetupHandshakeClientResponse(req: SetupHandshakeRequest) {
+  const status = req.status;
+  const message =
+    status === "approved"
+      ? req.decisionNote || "Approved on the Main computer."
+      : status === "denied"
+        ? req.decisionNote || "Request denied on the Main computer."
+        : status === "expired"
+          ? req.decisionNote || "Approval request timed out."
+          : "Waiting for approval on the Main computer.";
+
+  return {
+    ok: status === "approved",
+    status,
+    message,
+    createdAt: req.createdAt,
+    expiresAt: req.expiresAt,
+    decidedAt: req.decidedAt,
+  };
+}
+
+function buildSetupHandshakePromptPayload(req: SetupHandshakeRequest) {
+  return {
+    id: req.id,
+    status: req.status,
+    createdAt: req.createdAt,
+    expiresAt: req.expiresAt,
+    clientName: req.clientName,
+    clientHost: req.clientHost,
+    clientVersion: req.clientVersion,
+    requestedByIp: req.requestedByIp,
+  };
+}
+
+function withDefaultMessageTemplates(settingsInput: unknown): Record<string, any> {
+  const settings =
+    settingsInput && typeof settingsInput === "object" && !Array.isArray(settingsInput)
+      ? { ...(settingsInput as Record<string, any>) }
+      : {};
+  settings.smsTemplates = ensureReadyForPickupTemplate(
+    settings.smsTemplates,
+    Array.isArray(settings.customStatuses) ? settings.customStatuses : undefined,
+  );
+  return settings;
+}
+
 export function registerRoutes(app: Express): { server: AppServer; sessionMiddleware: any } {
   // Setup authentication
   const sessionMiddleware = setupAuth(app);
@@ -208,6 +310,133 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to read setup status" });
     }
+  });
+
+  app.post("/api/setup/handshake/request", async (req, res) => {
+    try {
+      cleanupSetupHandshakeRequests();
+
+      const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
+      const [userStats] = await db.select({ count: sql`count(*)` }).from(users);
+      const officeCount = Number(officeStats?.count) || 0;
+      const userCount = Number(userStats?.count) || 0;
+      if (officeCount < 1 || userCount < 1) {
+        return res.status(409).json({ error: "Host setup is not complete yet." });
+      }
+
+      const pendingCount = Array.from(setupHandshakeRequests.values()).filter((item) => item.status === "pending").length;
+      if (pendingCount >= SETUP_HANDSHAKE_PENDING_LIMIT) {
+        return res.status(429).json({ error: "Too many pending approval requests. Please try again in a minute." });
+      }
+
+      const requestedByIp = normalizeRemoteIp(req.socket.remoteAddress || "") || "unknown";
+      const clientName = sanitizeSetupHandshakeText(req.body?.clientName, "Client computer");
+      const clientHost = sanitizeSetupHandshakeText(req.body?.clientHost, "", 160);
+      const clientVersion = sanitizeSetupHandshakeText(req.body?.clientVersion, "", 60);
+
+      const id = generateSetupHandshakeId();
+      const token = generateSetupHandshakeId();
+      const createdAt = Date.now();
+      const expiresAt = createdAt + SETUP_HANDSHAKE_TTL_MS;
+
+      const requestRecord: SetupHandshakeRequest = {
+        id,
+        token,
+        status: "pending",
+        createdAt,
+        expiresAt,
+        decidedAt: null,
+        decisionNote: null,
+        clientName,
+        clientHost,
+        clientVersion,
+        requestedByIp,
+      };
+      setupHandshakeRequests.set(id, requestRecord);
+
+      res.status(201).json({
+        ok: true,
+        requestId: id,
+        token,
+        status: "pending",
+        createdAt,
+        expiresAt,
+        message: "Waiting for approval on the Main computer.",
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Could not create approval request" });
+    }
+  });
+
+  app.get("/api/setup/handshake/request/:id", async (req, res) => {
+    try {
+      cleanupSetupHandshakeRequests();
+
+      const requestId = String(req.params.id || "").trim();
+      const token = String(req.query.token || "").trim();
+      const found = setupHandshakeRequests.get(requestId);
+      if (!found) return res.status(404).json({ error: "Approval request not found." });
+      if (!token || token !== found.token) {
+        return res.status(403).json({ error: "Invalid approval token." });
+      }
+
+      res.json(buildSetupHandshakeClientResponse(found));
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Could not read approval request" });
+    }
+  });
+
+  app.get("/api/setup/handshake/pending", async (req, res) => {
+    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
+    if (!isLoopbackIp(remote)) {
+      return res.status(403).json({ error: "Host approval queue is local-only." });
+    }
+
+    cleanupSetupHandshakeRequests();
+    const pending = Array.from(setupHandshakeRequests.values())
+      .filter((item) => item.status === "pending")
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(buildSetupHandshakePromptPayload);
+
+    res.json({ pending });
+  });
+
+  app.post("/api/setup/handshake/request/:id/decision", async (req, res) => {
+    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
+    if (!isLoopbackIp(remote)) {
+      return res.status(403).json({ error: "Approval decisions are local-only." });
+    }
+
+    cleanupSetupHandshakeRequests();
+
+    const requestId = String(req.params.id || "").trim();
+    const found = setupHandshakeRequests.get(requestId);
+    if (!found) {
+      return res.status(404).json({ error: "Approval request not found." });
+    }
+
+    if (found.status !== "pending") {
+      return res.json(buildSetupHandshakeClientResponse(found));
+    }
+
+    const decisionRaw = String(req.body?.decision || "").trim().toLowerCase();
+    if (decisionRaw !== "approved" && decisionRaw !== "denied") {
+      return res.status(400).json({ error: "Decision must be approved or denied." });
+    }
+
+    const decision = decisionRaw as "approved" | "denied";
+    const noteFallback =
+      decision === "approved"
+        ? "Approved on the Main computer."
+        : "Denied on the Main computer.";
+    const note = sanitizeSetupHandshakeText(req.body?.note, noteFallback, 220);
+
+    found.status = decision;
+    found.decidedAt = Date.now();
+    found.decisionNote = note;
+    setupHandshakeRequests.set(requestId, found);
+
+    res.json(buildSetupHandshakeClientResponse(found));
   });
 
   app.post("/api/setup/bootstrap", async (req, res, next) => {
@@ -317,7 +546,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               email: officeEmail,
             });
 
-      const mergedSettings: Record<string, any> = { ...(office.settings || {}) };
+      const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
       mergedSettings.staffSignup = {
         codeHash: staffCodeHash,
         rotatedAt: Date.now(),
@@ -539,7 +768,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const staffCode = generateStaffCode();
       const staffCodeHash = await hashSecret(normalizeStaffCode(staffCode));
 
-      const mergedSettings: Record<string, any> = { ...(office.settings || {}) };
+      const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
       mergedSettings.staffSignup = {
         codeHash: staffCodeHash,
         rotatedAt: Date.now(),
@@ -1183,7 +1412,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(409).json({ error: "This Host is already set up." });
       }
 
-      const office = await storage.createOffice(req.body);
+      const createPayload = {
+        ...(req.body || {}),
+        settings: withDefaultMessageTemplates((req.body || {}).settings),
+      };
+      const office = await storage.createOffice(createPayload);
       
       // Assign user as owner
       await storage.updateUser(req.user.id, {
@@ -1234,6 +1467,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         if (Object.prototype.hasOwnProperty.call(updates, key) && typeof updates[key] === "string") {
           updates[key] = updates[key].trim();
         }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(updates, "settings")) {
+        if (!updates.settings || typeof updates.settings !== "object" || Array.isArray(updates.settings)) {
+          return res.status(400).json({ error: "settings must be an object" });
+        }
+        updates.settings = withDefaultMessageTemplates(updates.settings);
       }
 
       const office = await storage.updateOffice(req.params.id, updates);

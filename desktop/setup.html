@@ -200,6 +200,11 @@
         render();
       }
 
+      function setConnectionBusy(isBusy) {
+        if (testBtn) testBtn.disabled = !!isBusy;
+        if (discoverBtn) discoverBtn.disabled = !!isBusy;
+      }
+
       hostUrl.addEventListener("input", resetTestStatus);
       pairingCode.addEventListener("input", () => {
         const formatted = formatPairingCode(pairingCode.value);
@@ -258,10 +263,12 @@
         if (!testStatus) return;
         testStatus.textContent = "Testing connection…";
         testStatus.className = "status";
+        setConnectionBusy(true);
 
         const mode = selectedMode();
         if (mode !== "client") {
           testStatus.textContent = "";
+          setConnectionBusy(false);
           return;
         }
 
@@ -273,9 +280,31 @@
         try {
           const result = await window.otto.testConnection(config);
           if (result?.ok) {
-            testPassed = true;
-            testStatus.textContent = "Connection successful.";
-            testStatus.className = "status ok";
+            if (!window.otto || typeof window.otto.requestHostApproval !== "function") {
+              testPassed = true;
+              testStatus.textContent = "Connection successful.";
+              testStatus.className = "status ok";
+            } else {
+              testPassed = false;
+              testStatus.textContent = "Connection verified. Waiting for Main computer approval…";
+              testStatus.className = "status";
+
+              const approval = await window.otto.requestHostApproval(config);
+              if (approval?.approved || approval?.ok) {
+                testPassed = true;
+                testStatus.textContent =
+                  approval?.message ||
+                  (approval?.unsupported
+                    ? "Connection successful. Host approval not required."
+                    : "Connection approved by Main computer.");
+                testStatus.className = "status ok";
+              } else {
+                testPassed = false;
+                testStatus.textContent =
+                  approval?.message || "Connection was not approved by the Main computer.";
+                testStatus.className = "status err";
+              }
+            }
           } else {
             testPassed = false;
             testStatus.textContent = result?.message || "Connection failed.";
@@ -285,6 +314,8 @@
           testPassed = false;
           testStatus.textContent = "Connection failed. Please check the Host address and pairing code.";
           testStatus.className = "status err";
+        } finally {
+          setConnectionBusy(false);
         }
 
         render();

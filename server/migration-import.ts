@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { sqlite } from "./db";
+import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 
 type ImportAdmin = {
   email: string;
@@ -137,6 +138,181 @@ function toJsonString(value: unknown, fallback: any): string {
   } catch {
     return JSON.stringify(fallback);
   }
+}
+
+function asObject(value: unknown): Record<string, any> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, any>;
+}
+
+function firstNonEmptyString(values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function slugifySettingId(value: string): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function labelFromId(value: string): string {
+  return String(value || "")
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+    .trim();
+}
+
+function extractColorFromSettingsItem(item: Record<string, any>): { color: string; hsl: string; hex: string } {
+  const colorObject = asObject(item.color);
+  const color = firstNonEmptyString([
+    typeof item.color === "string" ? item.color : "",
+    item.colour,
+    item.backgroundColor,
+    item.background_color,
+    item.colorHex,
+    item.color_hex,
+    item.hex,
+    item.hsl,
+    colorObject?.value,
+    colorObject?.hex,
+    colorObject?.hsl,
+  ]);
+  const hsl = firstNonEmptyString([item.hsl, item.colorHsl, item.color_hsl, colorObject?.hsl]);
+  const hex = firstNonEmptyString([item.hex, item.colorHex, item.color_hex, colorObject?.hex]);
+  return { color, hsl, hex };
+}
+
+function normalizeColorSettingsList(raw: unknown, fallbackPrefix: string): any[] {
+  if (!Array.isArray(raw)) return [];
+
+  const out: any[] = [];
+  for (let idx = 0; idx < raw.length; idx += 1) {
+    const current = raw[idx];
+    if (typeof current === "string") {
+      const label = current.trim();
+      if (!label) continue;
+      const id = slugifySettingId(label) || `${fallbackPrefix}_${idx + 1}`;
+      out.push({ id, label, order: idx + 1 });
+      continue;
+    }
+
+    const item = asObject(current);
+    if (!item) continue;
+
+    const labelCandidate = firstNonEmptyString([item.label, item.name, item.title, item.value, item.id]);
+    const idCandidate = firstNonEmptyString([item.id, item.key, item.value, item.code, labelCandidate]);
+    const id = slugifySettingId(idCandidate) || `${fallbackPrefix}_${idx + 1}`;
+    const label = labelCandidate || labelFromId(id);
+    if (!label) continue;
+
+    const orderRaw = Number(item.order ?? item.position ?? item.sortOrder ?? item.sort_order);
+    const order = Number.isFinite(orderRaw) ? Math.floor(orderRaw) : idx + 1;
+    const colors = extractColorFromSettingsItem(item);
+
+    const next: Record<string, any> = { ...item, id, label, order };
+    if (colors.color) next.color = colors.color;
+    if (colors.hsl) next.hsl = colors.hsl;
+    if (colors.hex) next.hex = colors.hex;
+
+    out.push(next);
+  }
+
+  return out;
+}
+
+function applyColorMapToSettingsList(items: any[], rawMap: unknown): any[] {
+  const colorMap = asObject(rawMap);
+  if (!colorMap) return items;
+
+  const readMappedColor = (item: any): { color: string; hsl: string; hex: string } => {
+    const id = String(item?.id || "");
+    const label = String(item?.label || "");
+    const candidates = [
+      colorMap[id],
+      colorMap[id.toLowerCase()],
+      colorMap[label],
+      colorMap[label.toLowerCase()],
+    ];
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      if (typeof candidate === "string") {
+        return { color: candidate.trim(), hsl: "", hex: "" };
+      }
+      const mapped = asObject(candidate);
+      if (!mapped) continue;
+      return extractColorFromSettingsItem(mapped);
+    }
+
+    return { color: "", hsl: "", hex: "" };
+  };
+
+  return items.map((item) => {
+    const mapped = readMappedColor(item);
+    if (!mapped.color && !mapped.hsl && !mapped.hex) return item;
+
+    const next = { ...(item || {}) };
+    if (mapped.color && !next.color) next.color = mapped.color;
+    if (mapped.hsl && !next.hsl) next.hsl = mapped.hsl;
+    if (mapped.hex && !next.hex) next.hex = mapped.hex;
+    return next;
+  });
+}
+
+function normalizeOfficeSettingsForImport(rawSettings: unknown): Record<string, any> {
+  const settings = asObject(rawSettings) || {};
+  const next: Record<string, any> = { ...settings };
+
+  const normalizedStatuses = normalizeColorSettingsList(
+    settings.customStatuses ?? settings.jobStatuses ?? settings.statuses ?? settings.workflowStatuses,
+    "status",
+  );
+  const normalizedJobTypes = normalizeColorSettingsList(
+    settings.customJobTypes ?? settings.jobTypes ?? settings.types,
+    "type",
+  );
+  const normalizedDestinations = normalizeColorSettingsList(
+    settings.customOrderDestinations ?? settings.orderDestinations ?? settings.destinations ?? settings.labs,
+    "destination",
+  );
+
+  if (normalizedStatuses.length > 0) {
+    next.customStatuses = applyColorMapToSettingsList(
+      normalizedStatuses,
+      settings.statusColors ?? settings.customStatusColors ?? settings.statusColorMap,
+    );
+  }
+  if (normalizedJobTypes.length > 0) {
+    next.customJobTypes = applyColorMapToSettingsList(
+      normalizedJobTypes,
+      settings.jobTypeColors ?? settings.customJobTypeColors ?? settings.typeColors,
+    );
+  }
+  if (normalizedDestinations.length > 0) {
+    next.customOrderDestinations = applyColorMapToSettingsList(
+      normalizedDestinations,
+      settings.destinationColors ?? settings.customDestinationColors ?? settings.orderDestinationColors,
+    );
+  }
+
+  const smsTemplatesSource =
+    asObject(settings.smsTemplates) ||
+    asObject(settings.messageTemplates) ||
+    asObject(settings.messagesByStatus) ||
+    {};
+
+  next.smsTemplates = ensureReadyForPickupTemplate(smsTemplatesSource, next.customStatuses);
+
+  return next;
 }
 
 function assertNoDuplicates(values: string[], label: string) {
@@ -581,13 +757,14 @@ export function importSnapshotV1(params: {
       return {};
     })();
 
-    const next: Record<string, any> = { ...(existing as any) };
+    const next: Record<string, any> = normalizeOfficeSettingsForImport(existing);
     next.staffSignup = { codeHash: params.staffCodeHash, rotatedAt: now };
     next.licensing = {
       activationCodeLast4: params.activationCodeLast4,
       activationAttemptedAt: now,
       activationVerifiedAt: params.activationVerifiedAt,
     };
+    next.smsTemplates = ensureReadyForPickupTemplate(next.smsTemplates, next.customStatuses);
     return next;
   })();
 

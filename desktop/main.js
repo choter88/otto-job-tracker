@@ -40,6 +40,13 @@ const MAIN_WINDOW_BASE_MIN_HEIGHT = 864;
 const HOST_DISCOVERY_TIMEOUT_MS = 1200;
 const HOST_DISCOVERY_CONCURRENCY = 36;
 const HOST_DISCOVERY_MAX_CANDIDATES = 1024;
+const SETUP_APPROVAL_REQUEST_TIMEOUT_MS = 90_000;
+const SETUP_APPROVAL_POLL_INTERVAL_MS = 2_000;
+const HOST_APPROVAL_POLL_INTERVAL_MS = 3_000;
+const HOST_APPROVAL_PROMPT_COOLDOWN_MS = 45_000;
+let hostApprovalPollInterval = null;
+let hostApprovalPromptActive = false;
+const hostApprovalPromptedAt = new Map();
 
 process.on("uncaughtException", (error) => {
   logStartup("Uncaught exception", error);
@@ -470,7 +477,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
   return output;
 }
 
-async function requestJsonWithFingerprint(targetUrl, timeoutMs = HOST_DISCOVERY_TIMEOUT_MS) {
+async function requestJsonWithFingerprint(targetUrl, options = {}) {
   let url;
   try {
     url = new URL(targetUrl);
@@ -478,6 +485,14 @@ async function requestJsonWithFingerprint(targetUrl, timeoutMs = HOST_DISCOVERY_
     return { ok: false, status: 0, json: null, fingerprintHex: "", error: "Invalid URL" };
   }
 
+  const timeoutMs = (() => {
+    const value = Number(options?.timeoutMs);
+    return Number.isFinite(value) && value > 0 ? value : HOST_DISCOVERY_TIMEOUT_MS;
+  })();
+  const method = String(options?.method || "GET").trim().toUpperCase() || "GET";
+  const body = typeof options?.body === "string" ? options.body : "";
+  const expectedPairingHex = normalizePairingCodeHex(options?.expectedPairingCode || options?.expectedPairingHex || "");
+  const extraHeaders = options?.headers && typeof options.headers === "object" ? options.headers : {};
   const isHttps = url.protocol === "https:";
   const client = isHttps ? https : http;
   const port = url.port || (isHttps ? "443" : "80");
@@ -495,9 +510,12 @@ async function requestJsonWithFingerprint(targetUrl, timeoutMs = HOST_DISCOVERY_
         hostname: url.hostname,
         port,
         path: `${url.pathname}${url.search}`,
-        method: "GET",
+        method,
         rejectUnauthorized: false,
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...extraHeaders,
+        },
       },
       (res) => {
         const fingerprintHex = isHttps
@@ -513,6 +531,17 @@ async function requestJsonWithFingerprint(targetUrl, timeoutMs = HOST_DISCOVERY_
 
         res.on("end", () => {
           const status = Number(res.statusCode) || 0;
+          if (isHttps && expectedPairingHex && (!fingerprintHex || !fingerprintHex.startsWith(expectedPairingHex))) {
+            done({
+              ok: false,
+              status: 495,
+              json: null,
+              fingerprintHex: fingerprintHex || "",
+              error: "Pairing code does not match this Host.",
+            });
+            return;
+          }
+
           let json = null;
           try {
             json = JSON.parse(body);
@@ -545,6 +574,9 @@ async function requestJsonWithFingerprint(targetUrl, timeoutMs = HOST_DISCOVERY_
       req.destroy(new Error("Connection timed out"));
     });
 
+    if (body) {
+      req.write(body);
+    }
     req.end();
   });
 }
@@ -671,6 +703,330 @@ async function discoverHosts(payload) {
     scanMs: Date.now() - startedAt,
     hosts,
   };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function getLocalServerOrigin() {
+  const protocol = app.isPackaged ? "https" : "http";
+  const port = process.env.PORT || "5150";
+  return `${protocol}://127.0.0.1:${port}`;
+}
+
+function getSetupClientName() {
+  const hostname = String(os.hostname() || "").trim();
+  return hostname || "Client computer";
+}
+
+async function requestHostSetupApproval(payload) {
+  const hostUrlInput = payload?.hostUrl;
+  const pairingCode = payload?.pairingCode;
+  const clientName =
+    typeof payload?.clientName === "string" && payload.clientName.trim()
+      ? payload.clientName.trim().slice(0, 120)
+      : getSetupClientName();
+  const clientHost = getSetupClientName();
+  const clientVersion = app.getVersion ? app.getVersion() : "";
+
+  const test = await testHostConnection(hostUrlInput, pairingCode);
+  if (!test?.ok) {
+    return {
+      ok: false,
+      approved: false,
+      message: test?.message || "Could not connect to the Main computer.",
+    };
+  }
+
+  let hostOrigin;
+  try {
+    hostOrigin = new URL(String(hostUrlInput || "").trim()).origin;
+  } catch {
+    return {
+      ok: false,
+      approved: false,
+      message: "Please enter a valid Main computer address.",
+    };
+  }
+
+  const requestResult = await requestJsonWithFingerprint(
+    new URL("/api/setup/handshake/request", hostOrigin).toString(),
+    {
+      method: "POST",
+      expectedPairingCode: pairingCode,
+      timeoutMs: 6000,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientName,
+        clientHost,
+        clientVersion,
+      }),
+    },
+  );
+
+  if (!requestResult.ok) {
+    if (requestResult.status === 404) {
+      return {
+        ok: true,
+        approved: true,
+        unsupported: true,
+        message: "Connection successful. This Host does not require approval.",
+      };
+    }
+    return {
+      ok: false,
+      approved: false,
+      message:
+        requestResult?.json?.error ||
+        requestResult?.json?.message ||
+        requestResult?.error ||
+        `Host responded with ${requestResult.status || "an error"}.`,
+    };
+  }
+
+  const requestId = String(requestResult?.json?.requestId || "").trim();
+  const token = String(requestResult?.json?.token || "").trim();
+  const expiresAtRaw = Number(requestResult?.json?.expiresAt);
+  const hardDeadline =
+    Number.isFinite(expiresAtRaw) && expiresAtRaw > Date.now()
+      ? Math.min(expiresAtRaw, Date.now() + SETUP_APPROVAL_REQUEST_TIMEOUT_MS)
+      : Date.now() + SETUP_APPROVAL_REQUEST_TIMEOUT_MS;
+
+  if (!requestId || !token) {
+    return {
+      ok: false,
+      approved: false,
+      message: "Main computer did not return a valid approval request.",
+    };
+  }
+
+  while (Date.now() <= hardDeadline) {
+    const statusUrl = new URL(`/api/setup/handshake/request/${encodeURIComponent(requestId)}`, hostOrigin);
+    statusUrl.searchParams.set("token", token);
+
+    const statusResult = await requestJsonWithFingerprint(statusUrl.toString(), {
+      expectedPairingCode: pairingCode,
+      timeoutMs: 6000,
+    });
+
+    if (!statusResult.ok) {
+      if (statusResult.status === 404) {
+        return {
+          ok: false,
+          approved: false,
+          message: "Approval request expired. Ask someone at the Main computer to retry.",
+        };
+      }
+      return {
+        ok: false,
+        approved: false,
+        message:
+          statusResult?.json?.error ||
+          statusResult?.json?.message ||
+          statusResult?.error ||
+          "Could not read approval status from the Main computer.",
+      };
+    }
+
+    const status = String(statusResult?.json?.status || "").trim().toLowerCase();
+    const message =
+      String(statusResult?.json?.message || "").trim() ||
+      (status === "approved"
+        ? "Approved on the Main computer."
+        : status === "denied"
+          ? "Denied on the Main computer."
+          : status === "expired"
+            ? "Approval request timed out."
+            : "Waiting for approval on the Main computer.");
+
+    if (status === "approved") {
+      return { ok: true, approved: true, status, message };
+    }
+    if (status === "denied" || status === "expired") {
+      return { ok: false, approved: false, status, message };
+    }
+
+    await sleep(SETUP_APPROVAL_POLL_INTERVAL_MS);
+  }
+
+  return {
+    ok: false,
+    approved: false,
+    status: "timeout",
+    message: "Timed out waiting for Main computer approval.",
+  };
+}
+
+async function fetchPendingSetupApprovalsForHost() {
+  const localOrigin = getLocalServerOrigin();
+  const result = await requestJsonWithFingerprint(new URL("/api/setup/handshake/pending", localOrigin).toString(), {
+    timeoutMs: 3500,
+  });
+  if (!result.ok) return [];
+
+  const pending = Array.isArray(result?.json?.pending) ? result.json.pending : [];
+  return pending.filter((item) => item && typeof item === "object");
+}
+
+async function submitSetupApprovalDecisionFromHost(requestId, decision, note) {
+  const localOrigin = getLocalServerOrigin();
+  const result = await requestJsonWithFingerprint(
+    new URL(`/api/setup/handshake/request/${encodeURIComponent(requestId)}/decision`, localOrigin).toString(),
+    {
+      method: "POST",
+      timeoutMs: 4000,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, note }),
+    },
+  );
+  return result.ok;
+}
+
+async function maybePromptForPendingHostApproval() {
+  if (hostApprovalPromptActive) return;
+
+  const pending = await fetchPendingSetupApprovalsForHost();
+  if (!Array.isArray(pending) || pending.length === 0) return;
+
+  const now = Date.now();
+  const nextPrompt = pending.find((item) => {
+    const id = String(item?.id || "").trim();
+    if (!id) return false;
+    const lastPromptAt = Number(hostApprovalPromptedAt.get(id)) || 0;
+    return now - lastPromptAt >= HOST_APPROVAL_PROMPT_COOLDOWN_MS;
+  });
+  if (!nextPrompt) return;
+
+  const requestId = String(nextPrompt.id || "").trim();
+  if (!requestId) return;
+
+  hostApprovalPromptedAt.set(requestId, now);
+  hostApprovalPromptActive = true;
+
+  const clientName = String(nextPrompt.clientName || "Client computer").trim() || "Client computer";
+  const clientHost = String(nextPrompt.clientHost || "").trim();
+  const requestedByIp = String(nextPrompt.requestedByIp || "").trim();
+  const clientVersion = String(nextPrompt.clientVersion || "").trim();
+  const requestedAt = Number(nextPrompt.createdAt);
+  const requestedAtText =
+    Number.isFinite(requestedAt) && requestedAt > 0 ? new Date(requestedAt).toLocaleString() : "Unknown time";
+
+  const detailLines = [
+    `${clientName} is requesting approval to connect as a Client.`,
+    "",
+    `Hostname: ${clientHost || "Unknown"}`,
+    `LAN IP: ${requestedByIp || "Unknown"}`,
+    `Client version: ${clientVersion || "Unknown"}`,
+    `Requested: ${requestedAtText}`,
+    "",
+    "Allow this computer to connect?",
+  ];
+
+  try {
+    const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const result = parentWindow
+      ? await dialog.showMessageBox(parentWindow, {
+          type: "question",
+          buttons: ["Approve", "Deny", "Later"],
+          defaultId: 0,
+          cancelId: 2,
+          message: "Approve Client Connection",
+          detail: detailLines.join("\n"),
+        })
+      : await dialog.showMessageBox({
+          type: "question",
+          buttons: ["Approve", "Deny", "Later"],
+          defaultId: 0,
+          cancelId: 2,
+          message: "Approve Client Connection",
+          detail: detailLines.join("\n"),
+        });
+
+    if (result.response === 0) {
+      await submitSetupApprovalDecisionFromHost(requestId, "approved", "Approved on the Main computer.");
+      hostApprovalPromptedAt.delete(requestId);
+      return;
+    }
+
+    if (result.response === 1) {
+      await submitSetupApprovalDecisionFromHost(requestId, "denied", "Denied on the Main computer.");
+      hostApprovalPromptedAt.delete(requestId);
+      return;
+    }
+  } catch {
+    // ignore prompt failures; polling will retry.
+  } finally {
+    hostApprovalPromptActive = false;
+  }
+}
+
+function stopHostSetupApprovalPolling() {
+  if (hostApprovalPollInterval) {
+    clearInterval(hostApprovalPollInterval);
+    hostApprovalPollInterval = null;
+  }
+  hostApprovalPromptActive = false;
+  hostApprovalPromptedAt.clear();
+}
+
+function startHostSetupApprovalPolling(config) {
+  if (config?.mode !== "host") {
+    stopHostSetupApprovalPolling();
+    return;
+  }
+  if (hostApprovalPollInterval) return;
+
+  const poll = () => {
+    void maybePromptForPendingHostApproval();
+  };
+  poll();
+  hostApprovalPollInterval = setInterval(poll, HOST_APPROVAL_POLL_INTERVAL_MS);
+}
+
+function normalizeSmsRecipient(phone) {
+  const raw = String(phone || "").trim();
+  if (!raw) return "";
+  return raw.replace(/[^\d+,;]/g, "");
+}
+
+function buildSmsUris(phone, message) {
+  const recipient = normalizeSmsRecipient(phone);
+  const body = encodeURIComponent(String(message || "").trim());
+  if (!recipient) return [];
+
+  const withQuery = body ? `sms:${recipient}?body=${body}` : `sms:${recipient}`;
+  const withAmp = body ? `sms:${recipient}&body=${body}` : `sms:${recipient}`;
+  return Array.from(new Set([withQuery, withAmp]));
+}
+
+async function openSmsDraft(payload) {
+  const recipient = normalizeSmsRecipient(payload?.phone);
+  const message = String(payload?.message || "").trim();
+
+  if (!recipient) {
+    return { ok: false, message: "A patient phone number is required to draft an SMS." };
+  }
+  if (!message) {
+    return { ok: false, message: "Message text is empty." };
+  }
+
+  const uris = buildSmsUris(recipient, message);
+  if (uris.length === 0) {
+    return { ok: false, message: "Could not build an SMS draft link." };
+  }
+
+  let lastError = null;
+  for (const uri of uris) {
+    try {
+      await shell.openExternal(uri);
+      return { ok: true, uri };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  return { ok: false, message: String(lastError?.message || lastError || "Could not open SMS app.") };
 }
 
 async function testHostConnection(hostUrl, pairingCode) {
@@ -1996,6 +2352,10 @@ ipcMain.handle("otto:connection:test", async (_event, payload) => {
   return await testHostConnection(hostUrl, pairingCode);
 });
 
+ipcMain.handle("otto:setup:approval:request", async (_event, payload) => {
+  return await requestHostSetupApproval(payload || {});
+});
+
 ipcMain.handle("otto:hosts:discover", async (_event, payload) => {
   return await discoverHosts(payload);
 });
@@ -2050,6 +2410,10 @@ ipcMain.handle("otto:diagnostics:show", async () => {
 ipcMain.handle("otto:supportBundle:export", async () => {
   await exportSupportBundle();
   return { ok: true };
+});
+
+ipcMain.handle("otto:sms:draft:open", async (_event, payload) => {
+  return await openSmsDraft(payload || {});
 });
 
 function computeHostInfo() {
@@ -2779,6 +3143,7 @@ app.whenReady().then(async () => {
       ? `${app.isPackaged ? "https" : "http"}://127.0.0.1:${port}`
       : config.hostUrl;
   createWindow(targetUrl, config);
+  startHostSetupApprovalPolling(config);
 
   if (bootWindow) {
     bootWindow.close();
@@ -2793,6 +3158,10 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  stopHostSetupApprovalPolling();
 });
 
 app.on("second-instance", (_event, argv) => {
@@ -2836,4 +3205,5 @@ app.on("activate", () => {
       ? `${app.isPackaged ? "https" : "http"}://127.0.0.1:${port}`
       : config.hostUrl;
   createWindow(targetUrl, config);
+  startHostSetupApprovalPolling(config);
 });

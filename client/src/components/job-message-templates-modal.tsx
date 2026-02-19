@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { getColorForBadge } from "@/lib/default-colors";
 import { renderMessageTemplate } from "@/lib/message-templates";
-import { Copy, MessageSquareText } from "lucide-react";
+import { Copy, MessageSquareText, Send } from "lucide-react";
+import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import type { Job, Office } from "@shared/schema";
 
 interface JobMessageTemplatesModalProps {
@@ -42,7 +43,14 @@ export default function JobMessageTemplatesModal({
   const customOrderDestinations = Array.isArray(settings.customOrderDestinations)
     ? settings.customOrderDestinations
     : [];
-  const smsTemplates = (settings.smsTemplates || {}) as Record<string, string>;
+  const smsTemplates = useMemo(
+    () =>
+      ensureReadyForPickupTemplate(
+        settings.smsTemplates && typeof settings.smsTemplates === "object" ? settings.smsTemplates : {},
+        customStatuses,
+      ),
+    [settings.smsTemplates, customStatuses],
+  );
 
   const statusLabel = useMemo(
     () => getLabelFromSettings(customStatuses, job.status),
@@ -86,6 +94,7 @@ export default function JobMessageTemplatesModal({
     () => renderMessageTemplate(templateForStatus, variables),
     [templateForStatus, variables],
   );
+  const canDraftSms = Boolean((job.phone || "").trim()) && Boolean((renderedMessage || "").trim());
 
   const badgeColors = useMemo(() => getColorForBadge(statusColor), [statusColor]);
 
@@ -102,6 +111,58 @@ export default function JobMessageTemplatesModal({
     }
   };
 
+  const handleOpenSmsDraft = async () => {
+    const phone = (job.phone || "").trim();
+    if (!phone) {
+      toast({
+        title: "Phone number needed",
+        description: "Add a patient phone number to draft an SMS.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!renderedMessage.trim()) {
+      toast({
+        title: "No message to draft",
+        description: "Configure a template for this status first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const bridge = (window as any)?.otto;
+    if (bridge?.openSmsDraft) {
+      const result = await bridge.openSmsDraft({
+        phone,
+        message: renderedMessage,
+      });
+      if (result?.ok) {
+        toast({ title: "Draft opened", description: "Opened your default messaging app with a draft SMS." });
+      } else {
+        toast({
+          title: "Could not open messaging app",
+          description: result?.message || "Please use Copy instead.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+
+    const recipient = phone.replace(/[^\d+,;]/g, "");
+    if (!recipient) {
+      toast({
+        title: "Invalid phone number",
+        description: "Please update the patient phone number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const smsUrl = `sms:${recipient}?body=${encodeURIComponent(renderedMessage)}`;
+    window.location.href = smsUrl;
+    toast({ title: "Draft opened", description: "Opening your device messaging app..." });
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -114,7 +175,7 @@ export default function JobMessageTemplatesModal({
             Message Templates
           </DialogTitle>
           <DialogDescription>
-            Preview and copy a message for this job. Otto Tracker doesn’t send texts automatically.
+            Preview and draft a message for this job in your default messaging app. Otto Tracker doesn’t send texts automatically.
           </DialogDescription>
         </DialogHeader>
 
@@ -140,15 +201,26 @@ export default function JobMessageTemplatesModal({
                     Uses the template configured in Settings → Messages.
                   </p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleCopy}
-                  disabled={!renderedMessage}
-                  data-testid="button-copy-job-message"
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    onClick={handleOpenSmsDraft}
+                    disabled={!canDraftSms}
+                    data-testid="button-open-sms-draft"
+                  >
+                    <Send className="mr-2 h-4 w-4" />
+                    Draft SMS
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleCopy}
+                    disabled={!renderedMessage}
+                    data-testid="button-copy-job-message"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
 
               <div
@@ -157,6 +229,11 @@ export default function JobMessageTemplatesModal({
               >
                 {renderedMessage}
               </div>
+              {!job.phone?.trim() && (
+                <p className="text-xs text-muted-foreground">
+                  Add a patient phone number on the job to enable the <b>Draft SMS</b> action.
+                </p>
+              )}
             </div>
           ) : (
             <div className="p-8 text-center bg-muted rounded-lg">
@@ -171,4 +248,3 @@ export default function JobMessageTemplatesModal({
     </Dialog>
   );
 }
-

@@ -12,7 +12,7 @@ import { getColorForBadge, getDefaultDestinationColor, getDefaultJobTypeColor, g
 import { formatPatientDisplayName } from "@shared/name-format";
 import type { Job, Office } from "@shared/schema";
 
-export type JobDetailsTab = "overview" | "comments" | "history";
+export type JobDetailsTab = "overview" | "comments";
 
 interface JobStatusHistoryEntry {
   id: string;
@@ -143,7 +143,7 @@ export default function JobDetailsModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-full max-w-5xl h-[86vh] max-h-[86vh] flex flex-col" data-testid="dialog-job-details">
-        <DialogHeader className="space-y-3">
+        <DialogHeader className="space-y-3 pr-12">
           <div className="flex items-start justify-between gap-3">
             <div>
               <DialogTitle className="text-2xl">{patientDisplayName}</DialogTitle>
@@ -175,7 +175,7 @@ export default function JobDetailsModal({
 
             <Button
               onClick={() => onEditJob(job)}
-              className="shrink-0"
+              className="shrink-0 mr-6"
               data-testid={`button-edit-job-details-${job.id}`}
             >
               <Edit className="mr-2 h-4 w-4" />
@@ -189,7 +189,7 @@ export default function JobDetailsModal({
           onValueChange={(value) => onActiveTabChange(value as JobDetailsTab)}
           className="flex-1 flex flex-col min-h-0"
         >
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="overview" data-testid="tab-job-details-overview">
               <FileText className="mr-2 h-4 w-4" />
               Overview
@@ -198,89 +198,139 @@ export default function JobDetailsModal({
               <MessageSquare className="mr-2 h-4 w-4" />
               Comments
             </TabsTrigger>
-            <TabsTrigger value="history" data-testid="tab-job-details-history">
-              <History className="mr-2 h-4 w-4" />
-              History
-            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="space-y-4 rounded-md border border-border p-4">
-                <h3 className="font-semibold">Job details</h3>
-                <div className="space-y-3 text-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">{useTrayNumber ? "Tray #" : "Patient"}</span>
-                    <span className="font-medium text-right">{patientDisplayName}</span>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4 rounded-md border border-border p-4">
+                  <h3 className="font-semibold">Job details</h3>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-muted-foreground">{useTrayNumber ? "Tray #" : "Patient"}</span>
+                      <span className="font-medium text-right">{patientDisplayName}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-muted-foreground">Phone</span>
+                      <span className="font-medium text-right">{job.phone || "—"}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-muted-foreground">Job Type</span>
+                      <span className="font-medium text-right">{getJobTypeLabel(job.jobType)}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-muted-foreground">Status</span>
+                      <span className="font-medium text-right">{getStatusLabel(job.status)}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-muted-foreground">Destination</span>
+                      <span className="font-medium text-right">{getDestinationLabel(job.orderDestination)}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-muted-foreground">Created</span>
+                      <span className="font-medium text-right">
+                        {format(new Date(job.createdAt), "MMM d, yyyy h:mm a")}
+                      </span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-muted-foreground">Last updated</span>
+                      <span className="font-medium text-right">
+                        {format(new Date(job.updatedAt), "MMM d, yyyy h:mm a")}
+                      </span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-muted-foreground">Status changed</span>
+                      <span className="font-medium text-right">
+                        {format(new Date(job.statusChangedAt || job.createdAt), "MMM d, yyyy h:mm a")}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Phone</span>
-                    <span className="font-medium text-right">{job.phone || "—"}</span>
+                </div>
+
+                <div className="space-y-4 rounded-md border border-border p-4">
+                  <h3 className="font-semibold">Notes & custom fields</h3>
+
+                  <div className="space-y-2 text-sm">
+                    <p className="text-muted-foreground">Notes</p>
+                    <div className="rounded-md border border-border bg-muted/40 p-3 min-h-[80px]">
+                      {job.notes?.trim() ? (
+                        <p className="whitespace-pre-wrap">{job.notes}</p>
+                      ) : (
+                        <p className="text-muted-foreground">No notes added.</p>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Job Type</span>
-                    <span className="font-medium text-right">{getJobTypeLabel(job.jobType)}</span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Status</span>
-                    <span className="font-medium text-right">{getStatusLabel(job.status)}</span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Destination</span>
-                    <span className="font-medium text-right">{getDestinationLabel(job.orderDestination)}</span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Created</span>
-                    <span className="font-medium text-right">
-                      {format(new Date(job.createdAt), "MMM d, yyyy h:mm a")}
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Last updated</span>
-                    <span className="font-medium text-right">
-                      {format(new Date(job.updatedAt), "MMM d, yyyy h:mm a")}
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Status changed</span>
-                    <span className="font-medium text-right">
-                      {format(new Date(job.statusChangedAt || job.createdAt), "MMM d, yyyy h:mm a")}
-                    </span>
-                  </div>
+
+                  {customColumns.length > 0 ? (
+                    <div className="space-y-2">
+                      {customColumns.map((column) => {
+                        const value = (job.customColumnValues as Record<string, any>)?.[column.id];
+                        const displayValue =
+                          column.type === "checkbox" ? (value ? "Yes" : "No") : value || "—";
+
+                        return (
+                          <div key={column.id} className="flex items-start justify-between gap-3 text-sm">
+                            <span className="text-muted-foreground">{column.name}</span>
+                            <span className="font-medium text-right">{displayValue}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No custom fields configured.</p>
+                  )}
                 </div>
               </div>
 
-              <div className="space-y-4 rounded-md border border-border p-4">
-                <h3 className="font-semibold">Notes & custom fields</h3>
-
-                <div className="space-y-2 text-sm">
-                  <p className="text-muted-foreground">Notes</p>
-                  <div className="rounded-md border border-border bg-muted/40 p-3 min-h-[80px]">
-                    {job.notes?.trim() ? (
-                      <p className="whitespace-pre-wrap">{job.notes}</p>
-                    ) : (
-                      <p className="text-muted-foreground">No notes added.</p>
-                    )}
-                  </div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <History className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="font-semibold">Status history</h3>
                 </div>
 
-                {customColumns.length > 0 ? (
-                  <div className="space-y-2">
-                    {customColumns.map((column) => {
-                      const value = (job.customColumnValues as Record<string, any>)?.[column.id];
-                      const displayValue =
-                        column.type === "checkbox" ? (value ? "Yes" : "No") : value || "—";
+                {historyLoading ? (
+                  <div className="rounded-md border border-border p-6 text-center text-muted-foreground">
+                    Loading history...
+                  </div>
+                ) : statusHistory.length === 0 ? (
+                  <div className="rounded-md border border-border p-6 text-center text-muted-foreground">
+                    No status history available for this job.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {statusHistory.map((entry) => {
+                      const actorName =
+                        entry.changedByUser?.firstName || entry.changedByUser?.lastName
+                          ? `${entry.changedByUser?.firstName || ""} ${entry.changedByUser?.lastName || ""}`.trim()
+                          : "System";
+                      const oldLabel = entry.oldStatus ? getStatusLabel(entry.oldStatus) : "Created";
+                      const newLabel = getStatusLabel(entry.newStatus);
 
                       return (
-                        <div key={column.id} className="flex items-start justify-between gap-3 text-sm">
-                          <span className="text-muted-foreground">{column.name}</span>
-                          <span className="font-medium text-right">{displayValue}</span>
+                        <div
+                          key={entry.id}
+                          className="rounded-md border border-border bg-card px-4 py-3 flex items-start justify-between gap-4"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">
+                              {entry.oldStatus ? `${oldLabel} → ${newLabel}` : `Initial status: ${newLabel}`}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground flex items-center gap-2">
+                              <span className="inline-flex items-center gap-1">
+                                <Clock3 className="h-3 w-3" />
+                                {format(new Date(entry.changedAt), "MMM d, yyyy h:mm a")}
+                              </span>
+                              <span>•</span>
+                              <span>{actorName}</span>
+                            </p>
+                          </div>
+                          <div className="shrink-0 text-muted-foreground">
+                            <History className="h-4 w-4" />
+                          </div>
                         </div>
                       );
                     })}
                   </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No custom fields configured.</p>
                 )}
               </div>
             </div>
@@ -300,50 +350,6 @@ export default function JobDetailsModal({
             </div>
           </TabsContent>
 
-          <TabsContent value="history" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
-            {historyLoading ? (
-              <div className="h-full flex items-center justify-center text-muted-foreground">Loading history...</div>
-            ) : statusHistory.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-muted-foreground">
-                No status history available for this job.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {statusHistory.map((entry) => {
-                  const actorName =
-                    entry.changedByUser?.firstName || entry.changedByUser?.lastName
-                      ? `${entry.changedByUser?.firstName || ""} ${entry.changedByUser?.lastName || ""}`.trim()
-                      : "System";
-                  const oldLabel = entry.oldStatus ? getStatusLabel(entry.oldStatus) : "Created";
-                  const newLabel = getStatusLabel(entry.newStatus);
-
-                  return (
-                    <div
-                      key={entry.id}
-                      className="rounded-md border border-border bg-card px-4 py-3 flex items-start justify-between gap-4"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">
-                          {entry.oldStatus ? `${oldLabel} → ${newLabel}` : `Initial status: ${newLabel}`}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1">
-                            <Clock3 className="h-3 w-3" />
-                            {format(new Date(entry.changedAt), "MMM d, yyyy h:mm a")}
-                          </span>
-                          <span>•</span>
-                          <span>{actorName}</span>
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-muted-foreground">
-                        <History className="h-4 w-4" />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </TabsContent>
         </Tabs>
       </DialogContent>
     </Dialog>

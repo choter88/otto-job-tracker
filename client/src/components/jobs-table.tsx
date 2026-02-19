@@ -25,6 +25,8 @@ import { format } from "date-fns";
 import { getDefaultStatusColor, getDefaultJobTypeColor, getDefaultDestinationColor, getColorForBadge } from "@/lib/default-colors";
 import { cn } from "@/lib/utils";
 import { formatPatientDisplayName } from "@shared/name-format";
+import { renderMessageTemplate } from "@/lib/message-templates";
+import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 
 interface JobsTableProps {
   jobs: Job[];
@@ -33,7 +35,20 @@ interface JobsTableProps {
 
 interface OpenJobEventDetail {
   jobId?: string;
-  panel?: JobDetailsTab;
+  panel?: JobDetailsTab | "history";
+}
+
+function getLabelFromSettings(list: any[], value: string): string {
+  if (!value) return "";
+  if (!Array.isArray(list) || list.length === 0) return value;
+
+  const byId = list.find((item) => item?.id === value);
+  if (byId?.label) return String(byId.label);
+
+  const byLabel = list.find((item) => String(item?.label || "").toLowerCase() === value.toLowerCase());
+  if (byLabel?.label) return String(byLabel.label);
+
+  return value;
 }
 
 export default function JobsTable({ jobs, loading }: JobsTableProps) {
@@ -377,9 +392,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
       if (match) {
         const requestedPanel = event?.detail?.panel;
         const panel: JobDetailsTab =
-          requestedPanel === "comments" || requestedPanel === "history" || requestedPanel === "overview"
-            ? requestedPanel
-            : "overview";
+          requestedPanel === "comments" || requestedPanel === "overview" ? requestedPanel : "overview";
         handleOpenJobDetails(match, panel);
         return;
       }
@@ -401,6 +414,64 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     setSelectedMessagesJobId(job.id);
     setMessageTemplatesOpen(true);
   }, []);
+
+  const composeMessageForJob = useCallback(
+    (job: Job) => {
+      const settings = (office?.settings || {}) as any;
+      const templates = ensureReadyForPickupTemplate(
+        settings.smsTemplates && typeof settings.smsTemplates === "object" ? settings.smsTemplates : {},
+        customStatuses,
+      );
+      const template = (templates?.[job.status] || "").trim();
+      if (!template) return "";
+
+      const statusLabel = getLabelFromSettings(customStatuses, job.status);
+      const jobTypeLabel = getLabelFromSettings(customJobTypes, job.jobType);
+      const destinationLabel = getLabelFromSettings(customOrderDestinations, job.orderDestination);
+      const firstName = (job.patientFirstName || "").trim();
+      const lastName = (job.patientLastName || "").trim();
+
+      return renderMessageTemplate(template, {
+        patient_first_name: firstName,
+        patient_last_name: lastName,
+        patient_name: `${firstName} ${lastName}`.trim(),
+        order_id: job.orderId || "",
+        tray_number: job.trayNumber || "",
+        job_type: jobTypeLabel,
+        status: statusLabel,
+        destination: destinationLabel,
+        office_name: office?.name || "",
+        office_phone: office?.phone || "",
+      }).trim();
+    },
+    [office?.settings, office?.name, office?.phone, customStatuses, customJobTypes, customOrderDestinations],
+  );
+
+  const handleMessagesAction = useCallback(
+    async (job: Job) => {
+      const message = composeMessageForJob(job);
+      const phone = String(job.phone || "").trim();
+      const bridge = (window as any)?.otto;
+
+      if (message && phone && bridge?.openSmsDraft) {
+        try {
+          const result = await bridge.openSmsDraft({ phone, message });
+          if (result?.ok) {
+            toast({
+              title: "Draft opened",
+              description: "Opened your default messaging app with an SMS draft.",
+            });
+            return;
+          }
+        } catch {
+          // Fall through to modal for manual copy/draft.
+        }
+      }
+
+      handleOpenMessageTemplates(job);
+    },
+    [composeMessageForJob, handleOpenMessageTemplates, toast],
+  );
 
   useEffect(() => {
     if (jobDetailsOpen && !selectedJobForDetails) {
@@ -1033,7 +1104,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            onSelect={() => handleOpenMessageTemplates(job)}
+                            onSelect={() => void handleMessagesAction(job)}
                             data-testid={`menu-messages-${job.id}`}
                           >
                             Messages

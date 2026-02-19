@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
 import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, chooseHighContrastColor, getColorForBadge, hexToHSL } from "@/lib/default-colors";
+import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import type { Office } from "@shared/schema";
 import {
   DndContext,
@@ -222,7 +223,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
       setCustomJobTypes(mergedTypes);
       setCustomOrderDestinations(existingDestinations);
       setCustomColumns(existingColumns);
-      setMessageTemplates(existingTemplates);
+      setMessageTemplates(ensureReadyForPickupTemplate(existingTemplates, mergedStatuses));
       setJobIdentifierMode(settings.jobIdentifierMode === "trayNumber" ? "trayNumber" : "patientName");
     }
   }, [office]);

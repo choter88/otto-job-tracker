@@ -18,6 +18,7 @@ app.use((req, res, next) => {
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
 
   if (!req.path.startsWith("/api")) return next();
+  if (req.path.startsWith("/api/setup/handshake")) return next();
 
   // Always allow authentication + licensing + initial bootstrap.
   const allowlist = new Set([

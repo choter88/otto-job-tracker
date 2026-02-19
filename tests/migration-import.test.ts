@@ -204,3 +204,105 @@ test("synthesizes legacy non-login users for missing references", () => {
     assert.equal(row.role, "view_only");
   }
 });
+
+test("normalizes imported settings for colors and message templates", () => {
+  const snapshot = {
+    format: "otto-snapshot",
+    version: 1,
+    exportedAt: new Date(NOW).toISOString(),
+    office: {
+      ...baseOffice(),
+      settings: {
+        jobStatuses: [
+          { key: "ordered", name: "Ordered", colorHex: "#D97706" },
+          { key: "ready_for_pickup", name: "Ready for Pickup", colorHex: "#16A34A" },
+        ],
+        jobTypes: [{ value: "contacts", title: "Contacts" }],
+        jobTypeColors: {
+          contacts: "#1D4ED8",
+        },
+        orderDestinations: [{ name: "Vision Lab", color: { hex: "#0284C7" } }],
+        messageTemplates: {
+          ReadyForPickup: "Your order #{order_id} is ready for pickup.",
+        },
+      },
+    },
+    users: [
+      {
+        id: "owner-1",
+        email: "owner@demo.com",
+        password: "abcd.efgh",
+        firstName: "Owner",
+        lastName: "Demo",
+        role: "owner",
+        officeId: "office-1",
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ],
+    jobs: [
+      {
+        id: "job-1",
+        orderId: "ORDER-1",
+        patientFirstName: "A",
+        patientLastName: "Patient",
+        jobType: "contacts",
+        status: "ready_for_pickup",
+        orderDestination: "Vision Lab",
+        officeId: "office-1",
+        createdBy: "owner-1",
+        customColumnValues: {},
+        isRedoJob: false,
+        statusChangedAt: NOW,
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ],
+    archivedJobs: [],
+    jobComments: [],
+    commentReads: [],
+    jobFlags: [],
+    jobStatusHistory: [],
+    notificationRules: [],
+  };
+
+  importSnapshotV1({
+    snapshot,
+    admin: {
+      email: "owner@demo.com",
+      firstName: "Owner",
+      lastName: "Demo",
+      passwordHash: "abcd.efgh",
+    },
+    staffCodeHash: "staff-hash",
+    activationCodeLast4: "1234",
+    activationVerifiedAt: NOW,
+    now: NOW,
+  });
+
+  const officeRow = sqlite.prepare("SELECT settings FROM offices WHERE id = ?").get("office-1") as any;
+  assert.ok(officeRow?.settings);
+  const settings = JSON.parse(String(officeRow.settings || "{}"));
+
+  assert.ok(Array.isArray(settings.customStatuses));
+  assert.ok(Array.isArray(settings.customJobTypes));
+  assert.ok(Array.isArray(settings.customOrderDestinations));
+
+  const readyStatus = settings.customStatuses.find((s: any) => s.id === "ready_for_pickup");
+  assert.ok(readyStatus);
+  assert.equal(readyStatus.color, "#16A34A");
+
+  const contactsType = settings.customJobTypes.find((t: any) => t.id === "contacts");
+  assert.ok(contactsType);
+  assert.equal(contactsType.color, "#1D4ED8");
+
+  const visionDestination = settings.customOrderDestinations.find((d: any) => d.label === "Vision Lab");
+  assert.ok(visionDestination);
+  assert.equal(visionDestination.color, "#0284C7");
+
+  assert.ok(settings.smsTemplates);
+  assert.equal(
+    settings.smsTemplates.ready_for_pickup,
+    "Your order #{order_id} is ready for pickup.",
+  );
+});
