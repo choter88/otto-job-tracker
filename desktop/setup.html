@@ -229,8 +229,9 @@
       }
 
       function setConnectionBusy(isBusy) {
-        if (testBtn) testBtn.disabled = !!isBusy;
-        if (discoverBtn) discoverBtn.disabled = !!isBusy;
+        // Keep action buttons clickable so users can retry immediately.
+        // We intentionally avoid toggling disabled state here.
+        void isBusy;
       }
 
       hostUrl.addEventListener("input", resetTestStatus);
@@ -249,8 +250,6 @@
           return;
         }
 
-        if (discoverBtn) discoverBtn.disabled = true;
-        if (testBtn) testBtn.disabled = true;
         clearDiscoveredHosts();
         setDiscoverStatus("Scanning the office network for the Main computer...");
 
@@ -264,7 +263,10 @@
           discoveredHosts = hosts;
 
           if (hosts.length === 0) {
-            setDiscoverStatus("No Main computer found. Confirm it is open and on the same office network.", "err");
+            setDiscoverStatus(
+              "No Main computer found. Make sure the Host computer has Otto running and try again. If that fails, enter the Host address and Pairing code manually from File → Show Host Address….",
+              "err",
+            );
             return;
           }
 
@@ -279,12 +281,12 @@
           applyDiscoveredHostByIndex(0, { runTest: false });
         } catch {
           clearDiscoveredHosts();
-          setDiscoverStatus("Auto-detect failed. Enter the Main computer address manually.", "err");
-        } finally {
-          if (discoverBtn) discoverBtn.disabled = false;
-          if (testBtn) testBtn.disabled = false;
-          render();
+          setDiscoverStatus(
+            "Auto-detect failed. Make sure the Host computer has Otto running and try again. If that fails, enter the Host address and Pairing code manually from File → Show Host Address….",
+            "err",
+          );
         }
+        render();
       }
 
       async function runConnectionTest() {
