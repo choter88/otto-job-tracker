@@ -94,7 +94,7 @@ export default function JobMessageTemplatesModal({
     () => renderMessageTemplate(templateForStatus, variables),
     [templateForStatus, variables],
   );
-  const canDraftSms = Boolean((job.phone || "").trim()) && Boolean((renderedMessage || "").trim());
+  const canDraftSms = Boolean((renderedMessage || "").trim());
 
   const badgeColors = useMemo(() => getColorForBadge(statusColor), [statusColor]);
 
@@ -230,8 +230,8 @@ export default function JobMessageTemplatesModal({
                 {renderedMessage}
               </div>
               {!job.phone?.trim() && (
-                <p className="text-xs text-muted-foreground">
-                  Add a patient phone number on the job to enable the <b>Draft SMS</b> action.
+                <p className="text-xs text-destructive">
+                  No patient phone number is attached to this job. Add a phone number before sending an SMS draft.
                 </p>
               )}
             </div>

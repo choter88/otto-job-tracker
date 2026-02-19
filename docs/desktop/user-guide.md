@@ -16,7 +16,8 @@
    - Enter your **Activation Code** (from the billing portal). Tip: if you used an activation link, the code may auto-fill.
    - Enter your **office details**
    - Create the first **Admin login** (this is local to your office — it does not need to match the billing portal login)
-4. Otto Tracker will show a **Staff code**. Save it — your team will need it to create their logins.
+4. After setup completes, sign in and open **Team** to generate/copy a **Staff code**.
+   - Team members will need this code once to create their logins.
 
 ## Step 2 — Find the Host address
 
@@ -33,12 +34,15 @@ You’ll use one of those on each Client computer.
 
 1. Install and open Otto Tracker.
 2. Choose **“This computer is a Client”**.
-3. Paste the **Host address** into the box.
-4. Enter the **Pairing code** (from the Host).
-5. Click **Test Connection**.
-6. If it says **Connection successful**, click **Save & Restart**.
+3. Click **Auto-detect Main Computer** (recommended), or enter values manually:
+   - Paste the **Host address** into the box
+   - Enter the **Pairing code** (from the Host)
+4. Click **Test Connection**.
+5. Approve the request on the **Host** when prompted.
+6. If it says **Connection approved**, click **Save & Restart**.
 7. Sign in (existing user) or create a new login:
    - To create a new login, the user needs the **Staff code** from the office owner/admin.
+   - New account setup requires password + confirm password.
 
 ### Windows note (one-time)
 
@@ -84,6 +88,7 @@ This replaces the Host’s current data with the backup.
 - Confirm both computers are on the same Wi‑Fi/network.
 - Try a different Host address from **Show Host Address…**
 - Re-check the **Pairing code** (Client setup screen) matches the Host.
+- If auto-detect does not find the Host, manually copy both values from **File → Show Host Address…** on the Host.
 
 ## If the office network drops briefly
 

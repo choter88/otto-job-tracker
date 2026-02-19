@@ -41,14 +41,15 @@ Backups should go to a shared office network folder (not the Host’s local driv
 4. Use **File → Show Host Address…** and save:
    - Host address
    - Pairing code
-   - Staff code (from setup)
+5. In **Team**, generate/copy a Staff code for new user sign-ups.
 
 ### D) Install + connect each Client
 
 1. Install Otto Tracker and choose **Client**.
-2. Paste Host address + Pairing code.
-3. Click **Test Connection**, then **Save & Restart**.
-4. Each team member signs in (existing) or creates a login using the Staff code (one time).
+2. Try **Auto-detect Main Computer** first.
+3. If needed, paste Host address + Pairing code manually.
+4. Click **Test Connection** and approve on Host when prompted, then **Save & Restart**.
+5. Each team member signs in (existing) or creates a login using the Staff code (one time; password + confirm password required).
 
 Windows note:
 - If Windows asks to allow network access for Otto Tracker, choose **Allow** (Private network).
@@ -59,4 +60,3 @@ Windows note:
 - Was “Host address + pairing code” easy to understand?
 - Did daily backups get set up successfully?
 - Any moments where they expected something to work and it didn’t?
-

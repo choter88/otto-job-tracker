@@ -11,8 +11,7 @@ import {
   BarChart3, 
   Users, 
   Star,
-  ChevronLeft,
-  ChevronRight
+  PanelLeft
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Job, Office } from "@shared/schema";
@@ -145,7 +144,7 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             data-testid="button-toggle-sidebar"
           >
-            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            <PanelLeft className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -178,7 +177,7 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                   className={cn(
                     "text-xs",
                     collapsed
-                      ? "absolute top-1 right-1 h-5 min-w-5 px-1 flex items-center justify-center"
+                      ? "absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 text-[10px] leading-none flex items-center justify-center z-10"
                       : "",
                   )}
                   data-testid={`badge-${item.id}`}

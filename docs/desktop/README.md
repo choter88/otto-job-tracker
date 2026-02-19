@@ -26,6 +26,7 @@ The simplest desktop conversion keeps the web UI and API exactly as-is, but runs
 - Does **not** store the office database locally (may temporarily store a small **encrypted offline queue** to sync writes)
 - Opens a desktop window pointed at the Host’s URL (for example `https://SOT-IP:5150`) — no separate browser required
 - First-time connection uses a **pairing code** (shown on the Host) to trust the Host certificate
+- During setup, Client can auto-detect the Host, then requires Host-side approval before saving the connection
 
 This matches your “single source of truth” idea and avoids complex multi-writer sync.
 
@@ -66,7 +67,7 @@ Details: `docs/security/hipaa.md`.
 - Package as a desktop app (recommended: Electron) that launches the local server + opens the UI.
 
 ### Phase 2 — LAN clients (baseline implemented)
-- “Connect to host” UX (saved host address + pairing code).
+- “Connect to host” UX (auto-detect or saved host address + pairing code + Host approval).
 - HTTPS from the host (self-issued cert + pinning in the desktop client).
 - Backup/restore flows (Host menu).
 
