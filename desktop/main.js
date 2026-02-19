@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage, screen, shell } from "electron";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -33,6 +33,13 @@ let mainWindow = null;
 let appReadyForOpenEvents = false;
 const pendingOpenUrls = [];
 const pendingOpenFiles = [];
+const MAIN_WINDOW_BASE_WIDTH = 1320;
+const MAIN_WINDOW_BASE_HEIGHT = 864;
+const MAIN_WINDOW_BASE_MIN_WIDTH = 1320;
+const MAIN_WINDOW_BASE_MIN_HEIGHT = 864;
+const HOST_DISCOVERY_TIMEOUT_MS = 1200;
+const HOST_DISCOVERY_CONCURRENCY = 36;
+const HOST_DISCOVERY_MAX_CANDIDATES = 1024;
 
 process.on("uncaughtException", (error) => {
   logStartup("Uncaught exception", error);
@@ -407,6 +414,263 @@ function isLocalHostname(hostname) {
   if (!h.includes(".")) return true;
   if (h.endsWith(".local")) return true;
   return false;
+}
+
+function normalizeDiscoveryHostUrl(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw)) return raw;
+  return `https://${raw}`;
+}
+
+function getLocalSubnetHostCandidates() {
+  const nets = os.networkInterfaces();
+  const hosts = new Set();
+
+  for (const iface of Object.values(nets).flat().filter(Boolean)) {
+    if (iface.family !== "IPv4" || iface.internal) continue;
+    if (!isPrivateIpv4(iface.address)) continue;
+
+    const octets = iface.address.split(".").map((part) => Number(part));
+    if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+      continue;
+    }
+
+    const [a, b, c, self] = octets;
+    for (let host = 1; host <= 254; host += 1) {
+      if (host === self) continue;
+      hosts.add(`${a}.${b}.${c}.${host}`);
+      if (hosts.size >= HOST_DISCOVERY_MAX_CANDIDATES) {
+        return Array.from(hosts);
+      }
+    }
+  }
+
+  return Array.from(hosts);
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+
+  const output = [];
+  const limit = Math.max(1, Math.min(concurrency, items.length));
+  let index = 0;
+
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const currentIndex = index;
+      index += 1;
+      if (currentIndex >= items.length) break;
+      const value = await worker(items[currentIndex], currentIndex);
+      if (value) output.push(value);
+    }
+  });
+
+  await Promise.all(runners);
+  return output;
+}
+
+async function requestJsonWithFingerprint(targetUrl, timeoutMs = HOST_DISCOVERY_TIMEOUT_MS) {
+  let url;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return { ok: false, status: 0, json: null, fingerprintHex: "", error: "Invalid URL" };
+  }
+
+  const isHttps = url.protocol === "https:";
+  const client = isHttps ? https : http;
+  const port = url.port || (isHttps ? "443" : "80");
+
+  return await new Promise((resolve) => {
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const req = client.request(
+      {
+        hostname: url.hostname,
+        port,
+        path: `${url.pathname}${url.search}`,
+        method: "GET",
+        rejectUnauthorized: false,
+        headers: { Accept: "application/json" },
+      },
+      (res) => {
+        const fingerprintHex = isHttps
+          ? getPeerFingerprintHex(res.socket) || getPeerFingerprintHex(req.socket)
+          : "";
+        let body = "";
+
+        res.on("data", (chunk) => {
+          if (body.length < 262_144) {
+            body += chunk.toString();
+          }
+        });
+
+        res.on("end", () => {
+          const status = Number(res.statusCode) || 0;
+          let json = null;
+          try {
+            json = JSON.parse(body);
+          } catch {
+            json = null;
+          }
+
+          done({
+            ok: status >= 200 && status < 300,
+            status,
+            json,
+            fingerprintHex: fingerprintHex || "",
+            error: null,
+          });
+        });
+      },
+    );
+
+    req.on("error", (error) => {
+      done({
+        ok: false,
+        status: 0,
+        json: null,
+        fingerprintHex: "",
+        error: String(error?.message || error || "Network request failed"),
+      });
+    });
+
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error("Connection timed out"));
+    });
+
+    req.end();
+  });
+}
+
+async function probeHostForDiscovery({ protocol, port, host, pairingHex }) {
+  const origin = `${protocol}://${host}:${port}`;
+  const setupUrl = new URL("/api/setup/status", origin).toString();
+  const setupResult = await requestJsonWithFingerprint(setupUrl);
+
+  let setupJson = null;
+  if (setupResult.ok && setupResult.json && typeof setupResult.json === "object") {
+    setupJson = setupResult.json;
+  } else {
+    const healthUrl = new URL("/api/health", origin).toString();
+    const healthResult = await requestJsonWithFingerprint(healthUrl);
+    const healthOk = healthResult.ok && healthResult.json && healthResult.json.ok === true;
+    if (!healthOk) return null;
+    if (!setupResult.fingerprintHex && healthResult.fingerprintHex) {
+      setupResult.fingerprintHex = healthResult.fingerprintHex;
+    }
+  }
+
+  const fingerprintHex = normalizeFingerprint256Hex(setupResult.fingerprintHex);
+  if (protocol === "https") {
+    if (!fingerprintHex) return null;
+    if (pairingHex && !fingerprintHex.startsWith(pairingHex)) return null;
+  }
+
+  const officeName = typeof setupJson?.officeName === "string" ? setupJson.officeName.trim() : "";
+  const initialized = Boolean(setupJson?.initialized);
+  const pairingCode = protocol === "https" ? pairingCodeFromFingerprintHex(fingerprintHex) : "";
+
+  return {
+    url: origin,
+    protocol,
+    host,
+    port: Number(port) || 0,
+    officeName,
+    initialized,
+    pairingCode,
+    fingerprint256: protocol === "https" ? formatFingerprint256(fingerprintHex) : "",
+  };
+}
+
+async function discoverHosts(payload) {
+  const input = payload && typeof payload === "object" ? payload : {};
+  const defaultPort = Number(process.env.PORT) || 5150;
+  let protocol = "https";
+  let port = defaultPort;
+  let preferredHost = "";
+
+  const normalizedHostUrl = normalizeDiscoveryHostUrl(input.hostUrl);
+  if (normalizedHostUrl) {
+    try {
+      const parsed = new URL(normalizedHostUrl);
+      preferredHost = parsed.hostname || "";
+      protocol = parsed.protocol === "http:" ? "http" : "https";
+      const parsedPort = Number(parsed.port);
+      port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : protocol === "https" ? 443 : 80;
+    } catch {
+      // ignore invalid input and fall back to subnet scan defaults
+    }
+  }
+
+  const payloadProtocol = String(input.protocol || "").toLowerCase();
+  if (payloadProtocol === "http" || payloadProtocol === "https") {
+    protocol = payloadProtocol;
+  }
+
+  const payloadPort = Number(input.port);
+  if (Number.isFinite(payloadPort) && payloadPort > 0 && payloadPort <= 65535) {
+    port = payloadPort;
+  }
+
+  const pairingHex = normalizePairingCodeHex(input.pairingCode || "");
+  const candidates = [];
+  const seenHosts = new Set();
+  const pushCandidate = (host) => {
+    const normalized = String(host || "").trim();
+    if (!normalized || seenHosts.has(normalized)) return;
+    seenHosts.add(normalized);
+    candidates.push(normalized);
+  };
+
+  if (preferredHost) pushCandidate(preferredHost);
+  for (const host of getLocalSubnetHostCandidates()) {
+    pushCandidate(host);
+  }
+  if (candidates.length === 0) {
+    pushCandidate("127.0.0.1");
+    pushCandidate("localhost");
+  }
+
+  const startedAt = Date.now();
+  const discovered = await mapWithConcurrency(candidates, HOST_DISCOVERY_CONCURRENCY, async (host) => {
+    try {
+      return await probeHostForDiscovery({ protocol, port, host, pairingHex });
+    } catch {
+      return null;
+    }
+  });
+
+  const byUrl = new Map();
+  for (const item of discovered) {
+    if (item && !byUrl.has(item.url)) {
+      byUrl.set(item.url, item);
+    }
+  }
+
+  const hosts = Array.from(byUrl.values()).sort((a, b) => {
+    if (a.host === preferredHost && b.host !== preferredHost) return -1;
+    if (b.host === preferredHost && a.host !== preferredHost) return 1;
+    if (a.initialized !== b.initialized) return a.initialized ? -1 : 1;
+    if (a.officeName && b.officeName && a.officeName !== b.officeName) {
+      return a.officeName.localeCompare(b.officeName);
+    }
+    return a.host.localeCompare(b.host);
+  });
+
+  return {
+    ok: true,
+    protocol,
+    port,
+    scanMs: Date.now() - startedAt,
+    hosts,
+  };
 }
 
 async function testHostConnection(hostUrl, pairingCode) {
@@ -1025,15 +1289,71 @@ app.on("certificate-error", (event, webContents, url, _error, certificate, callb
   }
 });
 
+function getDisplayWorkAreaForBounds(bounds) {
+  try {
+    if (bounds) {
+      return screen.getDisplayMatching(bounds)?.workAreaSize || null;
+    }
+    return screen.getPrimaryDisplay()?.workAreaSize || null;
+  } catch {
+    return null;
+  }
+}
+
+function getMainWindowBaselineSize() {
+  const workArea = getDisplayWorkAreaForBounds();
+  const displayWidth = Number(workArea?.width) || MAIN_WINDOW_BASE_WIDTH;
+  const displayHeight = Number(workArea?.height) || MAIN_WINDOW_BASE_HEIGHT;
+
+  const minWidth = Math.min(MAIN_WINDOW_BASE_MIN_WIDTH, displayWidth);
+  const minHeight = Math.min(MAIN_WINDOW_BASE_MIN_HEIGHT, displayHeight);
+  const width = Math.max(minWidth, Math.min(MAIN_WINDOW_BASE_WIDTH, displayWidth));
+  const height = Math.max(minHeight, Math.min(MAIN_WINDOW_BASE_HEIGHT, displayHeight));
+
+  return { width, height, minWidth, minHeight };
+}
+
+function setMainWindowMinWidth(win, widthInput) {
+  if (!win || win.isDestroyed()) {
+    return { ok: false, message: "Main window is not available." };
+  }
+
+  const workArea = getDisplayWorkAreaForBounds(win.getBounds());
+  const displayWidth = Number(workArea?.width) || MAIN_WINDOW_BASE_WIDTH;
+  const currentBounds = win.getBounds();
+  const currentMinSize = win.getMinimumSize();
+
+  const baselineMinWidth = Math.min(MAIN_WINDOW_BASE_MIN_WIDTH, displayWidth);
+  const requestedWidth = Math.round(Number(widthInput));
+  const safeRequestedWidth = Number.isFinite(requestedWidth) ? requestedWidth : baselineMinWidth;
+  const nextMinWidth = Math.min(displayWidth, Math.max(baselineMinWidth, safeRequestedWidth));
+  const displayHeight = Number(workArea?.height) || MAIN_WINDOW_BASE_HEIGHT;
+  const baselineMinHeight = Math.min(MAIN_WINDOW_BASE_MIN_HEIGHT, displayHeight);
+  const minHeight = Math.max(Number(currentMinSize?.[1]) || 0, baselineMinHeight);
+
+  win.setMinimumSize(nextMinWidth, minHeight);
+
+  if (currentBounds.width < nextMinWidth) {
+    const nextWidth = Math.min(displayWidth, nextMinWidth);
+    win.setBounds({
+      ...currentBounds,
+      width: nextWidth,
+    });
+  }
+
+  return { ok: true, minWidth: nextMinWidth, maxWidth: displayWidth };
+}
+
 function createWindow(targetUrl, config) {
   const isClient = config.mode === "client";
+  const baselineSize = getMainWindowBaselineSize();
 
   const win = new BrowserWindow({
     title: APP_DISPLAY_NAME,
-    width: 1320,
-    height: 864,
-    minWidth: 1320,
-    minHeight: 864,
+    width: baselineSize.width,
+    height: baselineSize.height,
+    minWidth: baselineSize.minWidth,
+    minHeight: baselineSize.minHeight,
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
@@ -1674,6 +1994,20 @@ ipcMain.handle("otto:connection:test", async (_event, payload) => {
   const hostUrl = payload?.hostUrl;
   const pairingCode = payload?.pairingCode;
   return await testHostConnection(hostUrl, pairingCode);
+});
+
+ipcMain.handle("otto:hosts:discover", async (_event, payload) => {
+  return await discoverHosts(payload);
+});
+
+ipcMain.handle("otto:window:set-min-width", async (event, requestedWidth) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  const targetWindow =
+    senderWindow && mainWindow && senderWindow.id === mainWindow.id ? mainWindow : mainWindow || senderWindow;
+  if (!targetWindow) {
+    return { ok: false, message: "Main window is not available." };
+  }
+  return setMainWindowMinWidth(targetWindow, requestedWidth);
 });
 
 ipcMain.handle("otto:activationCode:get", async () => {

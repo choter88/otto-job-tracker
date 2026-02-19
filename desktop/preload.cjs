@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("otto", {
   clearPendingActivationCode: () => ipcRenderer.invoke("otto:activationCode:clear"),
   showHostAddresses: () => ipcRenderer.invoke("otto:hostAddresses:show"),
   getHostInfo: () => ipcRenderer.invoke("otto:hostInfo:get"),
+  discoverHosts: (payload) => ipcRenderer.invoke("otto:hosts:discover", payload),
+  setWindowMinWidth: (width) => ipcRenderer.invoke("otto:window:set-min-width", width),
   showDiagnostics: () => ipcRenderer.invoke("otto:diagnostics:show"),
   exportSupportBundle: () => ipcRenderer.invoke("otto:supportBundle:export"),
 });

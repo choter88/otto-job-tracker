@@ -8,6 +8,7 @@
       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
       label { display: block; margin: 14px 0 6px; font-weight: 600; }
       input[type="text"] { width: 100%; padding: 10px 12px; font-size: 14px; }
+      select { width: 100%; padding: 10px 12px; font-size: 14px; }
       .row { margin: 10px 0; }
       .hint { color: #444; font-size: 13px; line-height: 1.4; }
       .actions { margin-top: 18px; display: flex; gap: 12px; }
@@ -63,9 +64,18 @@
         <div class="hint danger">Required the first time you connect. Otto Tracker blocks non-licensing internet access by default.</div>
 
         <div class="actions">
-          <button id="testConnection">Test Connection</button>
-          <div id="testStatus" class="status"></div>
+          <button id="discoverHosts" type="button">Auto-detect Main Computer</button>
+          <button id="testConnection" type="button">Test Connection</button>
         </div>
+        <div id="discoverStatus" class="status"></div>
+        <div id="discoverResults" class="box" style="display:none">
+          <label for="discoveredHostSelect">Detected Main computers</label>
+          <select id="discoveredHostSelect"></select>
+          <div class="actions" style="margin-top: 10px;">
+            <button id="useDiscoveredHost" type="button">Use Selected</button>
+          </div>
+        </div>
+        <div id="testStatus" class="status"></div>
 
         <div class="step">Step 3 — Sign In</div>
         <div class="hint">After saving, you’ll sign in or create a login using the Staff code from your office admin.</div>
@@ -81,10 +91,16 @@
       const hostUrl = document.getElementById("hostUrl");
       const pairingCode = document.getElementById("pairingCode");
       const saveBtn = document.getElementById("save");
+      const discoverBtn = document.getElementById("discoverHosts");
       const testBtn = document.getElementById("testConnection");
+      const discoverStatus = document.getElementById("discoverStatus");
+      const discoverResults = document.getElementById("discoverResults");
+      const discoveredHostSelect = document.getElementById("discoveredHostSelect");
+      const useDiscoveredHostBtn = document.getElementById("useDiscoveredHost");
       const testStatus = document.getElementById("testStatus");
       let existingConfig = null;
       let testPassed = false;
+      let discoveredHosts = [];
 
       function selectedMode() {
         return document.querySelector('input[name="mode"]:checked')?.value || "host";
@@ -96,6 +112,8 @@
           saveBtn.disabled = !testPassed;
         } else {
           saveBtn.disabled = false;
+          setDiscoverStatus("");
+          clearDiscoveredHosts();
         }
       }
 
@@ -111,6 +129,56 @@
           .slice(0, 12);
         const groups = cleaned.match(/.{1,4}/g) || [];
         return groups.join("-");
+      }
+
+      function setDiscoverStatus(message, kind = "") {
+        if (!discoverStatus) return;
+        discoverStatus.textContent = message || "";
+        discoverStatus.className = `status${kind ? ` ${kind}` : ""}`;
+      }
+
+      function clearDiscoveredHosts() {
+        discoveredHosts = [];
+        if (discoverResults) discoverResults.style.display = "none";
+        if (discoveredHostSelect) discoveredHostSelect.innerHTML = "";
+      }
+
+      function describeDiscoveredHost(host) {
+        const officeLabel = host.officeName ? `${host.officeName} - ` : "";
+        const setupState = host.initialized ? "ready" : "needs setup";
+        return `${officeLabel}${host.url} (${setupState})`;
+      }
+
+      function applyDiscoveredHostByIndex(index, { runTest = true } = {}) {
+        const host = discoveredHosts[index];
+        if (!host) return;
+
+        hostUrl.value = host.url || "";
+        if (host.pairingCode) {
+          pairingCode.value = formatPairingCode(host.pairingCode);
+        }
+        resetTestStatus();
+
+        if (runTest) {
+          void runConnectionTest();
+        }
+      }
+
+      function renderDiscoveredHosts() {
+        if (!discoverResults || !discoveredHostSelect) return;
+        if (discoveredHosts.length < 2) {
+          discoverResults.style.display = "none";
+          return;
+        }
+
+        discoveredHostSelect.innerHTML = "";
+        discoveredHosts.forEach((host, index) => {
+          const option = document.createElement("option");
+          option.value = String(index);
+          option.textContent = describeDiscoveredHost(host);
+          discoveredHostSelect.appendChild(option);
+        });
+        discoverResults.style.display = "block";
       }
 
       (async () => {
@@ -140,6 +208,51 @@
         }
         resetTestStatus();
       });
+
+      async function runHostDiscovery() {
+        if (selectedMode() !== "client") return;
+        if (!window.otto || typeof window.otto.discoverHosts !== "function") {
+          setDiscoverStatus("Auto-detect is not available in this build.", "err");
+          return;
+        }
+
+        if (discoverBtn) discoverBtn.disabled = true;
+        if (testBtn) testBtn.disabled = true;
+        clearDiscoveredHosts();
+        setDiscoverStatus("Scanning the office network for the Main computer...");
+
+        try {
+          const result = await window.otto.discoverHosts({
+            hostUrl: hostUrl.value?.trim() || "",
+            pairingCode: pairingCode.value?.trim() || "",
+          });
+
+          const hosts = Array.isArray(result?.hosts) ? result.hosts : [];
+          discoveredHosts = hosts;
+
+          if (hosts.length === 0) {
+            setDiscoverStatus("No Main computer found. Confirm it is open and on the same office network.", "err");
+            return;
+          }
+
+          if (hosts.length === 1) {
+            setDiscoverStatus(`Found Main computer at ${hosts[0].url}.`, "ok");
+            applyDiscoveredHostByIndex(0, { runTest: true });
+            return;
+          }
+
+          setDiscoverStatus(`Found ${hosts.length} possible Main computers. Select one below.`, "ok");
+          renderDiscoveredHosts();
+          applyDiscoveredHostByIndex(0, { runTest: false });
+        } catch {
+          clearDiscoveredHosts();
+          setDiscoverStatus("Auto-detect failed. Enter the Main computer address manually.", "err");
+        } finally {
+          if (discoverBtn) discoverBtn.disabled = false;
+          if (testBtn) testBtn.disabled = false;
+          render();
+        }
+      }
 
       async function runConnectionTest() {
         if (!testStatus) return;
@@ -179,6 +292,23 @@
 
       if (testBtn) {
         testBtn.addEventListener("click", runConnectionTest);
+      }
+      if (discoverBtn) {
+        discoverBtn.addEventListener("click", runHostDiscovery);
+      }
+      if (useDiscoveredHostBtn && discoveredHostSelect) {
+        useDiscoveredHostBtn.addEventListener("click", () => {
+          const index = Number(discoveredHostSelect.value);
+          const safeIndex = Number.isFinite(index) ? index : 0;
+          applyDiscoveredHostByIndex(safeIndex, { runTest: true });
+        });
+      }
+      if (discoveredHostSelect) {
+        discoveredHostSelect.addEventListener("change", () => {
+          const index = Number(discoveredHostSelect.value);
+          const safeIndex = Number.isFinite(index) ? index : 0;
+          applyDiscoveredHostByIndex(safeIndex, { runTest: false });
+        });
       }
 
       saveBtn.addEventListener("click", async () => {

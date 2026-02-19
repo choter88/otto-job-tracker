@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [selectedDetailsJobId, setSelectedDetailsJobId] = useState<string | null>(null);
   const [messageTemplatesOpen, setMessageTemplatesOpen] = useState(false);
   const [selectedMessagesJobId, setSelectedMessagesJobId] = useState<string | null>(null);
+  const tableViewportRef = useRef<HTMLDivElement | null>(null);
 
   const selectedJobForDetails = useMemo(
     () => jobs.find((job) => job.id === selectedDetailsJobId),
@@ -530,6 +531,72 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     [useTrayNumber],
   );
 
+  useEffect(() => {
+    const bridge = (window as any)?.otto;
+    if (!bridge || typeof bridge.setWindowMinWidth !== "function") return;
+    const viewport = tableViewportRef.current;
+    if (!viewport) return;
+
+    let disposed = false;
+    let rafId: number | null = null;
+    let lastRequestedWidth = 0;
+
+    const pushWindowMinWidth = () => {
+      rafId = null;
+      if (disposed) return;
+      const element = tableViewportRef.current;
+      if (!element) return;
+      if (element.clientWidth <= 0 || element.scrollWidth <= 0) return;
+
+      const windowChromeWidth = Math.max(0, window.outerWidth - element.clientWidth);
+      const requestedWidth = Math.ceil(windowChromeWidth + element.scrollWidth + 8);
+
+      if (!Number.isFinite(requestedWidth) || requestedWidth <= 0) return;
+      if (Math.abs(requestedWidth - lastRequestedWidth) < 8) return;
+      lastRequestedWidth = requestedWidth;
+
+      Promise.resolve(bridge.setWindowMinWidth(requestedWidth)).catch(() => {
+        // Ignore bridge failures (web mode or unsupported desktop build).
+      });
+    };
+
+    const scheduleMeasure = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(pushWindowMinWidth);
+    };
+
+    scheduleMeasure();
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            scheduleMeasure();
+          })
+        : null;
+    resizeObserver?.observe(viewport);
+    const tableNode = viewport.querySelector("table");
+    if (tableNode) {
+      resizeObserver?.observe(tableNode);
+    }
+
+    const mutationObserver = new MutationObserver(() => {
+      scheduleMeasure();
+    });
+    mutationObserver.observe(viewport, { childList: true, subtree: true, characterData: true });
+
+    window.addEventListener("resize", scheduleMeasure);
+
+    return () => {
+      disposed = true;
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+      window.removeEventListener("resize", scheduleMeasure);
+      mutationObserver.disconnect();
+      resizeObserver?.disconnect();
+    };
+  }, []);
+
   if (loading) {
     return (
       <Card>
@@ -672,7 +739,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         </div>
 
         {/* Jobs Table */}
-        <div className="overflow-x-auto">
+        <div ref={tableViewportRef} className="overflow-x-auto">
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
             <TableHeader>
               <TableRow>
