@@ -41,7 +41,7 @@ Backups should go to a shared office network folder (not the Host’s local driv
 4. Use **File → Show Host Address…** and save:
    - Host address
    - Pairing code
-5. In **Team**, generate/copy a Staff code for new user sign-ups.
+5. In **Team**, confirm you can see and approve pending account requests.
 
 ### D) Install + connect each Client
 
@@ -49,7 +49,8 @@ Backups should go to a shared office network folder (not the Host’s local driv
 2. Try **Auto-detect Main Computer** first.
 3. If needed, paste Host address + Pairing code manually.
 4. Click **Test Connection** and approve on Host when prompted, then **Save & Restart**.
-5. Each team member signs in (existing) or creates a login using the Staff code (one time; password + confirm password required).
+5. Each team member signs in (existing) or clicks **First time here?** to submit an access request.
+6. On the Host, owner/manager approves each pending request in **Team**.
 
 Windows note:
 - If Windows asks to allow network access for Otto Tracker, choose **Allow** (Private network).

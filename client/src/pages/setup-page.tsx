@@ -56,7 +56,7 @@ type SetupStatus = {
   initialized: boolean;
   officeId: string | null;
   officeName: string | null;
-  staffSignupConfigured: boolean;
+  selfSignupEnabled: boolean;
 };
 
 export default function SetupPage() {
@@ -398,7 +398,7 @@ export default function SetupPage() {
             <ol className="list-decimal pl-5 space-y-1">
               <li>Enter your Activation Code to verify your subscription (no patient data is sent).</li>
               <li>Create your office record and first admin login (local to this office).</li>
-              <li>After setup, generate a Staff code in <b>Team</b> to onboard additional users.</li>
+              <li>After setup, new users can request access from the sign-in screen and be approved in <b>Team</b>.</li>
             </ol>
             <Alert>
               <AlertDescription>

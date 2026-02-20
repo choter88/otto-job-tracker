@@ -38,6 +38,7 @@ import { activateLicense, forceCheckin, getLicenseSnapshot } from "./license";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
+import { broadcastToOffice } from "./sync-websocket";
 
 // PHI access logging helper for HIPAA compliance
 async function logPhiAccess(
@@ -112,30 +113,6 @@ function normalizeRemoteIp(ip: string): string {
 function isLoopbackIp(ip: string): boolean {
   const normalized = normalizeRemoteIp(ip);
   return normalized === "127.0.0.1" || normalized === "::1";
-}
-
-const STAFF_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // avoids confusing chars
-
-function randomCodeChars(length: number): string {
-  const bytes = randomBytes(length);
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += STAFF_CODE_ALPHABET[bytes[i] % STAFF_CODE_ALPHABET.length];
-  }
-  return out;
-}
-
-function generateStaffCode(): string {
-  const a = randomCodeChars(4);
-  const b = randomCodeChars(4);
-  return `${a}-${b}`;
-}
-
-function normalizeStaffCode(input: string): string {
-  return String(input || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
 }
 
 function applyNoStoreHeaders(res: Response): void {
@@ -298,14 +275,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const allOffices = officeCount > 0 ? await storage.getAllOffices() : [];
       const primaryOffice = allOffices[0];
-      const settings = (primaryOffice?.settings || {}) as Record<string, any>;
-      const staffSignupConfigured = Boolean(settings?.staffSignup?.codeHash);
+      const selfSignupEnabled = officeCount === 1 && userCount > 0;
 
       res.json({
         initialized: officeCount > 0 && userCount > 0,
         officeId: primaryOffice?.id || null,
         officeName: primaryOffice?.name || null,
-        staffSignupConfigured,
+        selfSignupEnabled,
       });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to read setup status" });
@@ -533,9 +509,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         licenseSnapshot = getLicenseSnapshot();
       }
 
-      const staffCode = generateStaffCode();
-      const staffCodeHash = await hashSecret(normalizeStaffCode(staffCode));
-
       const office =
         officeCount === 1
           ? (await storage.getAllOffices())[0]
@@ -547,10 +520,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
             });
 
       const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
-      mergedSettings.staffSignup = {
-        codeHash: staffCodeHash,
-        rotatedAt: Date.now(),
-      };
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
       mergedSettings.licensing = {
         activationCodeLast4: activationCode.slice(-4),
@@ -581,7 +550,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           ok: true,
           office: updatedOffice,
           user: withoutPassword(user),
-          staffCode,
           license: licenseSnapshot,
           activationWarning,
         });
@@ -697,8 +665,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         licenseSnapshot = getLicenseSnapshot();
       }
 
-      const staffCode = generateStaffCode();
-      const staffCodeHash = await hashSecret(normalizeStaffCode(staffCode));
       const adminPasswordHash = await hashSecret(adminPassword);
 
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
@@ -712,7 +678,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           lastName: adminLastName,
           passwordHash: adminPasswordHash,
         },
-        staffCodeHash,
         activationCodeLast4: activationCode.slice(-4),
         activationVerifiedAt,
       });
@@ -749,7 +714,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           ok: true,
           office,
           user: withoutPassword(user),
-          staffCode,
           importedCounts: result.importedCounts,
           license: licenseSnapshot,
           activationWarning,
@@ -757,27 +721,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || "Import failed" });
-    }
-  });
-
-  app.post("/api/setup/staff-code/regenerate", requireOffice, requireRole(["owner"]), async (req, res) => {
-    try {
-      const office = await storage.getOffice(req.user.officeId);
-      if (!office) return res.status(404).json({ error: "Office not found" });
-
-      const staffCode = generateStaffCode();
-      const staffCodeHash = await hashSecret(normalizeStaffCode(staffCode));
-
-      const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
-      mergedSettings.staffSignup = {
-        codeHash: staffCodeHash,
-        rotatedAt: Date.now(),
-      };
-
-      await storage.updateOffice(office.id, { settings: mergedSettings });
-      res.json({ staffCode });
-    } catch (error: any) {
-      res.status(500).json({ error: error?.message || "Failed to generate staff code" });
     }
   });
 
@@ -1505,6 +1448,180 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.status(500).json({ error: error.message });
     }
   });
+
+  app.get(
+    "/api/offices/:id/account-requests",
+    requireSameOfficeParam("id"),
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
+      try {
+        const requests = await storage.getAccountSignupRequestsByOffice(req.params.id);
+        res.json(requests);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    },
+  );
+
+  app.post("/api/account-requests", async (req, res) => {
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
+      const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
+      const requestMessage =
+        typeof req.body?.message === "string" ? req.body.message.trim().slice(0, 500) : "";
+
+      if (!email || !email.includes("@")) {
+        return res.status(400).json({ error: "A valid email address is required" });
+      }
+      if (!password) {
+        return res.status(400).json({ error: "Password is required" });
+      }
+      if (!firstName) {
+        return res.status(400).json({ error: "First name is required" });
+      }
+      if (!lastName) {
+        return res.status(400).json({ error: "Last name is required" });
+      }
+
+      const passwordValidation = validatePasswordComplexity(password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({
+          error: "Password does not meet complexity requirements",
+          details: passwordValidation.errors,
+        });
+      }
+
+      const allOffices = await storage.getAllOffices();
+      if (allOffices.length === 0) {
+        return res.status(409).json({ error: "This office is not set up yet." });
+      }
+      if (allOffices.length > 1) {
+        return res
+          .status(400)
+          .json({ error: "Multiple offices exist. Please ask your office owner for an invite link." });
+      }
+
+      const office = allOffices[0];
+
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(409).json({ error: "An account with this email already exists. Please sign in." });
+      }
+
+      const pendingRequest = await storage.getPendingAccountSignupRequestByEmail(office.id, email);
+      if (pendingRequest) {
+        return res.status(409).json({
+          error: "A request for this email is already pending review. Ask an owner or manager to approve it.",
+        });
+      }
+
+      const trustProxy = process.env.OTTO_TRUST_PROXY === "true";
+      const forwardedFor = trustProxy
+        ? (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+        : undefined;
+
+      const requestIp = forwardedFor || req.socket.remoteAddress || req.ip || "unknown";
+      const userAgent = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null;
+
+      const accountRequest = await storage.createAccountSignupRequest({
+        officeId: office.id,
+        email,
+        passwordHash: await hashSecret(password),
+        firstName,
+        lastName,
+        requestedRole: "staff",
+        status: "pending",
+        requestMessage: requestMessage || null,
+        requestedByIp: requestIp || null,
+        userAgent,
+      });
+
+      const officeUsers = await storage.getUsersInOffice(office.id);
+      const approvers = officeUsers.filter((u) => u.role === "owner" || u.role === "manager");
+      try {
+        await Promise.all(
+          approvers.map((approver) =>
+            storage.createNotification({
+              userId: approver.id,
+              actorId: null,
+              type: "team_update",
+              title: "New account request",
+              message: `${firstName} ${lastName} requested access (${email}).`,
+              metadata: { accountRequestId: accountRequest.id, email },
+              linkTo: "/dashboard/team",
+            }),
+          ),
+        );
+      } catch (notifyError) {
+        console.error("Failed to notify approvers about account request:", notifyError);
+      }
+
+      broadcastToOffice(office.id, { type: "office_updated", ts: Date.now(), source: "account_request" });
+
+      res.status(202).json({
+        ok: true,
+        pendingApproval: true,
+        message: "Request submitted. An owner or manager must approve your account on the Host.",
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Could not submit account request" });
+    }
+  });
+
+  app.post(
+    "/api/account-requests/:id/approve",
+    requireOffice,
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
+      try {
+        const role = typeof req.body?.role === "string" ? req.body.role : "staff";
+        const allowedRoles = new Set(["manager", "staff", "view_only"]);
+        if (!allowedRoles.has(role)) {
+          return res.status(400).json({ error: "Invalid role" });
+        }
+        if (req.user.role === "manager" && role === "manager") {
+          return res.status(403).json({ error: "Only an Owner can approve another Manager." });
+        }
+
+        const requestedRole = role as "manager" | "staff" | "view_only";
+
+        const createdUser = await storage.approveAccountSignupRequest(
+          req.params.id,
+          req.user.officeId,
+          req.user.id,
+          requestedRole,
+        );
+
+        broadcastToOffice(req.user.officeId, { type: "office_updated", ts: Date.now(), source: "account_request" });
+        res.status(201).json(withoutPassword(createdUser));
+      } catch (error: any) {
+        if (String(error?.message || "").toLowerCase().includes("not found")) {
+          return res.status(404).json({ error: error.message });
+        }
+        res.status(400).json({ error: error.message });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/account-requests/:id",
+    requireOffice,
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
+      try {
+        await storage.rejectAccountSignupRequest(req.params.id, req.user.officeId, req.user.id);
+        broadcastToOffice(req.user.officeId, { type: "office_updated", ts: Date.now(), source: "account_request" });
+        res.status(204).send();
+      } catch (error: any) {
+        if (String(error?.message || "").toLowerCase().includes("not found")) {
+          return res.status(404).json({ error: error.message });
+        }
+        res.status(400).json({ error: error.message });
+      }
+    },
+  );
 
   // User management routes
   app.put("/api/users/:id", requireOffice, requireRole(["owner", "manager"]), async (req, res) => {

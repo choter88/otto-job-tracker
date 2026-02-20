@@ -1,6 +1,7 @@
 import "./local-env";
 import express, { type Request, Response, NextFunction } from "express";
 import { enforceAirgap } from "./airgap";
+import { logAudit } from "./audit-logger";
 import { getLicenseSnapshot, startLicenseScheduler } from "./license";
 import { broadcastToOffice, setupSyncWebSocket } from "./sync-websocket";
 import { registerRoutes } from "./routes";
@@ -92,6 +93,25 @@ function isPrivateIp(ip: string): boolean {
   return false;
 }
 
+function normalizeAuditPath(requestPath: string): string {
+  return (requestPath || "/")
+    .split("?")[0]
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi, "/:id")
+    .replace(/\/\d+(?=\/|$)/g, "/:id")
+    .replace(/\/[a-f0-9]{24,}(?=\/|$)/gi, "/:id")
+    .replace(/\/[A-Za-z0-9_-]{20,}(?=\/|$)/g, "/:id");
+}
+
+function getRequestIp(req: Request): string {
+  const trustProxy = process.env.OTTO_TRUST_PROXY === "true";
+  const forwardedFor = trustProxy
+    ? (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+    : undefined;
+
+  const remote = forwardedFor || req.socket.remoteAddress || req.ip || "unknown";
+  return normalizeIp(remote);
+}
+
 // Default: only allow office LAN access (prevents accidental exposure to the public internet)
 app.use((req, res, next) => {
   if (process.env.OTTO_LAN_ONLY === "false") return next();
@@ -125,6 +145,7 @@ app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {
   const start = Date.now();
+  const method = String(req.method || "GET").toUpperCase();
   const path = req.path;
   let capturedErrorMessage: string | undefined = undefined;
 
@@ -142,7 +163,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${method} ${path} ${res.statusCode} in ${duration}ms`;
 
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "…";
@@ -155,13 +176,36 @@ app.use((req, res, next) => {
         const user = (req as any).user;
         logError({
           timestamp: new Date().toISOString(),
-          method: req.method,
+          method,
           path: path,
           statusCode: res.statusCode,
           errorMessage: capturedErrorMessage || "Unknown error",
           userId: user?.id,
           officeId: user?.officeId,
           duration,
+        });
+      }
+
+      const isMutating = method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
+      const isAccessFailure = res.statusCode === 401 || res.statusCode === 403;
+      const isServerFailure = res.statusCode >= 500;
+      if (isMutating || isAccessFailure || isServerFailure) {
+        const user = req.user;
+        logAudit({
+          timestamp: new Date().toISOString(),
+          method,
+          path: normalizeAuditPath(path),
+          statusCode: res.statusCode,
+          durationMs: duration,
+          outcome: res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "denied" : "success",
+          userId: typeof user?.id === "string" ? user.id : undefined,
+          officeId: typeof user?.officeId === "string" ? user.officeId : undefined,
+          role: typeof user?.role === "string" ? user.role : undefined,
+          ipAddress: getRequestIp(req),
+          userAgent:
+            res.statusCode >= 400 && typeof req.headers["user-agent"] === "string"
+              ? req.headers["user-agent"]
+              : undefined,
         });
       }
     }

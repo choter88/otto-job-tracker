@@ -108,6 +108,39 @@ export const joinRequests = sqliteTable("join_requests", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
+// Account signup requests table (account is created only after Host approval)
+export const accountSignupRequests = sqliteTable(
+  "account_signup_requests",
+  {
+    id: text("id").primaryKey(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    email: text("email").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    firstName: text("first_name").notNull(),
+    lastName: text("last_name").notNull(),
+    requestedRole: text("requested_role", { enum: userRoleValues }).default("staff").notNull(),
+    status: text("status").default("pending").notNull(),
+    requestMessage: text("request_message"),
+    requestedByIp: text("requested_by_ip"),
+    userAgent: text("user_agent"),
+    reviewedBy: text("reviewed_by").references(() => users.id),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    officeStatusCreatedIdx: index("account_signup_requests_office_status_created_idx").on(
+      table.officeId,
+      table.status,
+      table.createdAt,
+    ),
+    officeEmailStatusIdx: index("account_signup_requests_office_email_status_idx").on(
+      table.officeId,
+      table.email,
+      table.status,
+    ),
+  }),
+);
+
 // Invitations table
 export const invitations = sqliteTable(
   "invitations",
@@ -396,6 +429,12 @@ export const insertInvitationSchema = createInsertSchema(invitations).omit({
   token: true,
 });
 
+export const insertAccountSignupRequestSchema = createInsertSchema(accountSignupRequests).omit({
+  id: true,
+  createdAt: true,
+  reviewedAt: true,
+});
+
 export const insertSmsOptInSchema = createInsertSchema(smsOptIns).omit({
   id: true,
   consentedAt: true,
@@ -456,6 +495,8 @@ export type InsertJobAnalytics = z.infer<typeof insertJobAnalyticsSchema>;
 export type PlatformAnalytics = typeof platformAnalytics.$inferSelect;
 export type InsertPlatformAnalytics = z.infer<typeof insertPlatformAnalyticsSchema>;
 export type JoinRequest = typeof joinRequests.$inferSelect;
+export type AccountSignupRequest = typeof accountSignupRequests.$inferSelect;
+export type InsertAccountSignupRequest = z.infer<typeof insertAccountSignupRequestSchema>;
 export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
 export type InsertPhiAccessLog = z.infer<typeof insertPhiAccessLogSchema>;
 

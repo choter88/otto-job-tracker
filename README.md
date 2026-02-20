@@ -17,6 +17,8 @@ This tool may handle ePHI. Do not commit patient data exports (SQL/CSV), logs, o
 - `docs/security/hipaa.md`
 - `docs/security/repo-data-cleanup.md`
 
+File-based request audit logs are written to `$OTTO_DATA_DIR/audit_log.jsonl` (override with `OTTO_AUDIT_LOG_PATH`) and are automatically pruned by retention days and max file size.
+
 ## Desktop/offline conversion
 
 See `docs/desktop/README.md` for the recommended offline “single source of truth” (SOT) desktop architecture and a phased migration plan.

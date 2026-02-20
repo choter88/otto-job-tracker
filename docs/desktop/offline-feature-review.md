@@ -20,7 +20,7 @@ It’s written to support decisions like **keep / modify / remove** and to align
    - Replace AI summary with **“Important note”** (human-entered).
 3. **Add a persistent status strip** in the app (Host/Client, connected/disconnected, pending offline changes, backups configured, license state).
 4. **Simplify team onboarding**:
-   - Keep Staff code (works offline), but consider switching to **one-time “Add user code” per new user** (more secure, less confusion).
+   - Keep offline onboarding, but use **Host-approved account requests** from the sign-in screen (more explicit and auditable than shared codes).
 5. **Hide platform/admin features** from office users:
    - Remove/hide “Super Admin Portal”, platform analytics, office enable/disable.
 
@@ -31,7 +31,7 @@ It’s written to support decisions like **keep / modify / remove** and to align
 Top-level routes:
 
 - `/setup` — Host first-run setup (Activation Code, Office details, first admin login)
-- `/auth` — Sign in / Sign up (local accounts; staff code required for sign up)
+- `/auth` — Sign in / request account access (local accounts; Host approval required for new sign-ins)
 - `/` and `/dashboard/:tab?` — Main dashboard with tabs:
   - Important
   - All Jobs
@@ -102,7 +102,7 @@ For each item below:
 ### 3) Sign in / sign up (local accounts)
 
 **Current**
-- Local email/password accounts, session timeout, staff code for sign up.
+- Local email/password accounts, session timeout, and Host-approved account requests for first-time users.
 - Portal login is separate.
 
 **Recommendation: Keep**
@@ -250,7 +250,7 @@ For each item below:
 
 **UX lens**
 - For desktop: office is created on Host during `/setup`.
-- Team membership should be managed through the Host (staff code or one-time codes).
+- Team membership should be managed through the Host (approve/reject pending account requests).
 
 ### 12) Invitations + accept-invite
 

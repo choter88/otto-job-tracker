@@ -19,7 +19,6 @@ type AuthContextType = {
 
 type LoginData = Pick<InsertUser, "email" | "password">;
 type RegisterData = Pick<InsertUser, "email" | "password" | "firstName" | "lastName"> & {
-  staffCode?: string;
   inviteToken?: string;
 };
 

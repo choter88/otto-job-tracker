@@ -14,6 +14,7 @@ Core tables (see `shared/schema.ts` for the authoritative schema):
 Operational/supporting tables:
 
 - `join_requests`: request to join an office
+- `account_signup_requests`: pending sign-up requests awaiting Host approval
 - `invitations`: invite users to an office with token/expiry
 - `notification_rules`: per-office overdue/status rules
 - `notifications`: in-app notifications
@@ -21,4 +22,3 @@ Operational/supporting tables:
 - `admin_audit_logs`: platform admin actions
 - `job_analytics`, `platform_analytics`: aggregated metrics
 - `phi_access_logs`: access events for HIPAA auditability
-

@@ -24,6 +24,7 @@ function resetDb() {
     DELETE FROM notification_rules;
     DELETE FROM archived_jobs;
     DELETE FROM jobs;
+    DELETE FROM account_signup_requests;
     DELETE FROM users;
     DELETE FROM offices;
   `);

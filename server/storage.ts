@@ -4,6 +4,7 @@ import {
   jobs,
   archivedJobs,
   joinRequests,
+  accountSignupRequests,
   invitations,
   jobComments,
   commentReads,
@@ -31,6 +32,8 @@ import {
   type InsertJobFlag,
   type NotificationRule,
   type InsertNotificationRule,
+  type AccountSignupRequest,
+  type InsertAccountSignupRequest,
   type Invitation,
   type InsertInvitation,
   type SmsOptIn,
@@ -94,6 +97,27 @@ export interface IStorage {
   createJoinRequest(requesterId: string, officeId: string, message?: string): Promise<any>;
   approveJoinRequest(requestId: string, role: string): Promise<void>;
   rejectJoinRequest(requestId: string): Promise<void>;
+
+  // Account signup requests (account created after approval)
+  getAccountSignupRequestsByOffice(
+    officeId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+      requestedRole: User["role"];
+      requestMessage: string | null;
+      requestedByIp: string | null;
+      userAgent: string | null;
+      createdAt: Date;
+    }>
+  >;
+  getPendingAccountSignupRequestByEmail(officeId: string, email: string): Promise<AccountSignupRequest | undefined>;
+  createAccountSignupRequest(request: InsertAccountSignupRequest): Promise<AccountSignupRequest>;
+  approveAccountSignupRequest(requestId: string, officeId: string, reviewerId: string, role: User["role"]): Promise<User>;
+  rejectAccountSignupRequest(requestId: string, officeId: string, reviewerId: string): Promise<void>;
 
   // Invitations
   getInvitationsByOffice(officeId: string): Promise<Invitation[]>;
@@ -863,6 +887,152 @@ export class DatabaseStorage implements IStorage {
 
   async rejectJoinRequest(requestId: string): Promise<void> {
     await db.delete(joinRequests).where(eq(joinRequests.id, requestId));
+  }
+
+  async getAccountSignupRequestsByOffice(
+    officeId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+      requestedRole: User["role"];
+      requestMessage: string | null;
+      requestedByIp: string | null;
+      userAgent: string | null;
+      createdAt: Date;
+    }>
+  > {
+    return db
+      .select({
+        id: accountSignupRequests.id,
+        email: accountSignupRequests.email,
+        firstName: accountSignupRequests.firstName,
+        lastName: accountSignupRequests.lastName,
+        requestedRole: accountSignupRequests.requestedRole,
+        requestMessage: accountSignupRequests.requestMessage,
+        requestedByIp: accountSignupRequests.requestedByIp,
+        userAgent: accountSignupRequests.userAgent,
+        createdAt: accountSignupRequests.createdAt,
+      })
+      .from(accountSignupRequests)
+      .where(
+        and(
+          eq(accountSignupRequests.officeId, officeId),
+          eq(accountSignupRequests.status, "pending"),
+        ),
+      )
+      .orderBy(desc(accountSignupRequests.createdAt));
+  }
+
+  async getPendingAccountSignupRequestByEmail(
+    officeId: string,
+    email: string,
+  ): Promise<AccountSignupRequest | undefined> {
+    const [request] = await db
+      .select()
+      .from(accountSignupRequests)
+      .where(
+        and(
+          eq(accountSignupRequests.officeId, officeId),
+          eq(accountSignupRequests.email, email),
+          eq(accountSignupRequests.status, "pending"),
+        ),
+      )
+      .limit(1);
+    return request || undefined;
+  }
+
+  async createAccountSignupRequest(request: InsertAccountSignupRequest): Promise<AccountSignupRequest> {
+    const [created] = await db
+      .insert(accountSignupRequests)
+      .values({ id: randomUUID(), ...request })
+      .returning();
+    return created;
+  }
+
+  async approveAccountSignupRequest(
+    requestId: string,
+    officeId: string,
+    reviewerId: string,
+    role: User["role"],
+  ): Promise<User> {
+    return db.transaction(async (tx) => {
+      const [request] = await tx
+        .select()
+        .from(accountSignupRequests)
+        .where(
+          and(
+            eq(accountSignupRequests.id, requestId),
+            eq(accountSignupRequests.officeId, officeId),
+            eq(accountSignupRequests.status, "pending"),
+          ),
+        )
+        .limit(1);
+
+      if (!request) throw new Error("Account request not found");
+
+      const [existingUser] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, request.email))
+        .limit(1);
+      if (existingUser) {
+        throw new Error("An account with this email already exists.");
+      }
+
+      const [user] = await tx
+        .insert(users)
+        .values({
+          id: randomUUID(),
+          email: request.email,
+          password: request.passwordHash,
+          firstName: request.firstName,
+          lastName: request.lastName,
+          role,
+          officeId: request.officeId,
+        })
+        .returning();
+
+      await tx
+        .update(accountSignupRequests)
+        .set({
+          status: "approved",
+          reviewedBy: reviewerId,
+          reviewedAt: new Date(),
+          requestedRole: role,
+          // Prevent long-term duplicate credential material in request history.
+          passwordHash: "",
+        })
+        .where(eq(accountSignupRequests.id, requestId));
+
+      return user;
+    });
+  }
+
+  async rejectAccountSignupRequest(requestId: string, officeId: string, reviewerId: string): Promise<void> {
+    const result = await db
+      .update(accountSignupRequests)
+      .set({
+        status: "rejected",
+        reviewedBy: reviewerId,
+        reviewedAt: new Date(),
+        // Prevent long-term duplicate credential material in request history.
+        passwordHash: "",
+      })
+      .where(
+        and(
+          eq(accountSignupRequests.id, requestId),
+          eq(accountSignupRequests.officeId, officeId),
+          eq(accountSignupRequests.status, "pending"),
+        ),
+      )
+      .returning({ id: accountSignupRequests.id });
+
+    if (result.length === 0) {
+      throw new Error("Account request not found");
+    }
   }
 
   async getInvitationsByOffice(officeId: string): Promise<Invitation[]> {

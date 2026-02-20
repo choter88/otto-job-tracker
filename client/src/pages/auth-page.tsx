@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Glasses, MonitorCog, Building2, UserPlus } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
 
 const loginSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -17,7 +18,6 @@ const loginSchema = z.object({
 });
 
 const registerSchema = z.object({
-  staffCode: z.string().min(1, "Staff code is required"),
   email: z.string().email("Please enter a valid email address"),
   password: z
     .string()
@@ -41,14 +41,15 @@ type SetupStatus = {
   initialized: boolean;
   officeId: string | null;
   officeName: string | null;
-  staffSignupConfigured: boolean;
+  selfSignupEnabled: boolean;
 };
 
 type DesktopMode = "host" | "client" | "unknown";
 
 export default function AuthPage() {
-  const { user, isLoading, loginMutation, registerMutation } = useAuth();
+  const { user, isLoading, loginMutation } = useAuth();
   const [showSignup, setShowSignup] = useState(false);
+  const [requestSubmittedMessage, setRequestSubmittedMessage] = useState<string | null>(null);
   const [desktopMode, setDesktopMode] = useState<DesktopMode>("unknown");
 
   const { data: setupStatus, isLoading: setupLoading } = useQuery<SetupStatus>({
@@ -95,14 +96,35 @@ export default function AuthPage() {
 
   const registerForm = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { staffCode: "", email: "", password: "", passwordConfirm: "", firstName: "", lastName: "" },
+    defaultValues: { email: "", password: "", passwordConfirm: "", firstName: "", lastName: "" },
+  });
+
+  const requestAccessMutation = useMutation({
+    mutationFn: async (payload: Omit<RegisterFormData, "passwordConfirm">) => {
+      const res = await apiRequest("POST", "/api/account-requests", payload);
+      return (await res.json()) as { message?: string };
+    },
+    onMutate: () => {
+      registerForm.clearErrors("root");
+    },
+    onSuccess: (payload) => {
+      setShowSignup(false);
+      setRequestSubmittedMessage(
+        payload?.message ||
+          "Request submitted. An owner or manager must approve your account on the Host before you can sign in.",
+      );
+      registerForm.reset();
+    },
+    onError: (error: Error) => {
+      registerForm.setError("root", { type: "server", message: error.message });
+    },
   });
 
   useEffect(() => {
-    if (!setupStatus?.staffSignupConfigured && showSignup) {
+    if (!setupStatus?.selfSignupEnabled && showSignup) {
       setShowSignup(false);
     }
-  }, [setupStatus?.staffSignupConfigured, showSignup]);
+  }, [setupStatus?.selfSignupEnabled, showSignup]);
 
   if (user) {
     return <Redirect to="/" />;
@@ -146,7 +168,8 @@ export default function AuthPage() {
 
   const onRegister = (data: RegisterFormData) => {
     const { passwordConfirm: _passwordConfirm, ...payload } = data;
-    registerMutation.mutate(payload);
+    setRequestSubmittedMessage(null);
+    requestAccessMutation.mutate(payload);
   };
 
   const officeName = setupStatus?.officeName || "your office";
@@ -198,14 +221,14 @@ export default function AuthPage() {
               <CardHeader className="space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
-                    <CardTitle>{showSignup ? "Create your account" : "Sign in"}</CardTitle>
+                    <CardTitle>{showSignup ? "Request account access" : "Sign in"}</CardTitle>
                     <p className="text-sm text-muted-foreground">
                       {showSignup
-                        ? "Use your Staff code from the office owner to create your login."
+                        ? "Submit your details for owner/manager approval on the Host computer."
                         : "Use your office credentials to open your workspace."}
                     </p>
                   </div>
-                  {setupStatus.staffSignupConfigured && (
+                  {setupStatus.selfSignupEnabled && (
                     <Button
                       type="button"
                       variant={showSignup ? "secondary" : "outline"}
@@ -219,7 +242,7 @@ export default function AuthPage() {
                     </Button>
                   )}
                 </div>
-                {!setupStatus.staffSignupConfigured && (
+                {!setupStatus.selfSignupEnabled && (
                   <p className="text-sm text-muted-foreground">
                     Account self-signup is disabled for this office. Ask the office owner for an invite.
                   </p>
@@ -228,6 +251,11 @@ export default function AuthPage() {
               <CardContent className="flex-1 overflow-y-auto">
                 {!showSignup ? (
                   <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
+                    {requestSubmittedMessage && (
+                      <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-primary">
+                        {requestSubmittedMessage}
+                      </div>
+                    )}
                     <div className="space-y-2">
                       <Label htmlFor="email">Email</Label>
                       <Input
@@ -268,21 +296,6 @@ export default function AuthPage() {
                   </form>
                 ) : (
                   <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="staffCode">Staff code</Label>
-                      <Input
-                        id="staffCode"
-                        placeholder="Ask your office admin"
-                        {...registerForm.register("staffCode")}
-                        data-testid="input-staffCode"
-                      />
-                      {registerForm.formState.errors.staffCode && (
-                        <p className="text-sm text-destructive">
-                          {registerForm.formState.errors.staffCode.message}
-                        </p>
-                      )}
-                    </div>
-
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="firstName">First Name</Label>
@@ -364,12 +377,15 @@ export default function AuthPage() {
                     <Button
                       type="submit"
                       className="w-full"
-                      disabled={registerMutation.isPending}
+                      disabled={requestAccessMutation.isPending}
                       data-testid="button-sign-up"
                     >
-                      {registerMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Create Account
+                      {requestAccessMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Send Access Request
                     </Button>
+                    {registerForm.formState.errors.root && (
+                      <p className="text-sm text-destructive">{registerForm.formState.errors.root.message}</p>
+                    )}
                   </form>
                 )}
               </CardContent>

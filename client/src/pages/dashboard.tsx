@@ -155,7 +155,7 @@ export default function Dashboard() {
               {activeTab === "past" && "View archived completed and cancelled jobs"}
               {activeTab === "overdue" && "Jobs that need immediate attention"}
               {activeTab === "analytics" && "Track performance and insights"}
-              {activeTab === "team" && "Manage office members and join requests"}
+              {activeTab === "team" && "Manage office members and pending account requests"}
               {activeTab === "settings" && "Configure notification rules and preferences"}
             </p>
           </div>

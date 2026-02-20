@@ -328,7 +328,7 @@ function assertNoDuplicates(values: string[], label: string) {
 export function importSnapshotV1(params: {
   snapshot: unknown;
   admin: ImportAdmin;
-  staffCodeHash: string;
+  staffCodeHash?: string;
   activationCodeLast4: string;
   activationVerifiedAt: number | null;
   now?: number;
@@ -758,7 +758,11 @@ export function importSnapshotV1(params: {
     })();
 
     const next: Record<string, any> = normalizeOfficeSettingsForImport(existing);
-    next.staffSignup = { codeHash: params.staffCodeHash, rotatedAt: now };
+    if (params.staffCodeHash) {
+      next.staffSignup = { codeHash: params.staffCodeHash, rotatedAt: now };
+    } else if (next.staffSignup) {
+      delete next.staffSignup;
+    }
     next.licensing = {
       activationCodeLast4: params.activationCodeLast4,
       activationAttemptedAt: now,

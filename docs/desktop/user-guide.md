@@ -16,8 +16,8 @@
    - Enter your **Activation Code** (from the billing portal). Tip: if you used an activation link, the code may auto-fill.
    - Enter your **office details**
    - Create the first **Admin login** (this is local to your office — it does not need to match the billing portal login)
-4. After setup completes, sign in and open **Team** to generate/copy a **Staff code**.
-   - Team members will need this code once to create their logins.
+4. After setup completes, sign in and open **Team** to review pending account requests.
+   - Team members can request access directly from the sign-in screen.
 
 ## Step 2 — Find the Host address
 
@@ -41,8 +41,9 @@ You’ll use one of those on each Client computer.
 5. Approve the request on the **Host** when prompted.
 6. If it says **Connection approved**, click **Save & Restart**.
 7. Sign in (existing user) or create a new login:
-   - To create a new login, the user needs the **Staff code** from the office owner/admin.
-   - New account setup requires password + confirm password.
+   - To create a new login, choose **First time here?** and submit an access request.
+   - An owner/manager must approve the request on the Host in **Team**.
+   - New account setup still requires password + confirm password.
 
 ### Windows note (one-time)
 
@@ -50,11 +51,10 @@ If Windows asks whether to allow Otto Tracker on your network, choose **Allow** 
 
 ## Adding team members
 
-On the Host, sign in as the **Owner** and open **Team**:
-- Click **Generate Staff code**
-- Give that code to the new team member
-
-The Staff code can be regenerated at any time (this replaces the old code).
+1. New user opens the sign-in screen and clicks **First time here?**.
+2. New user submits first name, last name, email, and password.
+3. On the Host, an Owner/Manager opens **Team** and approves the pending request.
+4. After approval, the new user can sign in normally.
 
 ## Backups (automatic daily — recommended)
 
