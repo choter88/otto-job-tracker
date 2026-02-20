@@ -5,87 +5,439 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Otto Tracker Setup</title>
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-      label { display: block; margin: 14px 0 6px; font-weight: 600; }
-      input[type="text"] { width: 100%; padding: 10px 12px; font-size: 14px; }
-      select { width: 100%; padding: 10px 12px; font-size: 14px; }
-      .row { margin: 10px 0; }
-      .hint { color: #444; font-size: 13px; line-height: 1.4; }
-      .actions { margin-top: 18px; display: flex; gap: 12px; }
-      button { padding: 10px 14px; font-size: 14px; cursor: pointer; }
-      button[disabled] { opacity: 0.6; cursor: not-allowed; }
-      .danger { color: #7a0b0b; }
-      .box { border: 1px solid #ddd; padding: 14px; border-radius: 8px; margin-top: 12px; }
-      .step { font-size: 13px; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 18px; }
-      .status { margin-top: 8px; font-size: 13px; }
-      .status.ok { color: #0a7a3f; }
-      .status.err { color: #7a0b0b; }
+      :root {
+        --background: #f8fafc;
+        --foreground: #0f172a;
+        --card: #ffffff;
+        --card-foreground: #0f172a;
+        --muted: #f1f5f9;
+        --muted-foreground: #64748b;
+        --border: #dbe3ef;
+        --input: #d9e2ef;
+        --primary: #2563eb;
+        --primary-hover: #1d4ed8;
+        --primary-foreground: #f8fafc;
+        --destructive: #dc2626;
+        --success: #16a34a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+        color: var(--foreground);
+        background:
+          radial-gradient(circle at 10% 10%, rgba(37, 99, 235, 0.14), transparent 42%),
+          radial-gradient(circle at 92% 18%, rgba(2, 132, 199, 0.12), transparent 38%),
+          linear-gradient(140deg, #f8fafc, #eef4fb 45%, #f8fafc);
+        padding: 26px;
+      }
+
+      .shell {
+        max-width: 1120px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 0.92fr 1.08fr;
+        gap: 22px;
+      }
+
+      .intro-panel {
+        position: relative;
+        border: 1px solid rgba(37, 99, 235, 0.2);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.75);
+        backdrop-filter: blur(6px);
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
+        padding: 30px 28px;
+        overflow: hidden;
+      }
+
+      .intro-panel::after {
+        content: "";
+        position: absolute;
+        width: 200px;
+        height: 200px;
+        right: -82px;
+        bottom: -88px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(37, 99, 235, 0.18), rgba(37, 99, 235, 0.03));
+      }
+
+      .badge {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        background: linear-gradient(145deg, #2563eb, #1d4ed8);
+        color: #fff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35);
+      }
+
+      .intro-title {
+        font-size: 30px;
+        line-height: 1.1;
+        font-weight: 760;
+        margin: 14px 0 8px;
+        letter-spacing: -0.015em;
+      }
+
+      .intro-copy {
+        color: var(--muted-foreground);
+        font-size: 14px;
+        line-height: 1.55;
+        margin: 0 0 18px;
+      }
+
+      .callouts {
+        display: grid;
+        gap: 10px;
+      }
+
+      .callout {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.82);
+        padding: 12px 14px;
+      }
+
+      .callout strong {
+        display: block;
+        font-size: 13px;
+        margin-bottom: 3px;
+      }
+
+      .callout span {
+        display: block;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--muted-foreground);
+      }
+
+      .setup-card {
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        background: var(--card);
+        color: var(--card-foreground);
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+        padding: 24px;
+      }
+
+      .setup-title {
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.15;
+        font-weight: 740;
+        letter-spacing: -0.015em;
+      }
+
+      .setup-subtitle {
+        margin: 8px 0 18px;
+        color: var(--muted-foreground);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .step {
+        margin: 0 0 12px;
+        font-size: 11px;
+        color: #5577b7;
+        text-transform: uppercase;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+
+      .mode-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .mode-option {
+        border: 1px solid var(--border);
+        border-radius: 13px;
+        background: #fff;
+        padding: 14px 14px 14px 40px;
+        cursor: pointer;
+        position: relative;
+        transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        display: block;
+      }
+
+      .mode-option:hover {
+        border-color: rgba(37, 99, 235, 0.46);
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+      }
+
+      .mode-option.selected {
+        border-color: rgba(37, 99, 235, 0.6);
+        box-shadow: 0 8px 20px rgba(37, 99, 235, 0.16);
+        background: #eff6ff;
+      }
+
+      .mode-option input[type="radio"] {
+        position: absolute;
+        left: 14px;
+        top: 16px;
+      }
+
+      .mode-title {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .mode-desc {
+        display: block;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--muted-foreground);
+      }
+
+      .client-panel {
+        margin-top: 16px;
+        border-top: 1px solid var(--border);
+        padding-top: 16px;
+      }
+
+      .field {
+        margin-top: 12px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      input[type="text"],
+      select {
+        width: 100%;
+        border: 1px solid var(--input);
+        border-radius: 10px;
+        background: #fff;
+        color: var(--foreground);
+        padding: 10px 12px;
+        font-size: 14px;
+        line-height: 1.3;
+        transition: border-color 150ms ease, box-shadow 150ms ease;
+      }
+
+      input[type="text"]:focus,
+      select:focus {
+        outline: none;
+        border-color: rgba(37, 99, 235, 0.7);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+      }
+
+      .hint {
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--muted-foreground);
+        margin-top: 6px;
+      }
+
+      .danger {
+        color: var(--destructive);
+        font-weight: 560;
+      }
+
+      .actions {
+        margin-top: 14px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--foreground);
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1.2;
+        cursor: pointer;
+        transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+      }
+
+      button:hover {
+        border-color: rgba(37, 99, 235, 0.45);
+        background: #f8fbff;
+      }
+
+      button:disabled {
+        opacity: 0.56;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+
+      #save {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--primary-foreground);
+        min-width: 160px;
+      }
+
+      #save:hover:not(:disabled) {
+        background: var(--primary-hover);
+        border-color: var(--primary-hover);
+      }
+
+      .box {
+        margin-top: 10px;
+        border: 1px solid var(--border);
+        background: #f8fbff;
+        border-radius: 12px;
+        padding: 12px;
+      }
+
+      .status {
+        margin-top: 8px;
+        border-radius: 10px;
+        padding: 9px 10px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--muted-foreground);
+        font-size: 12px;
+        line-height: 1.4;
+        min-height: 18px;
+      }
+
+      .status.ok {
+        border-color: rgba(22, 163, 74, 0.25);
+        background: rgba(22, 163, 74, 0.09);
+        color: #166534;
+      }
+
+      .status.err {
+        border-color: rgba(220, 38, 38, 0.25);
+        background: rgba(220, 38, 38, 0.09);
+        color: #991b1b;
+      }
+
+      .footer {
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+
+      @media (max-width: 980px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
-    <h1>Otto Tracker Setup</h1>
-    <p class="hint">
-      Otto Tracker keeps patient workflow data local to your office network. The Host still needs occasional internet access for
-      licensing check-ins (no patient data is sent).
-    </p>
-
-    <div class="step">Step 1 — Choose Main computer or Client</div>
-    <div class="box">
-      <div class="row">
-        <label>
-          <input type="radio" name="mode" value="host" checked />
-          This is the Main computer (stores office data)
-        </label>
-        <div class="hint">
-          Runs the database and server locally on this machine. Keep this computer on during business hours.
-          After saving, you’ll complete office setup here.
-        </div>
-      </div>
-
-      <div class="row">
-        <label>
-          <input type="radio" name="mode" value="client" />
-          This is another computer (connects to the Main computer)
-        </label>
-        <div class="hint">
-          Does not store the office database locally. If you make changes while disconnected, Otto Tracker may keep a small <b>encrypted</b>
-          offline queue temporarily to sync those changes once the connection returns.
-        </div>
-      </div>
-
-      <div id="clientSettings" style="display:none">
-        <div class="step">Step 2 — Connect to the Main computer</div>
-        <label for="hostUrl">Main computer address</label>
-        <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
-        <div class="hint">Get this from the Main computer: <b>File → Show Host Address…</b></div>
-
-        <label for="pairingCode">Pairing code</label>
-        <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
-        <div class="hint danger">Required the first time you connect. Otto Tracker blocks non-licensing internet access by default.</div>
-
-        <div class="actions">
-          <button id="discoverHosts" type="button">Auto-detect Main Computer</button>
-          <button id="testConnection" type="button">Test Connection</button>
-        </div>
-        <div id="discoverStatus" class="status"></div>
-        <div id="discoverResults" class="box" style="display:none">
-          <label for="discoveredHostSelect">Detected Main computers</label>
-          <select id="discoveredHostSelect"></select>
-          <div class="actions" style="margin-top: 10px;">
-            <button id="useDiscoveredHost" type="button">Use Selected</button>
+    <main class="shell">
+      <section class="intro-panel">
+        <div class="badge" aria-hidden="true">◉</div>
+        <h1 class="intro-title">Welcome to Otto Desktop</h1>
+        <p class="intro-copy">
+          Choose how this workstation should run in your office. Otto keeps patient workflow data local to your office network.
+          The Host only needs occasional internet access for licensing check-ins.
+        </p>
+        <div class="callouts">
+          <div class="callout">
+            <strong>Host Computer</strong>
+            <span>
+              Stores office data, runs sync services, and approves Client connection requests. Keep it on during business hours.
+            </span>
+          </div>
+          <div class="callout">
+            <strong>Client Computer</strong>
+            <span>
+              Connects to the Host for day-to-day work. If network drops briefly, Otto can queue encrypted changes and sync later.
+            </span>
+          </div>
+          <div class="callout">
+            <strong>Security First</strong>
+            <span>
+              Pairing code is required for first trust. In-app path: <b>File → Show Host Address…</b>.
+            </span>
           </div>
         </div>
-        <div id="testStatus" class="status"></div>
-        <div id="manualLookupNote" class="hint danger" style="display:none; margin-top: 8px;"></div>
+      </section>
 
-        <div class="step">Step 3 — Sign In</div>
-        <div class="hint">After saving, you’ll sign in or create a login using the Staff code from your office admin.</div>
-      </div>
-    </div>
+      <section class="setup-card">
+        <h2 class="setup-title">Otto Tracker Setup</h2>
+        <p class="setup-subtitle">
+          Configure this computer as Host or Client, then finish setup and sign in.
+        </p>
 
-    <div class="actions">
-      <button id="save">Save & Restart</button>
-    </div>
+        <div class="step">Step 1 · Choose Host or Client</div>
+        <div class="mode-grid">
+          <label class="mode-option selected">
+            <input type="radio" name="mode" value="host" checked />
+            <span class="mode-title">This is the Host computer</span>
+            <span class="mode-desc">
+              Stores office data on this machine. After saving, complete one-time office setup here.
+            </span>
+          </label>
+
+          <label class="mode-option">
+            <input type="radio" name="mode" value="client" />
+            <span class="mode-title">This is a Client computer</span>
+            <span class="mode-desc">
+              Connects to the Host computer on your office network and does not store the office database permanently.
+            </span>
+          </label>
+        </div>
+
+        <div id="clientSettings" class="client-panel" style="display:none">
+          <div class="step">Step 2 · Connect to Host</div>
+
+          <div class="field">
+            <label for="hostUrl">Host computer address</label>
+            <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
+            <div class="hint">Copy from the Host computer: <b>File → Show Host Address…</b></div>
+          </div>
+
+          <div class="field">
+            <label for="pairingCode">Pairing code</label>
+            <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
+            <div class="hint danger">Required on first connection to trust the Host certificate.</div>
+          </div>
+
+          <div class="actions">
+            <button id="discoverHosts" type="button">Auto-detect Main Computer</button>
+            <button id="testConnection" type="button">Test Connection</button>
+          </div>
+
+          <div id="discoverStatus" class="status"></div>
+          <div id="discoverResults" class="box" style="display:none">
+            <label for="discoveredHostSelect">Detected Main computers</label>
+            <select id="discoveredHostSelect"></select>
+            <div class="actions">
+              <button id="useDiscoveredHost" type="button">Use Selected</button>
+            </div>
+          </div>
+
+          <div id="testStatus" class="status"></div>
+          <div id="manualLookupNote" class="hint danger" style="display:none; margin-top: 8px;"></div>
+
+          <div class="step" style="margin-top: 14px;">Step 3 · Sign In</div>
+          <div class="hint">After saving, sign in with your Login ID and password (or PIN), or request new account access.</div>
+        </div>
+
+        <div class="actions footer">
+          <button id="save">Save & Restart</button>
+        </div>
+      </section>
+    </main>
 
     <script>
       const clientSettings = document.getElementById("clientSettings");
@@ -108,6 +460,13 @@
         return document.querySelector('input[name="mode"]:checked')?.value || "host";
       }
 
+      function syncModeCards() {
+        document.querySelectorAll(".mode-option").forEach((option) => {
+          const radio = option.querySelector('input[name="mode"]');
+          option.classList.toggle("selected", Boolean(radio?.checked));
+        });
+      }
+
       function render() {
         clientSettings.style.display = selectedMode() === "client" ? "block" : "none";
         if (selectedMode() === "client") {
@@ -117,6 +476,7 @@
           setDiscoverStatus("");
           clearDiscoveredHosts();
         }
+        syncModeCards();
         updateManualLookupNote();
       }
 
