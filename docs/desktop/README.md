@@ -68,6 +68,7 @@ Details: `docs/security/hipaa.md`.
 
 ### Phase 2 — LAN clients (baseline implemented)
 - “Connect to host” UX (auto-detect or saved host address + pairing code + Host approval).
+- Team onboarding UX (first-time access request + Host approval + Login ID/password/PIN credentials).
 - HTTPS from the host (self-issued cert + pinning in the desktop client).
 - Backup/restore flows (Host menu).
 

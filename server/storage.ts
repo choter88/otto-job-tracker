@@ -48,11 +48,14 @@ import {
 import { db } from "./db";
 import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
 
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByLoginId(loginId: string): Promise<User | undefined>;
+  getUserByIdentifier(identifier: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User>;
 
@@ -105,6 +108,7 @@ export interface IStorage {
     Array<{
       id: string;
       email: string;
+      loginId: string | null;
       firstName: string;
       lastName: string;
       requestedRole: User["role"];
@@ -114,6 +118,7 @@ export interface IStorage {
       createdAt: Date;
     }>
   >;
+  getPendingAccountSignupRequestByLoginId(officeId: string, loginId: string): Promise<AccountSignupRequest | undefined>;
   getPendingAccountSignupRequestByEmail(officeId: string, email: string): Promise<AccountSignupRequest | undefined>;
   createAccountSignupRequest(request: InsertAccountSignupRequest): Promise<AccountSignupRequest>;
   approveAccountSignupRequest(requestId: string, officeId: string, reviewerId: string, role: User["role"]): Promise<User>;
@@ -183,22 +188,57 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
+    const normalized = String(email || "").trim().toLowerCase();
+    if (!normalized) return undefined;
+    const [user] = await db.select().from(users).where(eq(users.email, normalized));
     return user || undefined;
   }
 
+  async getUserByLoginId(loginId: string): Promise<User | undefined> {
+    const normalized = normalizeLoginId(loginId);
+    if (!normalized) return undefined;
+    const [user] = await db.select().from(users).where(eq(users.loginId, normalized));
+    return user || undefined;
+  }
+
+  async getUserByIdentifier(identifier: string): Promise<User | undefined> {
+    const normalized = String(identifier || "").trim().toLowerCase();
+    if (!normalized) return undefined;
+
+    const byLoginId = await this.getUserByLoginId(normalized);
+    if (byLoginId) return byLoginId;
+
+    return this.getUserByEmail(normalized);
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
+    const normalizedLoginId = insertUser.loginId ? normalizeLoginId(String(insertUser.loginId)) : null;
+    const normalizedEmail = String(insertUser.email || "").trim().toLowerCase();
     const [user] = await db
       .insert(users)
-      .values({ id: randomUUID(), ...insertUser })
+      .values({
+        id: randomUUID(),
+        ...insertUser,
+        email: normalizedEmail,
+        loginId: normalizedLoginId || null,
+      })
       .returning();
     return user;
   }
 
   async updateUser(id: string, updates: Partial<User>): Promise<User> {
+    const normalizedUpdates: Record<string, any> = { ...updates };
+    if (Object.prototype.hasOwnProperty.call(normalizedUpdates, "email")) {
+      normalizedUpdates.email = String(normalizedUpdates.email || "").trim().toLowerCase();
+    }
+    if (Object.prototype.hasOwnProperty.call(normalizedUpdates, "loginId")) {
+      const nextLoginId = normalizedUpdates.loginId;
+      normalizedUpdates.loginId = nextLoginId ? normalizeLoginId(String(nextLoginId)) : null;
+    }
+
     const [user] = await db
       .update(users)
-      .set({ ...updates, updatedAt: new Date() })
+      .set({ ...normalizedUpdates, updatedAt: new Date() })
       .where(eq(users.id, id))
       .returning();
     return user;
@@ -895,6 +935,7 @@ export class DatabaseStorage implements IStorage {
     Array<{
       id: string;
       email: string;
+      loginId: string | null;
       firstName: string;
       lastName: string;
       requestedRole: User["role"];
@@ -908,6 +949,7 @@ export class DatabaseStorage implements IStorage {
       .select({
         id: accountSignupRequests.id,
         email: accountSignupRequests.email,
+        loginId: accountSignupRequests.loginId,
         firstName: accountSignupRequests.firstName,
         lastName: accountSignupRequests.lastName,
         requestedRole: accountSignupRequests.requestedRole,
@@ -926,17 +968,41 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(accountSignupRequests.createdAt));
   }
 
-  async getPendingAccountSignupRequestByEmail(
+  async getPendingAccountSignupRequestByLoginId(
     officeId: string,
-    email: string,
+    loginId: string,
   ): Promise<AccountSignupRequest | undefined> {
+    const normalized = normalizeLoginId(loginId);
+    if (!normalized) return undefined;
+
     const [request] = await db
       .select()
       .from(accountSignupRequests)
       .where(
         and(
           eq(accountSignupRequests.officeId, officeId),
-          eq(accountSignupRequests.email, email),
+          eq(accountSignupRequests.loginId, normalized),
+          eq(accountSignupRequests.status, "pending"),
+        ),
+      )
+      .limit(1);
+    return request || undefined;
+  }
+
+  async getPendingAccountSignupRequestByEmail(
+    officeId: string,
+    email: string,
+  ): Promise<AccountSignupRequest | undefined> {
+    const normalized = String(email || "").trim().toLowerCase();
+    if (!normalized) return undefined;
+
+    const [request] = await db
+      .select()
+      .from(accountSignupRequests)
+      .where(
+        and(
+          eq(accountSignupRequests.officeId, officeId),
+          eq(accountSignupRequests.email, normalized),
           eq(accountSignupRequests.status, "pending"),
         ),
       )
@@ -945,9 +1011,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAccountSignupRequest(request: InsertAccountSignupRequest): Promise<AccountSignupRequest> {
+    const normalizedEmail = String(request.email || "").trim().toLowerCase();
+    const normalizedLoginId = request.loginId ? normalizeLoginId(String(request.loginId)) : null;
     const [created] = await db
       .insert(accountSignupRequests)
-      .values({ id: randomUUID(), ...request })
+      .values({
+        id: randomUUID(),
+        ...request,
+        email: normalizedEmail,
+        loginId: normalizedLoginId || null,
+      })
       .returning();
     return created;
   }
@@ -982,12 +1055,55 @@ export class DatabaseStorage implements IStorage {
         throw new Error("An account with this email already exists.");
       }
 
+      const normalizedRequestedLoginId = normalizeLoginId(String(request.loginId || ""));
+      let loginIdToAssign = normalizedRequestedLoginId;
+      if (!loginIdToAssign) {
+        const candidates = deriveLoginIdCandidates({
+          email: request.email,
+          firstName: request.firstName,
+          lastName: request.lastName,
+          id: request.id,
+        });
+
+        const existingRows = await tx
+          .select({ loginId: users.loginId })
+          .from(users)
+          .where(eq(users.officeId, request.officeId));
+        const used = new Set(
+          existingRows
+            .map((row) => normalizeLoginId(String(row.loginId || "")))
+            .filter((value) => Boolean(value)),
+        );
+
+        for (const candidate of candidates) {
+          if (!used.has(candidate)) {
+            loginIdToAssign = candidate;
+            break;
+          }
+        }
+
+        if (!loginIdToAssign) {
+          loginIdToAssign = `user-${request.id.slice(0, 8).toLowerCase()}`;
+        }
+      }
+
+      const [existingLoginUser] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.loginId, loginIdToAssign))
+        .limit(1);
+      if (existingLoginUser) {
+        throw new Error("An account with this Login ID already exists.");
+      }
+
       const [user] = await tx
         .insert(users)
         .values({
           id: randomUUID(),
           email: request.email,
+          loginId: loginIdToAssign,
           password: request.passwordHash,
+          pinHash: request.pinHash || null,
           firstName: request.firstName,
           lastName: request.lastName,
           role,
@@ -1002,8 +1118,10 @@ export class DatabaseStorage implements IStorage {
           reviewedBy: reviewerId,
           reviewedAt: new Date(),
           requestedRole: role,
+          loginId: loginIdToAssign,
           // Prevent long-term duplicate credential material in request history.
           passwordHash: "",
+          pinHash: "",
         })
         .where(eq(accountSignupRequests.id, requestId));
 
@@ -1020,6 +1138,7 @@ export class DatabaseStorage implements IStorage {
         reviewedAt: new Date(),
         // Prevent long-term duplicate credential material in request history.
         passwordHash: "",
+        pinHash: "",
       })
       .where(
         and(

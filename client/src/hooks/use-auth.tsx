@@ -13,11 +13,19 @@ type AuthContextType = {
   isLoading: boolean;
   error: Error | null;
   loginMutation: UseMutationResult<PublicUser, Error, LoginData>;
+  pinLoginMutation: UseMutationResult<PublicUser, Error, PinLoginData>;
   logoutMutation: UseMutationResult<void, Error, void>;
   registerMutation: UseMutationResult<PublicUser, Error, RegisterData>;
 };
 
-type LoginData = Pick<InsertUser, "email" | "password">;
+type LoginData = {
+  identifier: string;
+  password: string;
+};
+type PinLoginData = {
+  loginId: string;
+  pin: string;
+};
 type RegisterData = Pick<InsertUser, "email" | "password" | "firstName" | "lastName"> & {
   inviteToken?: string;
 };
@@ -48,6 +56,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     onError: (error: Error) => {
       toast({
         title: "Login failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const pinLoginMutation = useMutation({
+    mutationFn: async (credentials: PinLoginData) => {
+      const res = await apiRequest("POST", "/api/login/pin", credentials);
+      return await res.json();
+    },
+    onMutate: () => {
+      queryClient.clear();
+    },
+    onSuccess: (user: PublicUser) => {
+      queryClient.setQueryData(["/api/user"], user);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "PIN login failed",
         description: error.message,
         variant: "destructive",
       });
@@ -100,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         error,
         loginMutation,
+        pinLoginMutation,
         logoutMutation,
         registerMutation,
       }}

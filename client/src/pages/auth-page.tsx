@@ -13,12 +13,25 @@ import { Loader2, Glasses, MonitorCog, Building2, UserPlus } from "lucide-react"
 import { apiRequest } from "@/lib/queryClient";
 
 const loginSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
+  identifier: z.string().min(1, "Login ID is required"),
   password: z.string().min(1, "Password is required"),
 });
 
+const pinLoginSchema = z.object({
+  loginId: z
+    .string()
+    .min(3, "Login ID must be at least 3 characters")
+    .max(32, "Login ID must be 32 characters or fewer")
+    .regex(/^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i, "Enter a valid Login ID"),
+  pin: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
+});
+
 const registerSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
+  loginId: z
+    .string()
+    .min(3, "Login ID must be at least 3 characters")
+    .max(32, "Login ID must be 32 characters or fewer")
+    .regex(/^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i, "Login ID can include letters, numbers, '.', '-', and '_'"),
   password: z
     .string()
     .min(12, "Password must be at least 12 characters")
@@ -27,14 +40,22 @@ const registerSchema = z.object({
     .regex(/[0-9]/, "Password must contain at least one number")
     .regex(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/, "Password must contain at least one special character"),
   passwordConfirm: z.string().min(1, "Please confirm your password"),
+  pin: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
+  pinConfirm: z.string().regex(/^\d{6}$/, "Please confirm your 6-digit PIN"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
-}).refine((data) => data.password === data.passwordConfirm, {
-  message: "Passwords do not match",
-  path: ["passwordConfirm"],
-});
+})
+  .refine((data) => data.password === data.passwordConfirm, {
+    message: "Passwords do not match",
+    path: ["passwordConfirm"],
+  })
+  .refine((data) => data.pin === data.pinConfirm, {
+    message: "PINs do not match",
+    path: ["pinConfirm"],
+  });
 
 type LoginFormData = z.infer<typeof loginSchema>;
+type PinLoginFormData = z.infer<typeof pinLoginSchema>;
 type RegisterFormData = z.infer<typeof registerSchema>;
 
 type SetupStatus = {
@@ -47,8 +68,9 @@ type SetupStatus = {
 type DesktopMode = "host" | "client" | "unknown";
 
 export default function AuthPage() {
-  const { user, isLoading, loginMutation } = useAuth();
+  const { user, isLoading, loginMutation, pinLoginMutation } = useAuth();
   const [showSignup, setShowSignup] = useState(false);
+  const [loginMethod, setLoginMethod] = useState<"password" | "pin">("password");
   const [requestSubmittedMessage, setRequestSubmittedMessage] = useState<string | null>(null);
   const [desktopMode, setDesktopMode] = useState<DesktopMode>("unknown");
 
@@ -91,16 +113,29 @@ export default function AuthPage() {
 
   const loginForm = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { identifier: "", password: "" },
+  });
+
+  const pinLoginForm = useForm<PinLoginFormData>({
+    resolver: zodResolver(pinLoginSchema),
+    defaultValues: { loginId: "", pin: "" },
   });
 
   const registerForm = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { email: "", password: "", passwordConfirm: "", firstName: "", lastName: "" },
+    defaultValues: {
+      loginId: "",
+      password: "",
+      passwordConfirm: "",
+      pin: "",
+      pinConfirm: "",
+      firstName: "",
+      lastName: "",
+    },
   });
 
   const requestAccessMutation = useMutation({
-    mutationFn: async (payload: Omit<RegisterFormData, "passwordConfirm">) => {
+    mutationFn: async (payload: Omit<RegisterFormData, "passwordConfirm" | "pinConfirm">) => {
       const res = await apiRequest("POST", "/api/account-requests", payload);
       return (await res.json()) as { message?: string };
     },
@@ -166,8 +201,15 @@ export default function AuthPage() {
     loginMutation.mutate(data);
   };
 
+  const onPinLogin = (data: PinLoginFormData) => {
+    pinLoginMutation.mutate({
+      loginId: data.loginId,
+      pin: data.pin,
+    });
+  };
+
   const onRegister = (data: RegisterFormData) => {
-    const { passwordConfirm: _passwordConfirm, ...payload } = data;
+    const { passwordConfirm: _passwordConfirm, pinConfirm: _pinConfirm, ...payload } = data;
     setRequestSubmittedMessage(null);
     requestAccessMutation.mutate(payload);
   };
@@ -244,56 +286,129 @@ export default function AuthPage() {
                 </div>
                 {!setupStatus.selfSignupEnabled && (
                   <p className="text-sm text-muted-foreground">
-                    Account self-signup is disabled for this office. Ask the office owner for an invite.
+                    Account requests are disabled for this office. Ask an owner or manager to create your account.
                   </p>
                 )}
               </CardHeader>
               <CardContent className="flex-1 overflow-y-auto">
                 {!showSignup ? (
-                  <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
+                  <div className="space-y-4">
                     {requestSubmittedMessage && (
                       <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-primary">
                         {requestSubmittedMessage}
                       </div>
                     )}
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="you@example.com"
-                        {...loginForm.register("email")}
-                        data-testid="input-email"
-                      />
-                      {loginForm.formState.errors.email && (
-                        <p className="text-sm text-destructive">{loginForm.formState.errors.email.message}</p>
-                      )}
+
+                    <div className="grid grid-cols-2 gap-2 rounded-md bg-muted p-1">
+                      <Button
+                        type="button"
+                        variant={loginMethod === "password" ? "secondary" : "ghost"}
+                        className="h-8"
+                        onClick={() => setLoginMethod("password")}
+                        data-testid="button-login-method-password"
+                      >
+                        Password
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={loginMethod === "pin" ? "secondary" : "ghost"}
+                        className="h-8"
+                        onClick={() => setLoginMethod("pin")}
+                        data-testid="button-login-method-pin"
+                      >
+                        PIN
+                      </Button>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="password">Password</Label>
-                      <Input
-                        id="password"
-                        type="password"
-                        placeholder="••••••••"
-                        {...loginForm.register("password")}
-                        data-testid="input-password"
-                      />
-                      {loginForm.formState.errors.password && (
-                        <p className="text-sm text-destructive">{loginForm.formState.errors.password.message}</p>
-                      )}
-                    </div>
+                    {loginMethod === "password" ? (
+                      <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="identifier">Login ID</Label>
+                          <Input
+                            id="identifier"
+                            type="text"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            placeholder="jane.cho"
+                            {...loginForm.register("identifier")}
+                            data-testid="input-login-identifier"
+                          />
+                          <p className="text-xs text-muted-foreground">Older accounts can still sign in with email.</p>
+                          {loginForm.formState.errors.identifier && (
+                            <p className="text-sm text-destructive">{loginForm.formState.errors.identifier.message}</p>
+                          )}
+                        </div>
 
-                    <Button
-                      type="submit"
-                      className="w-full"
-                      disabled={loginMutation.isPending}
-                      data-testid="button-sign-in"
-                    >
-                      {loginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Continue
-                    </Button>
-                  </form>
+                        <div className="space-y-2">
+                          <Label htmlFor="password">Password</Label>
+                          <Input
+                            id="password"
+                            type="password"
+                            placeholder="••••••••"
+                            {...loginForm.register("password")}
+                            data-testid="input-password"
+                          />
+                          {loginForm.formState.errors.password && (
+                            <p className="text-sm text-destructive">{loginForm.formState.errors.password.message}</p>
+                          )}
+                        </div>
+
+                        <Button
+                          type="submit"
+                          className="w-full"
+                          disabled={loginMutation.isPending}
+                          data-testid="button-sign-in"
+                        >
+                          {loginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Continue
+                        </Button>
+                      </form>
+                    ) : (
+                      <form onSubmit={pinLoginForm.handleSubmit(onPinLogin)} className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="pin-login-id">Login ID</Label>
+                          <Input
+                            id="pin-login-id"
+                            type="text"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            placeholder="jane.cho"
+                            {...pinLoginForm.register("loginId")}
+                            data-testid="input-pin-login-id"
+                          />
+                          {pinLoginForm.formState.errors.loginId && (
+                            <p className="text-sm text-destructive">{pinLoginForm.formState.errors.loginId.message}</p>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="pin-login">PIN</Label>
+                          <Input
+                            id="pin-login"
+                            type="password"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="••••••"
+                            {...pinLoginForm.register("pin")}
+                            data-testid="input-pin-login"
+                          />
+                          {pinLoginForm.formState.errors.pin && (
+                            <p className="text-sm text-destructive">{pinLoginForm.formState.errors.pin.message}</p>
+                          )}
+                        </div>
+
+                        <Button
+                          type="submit"
+                          className="w-full"
+                          disabled={pinLoginMutation.isPending}
+                          data-testid="button-pin-sign-in"
+                        >
+                          {pinLoginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Unlock with PIN
+                        </Button>
+                      </form>
+                    )}
+                  </div>
                 ) : (
                   <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
@@ -328,16 +443,21 @@ export default function AuthPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="reg-email">Email</Label>
+                      <Label htmlFor="reg-login-id">Login ID</Label>
                       <Input
-                        id="reg-email"
-                        type="email"
-                        placeholder="you@example.com"
-                        {...registerForm.register("email")}
-                        data-testid="input-reg-email"
+                        id="reg-login-id"
+                        type="text"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        placeholder="jane.cho"
+                        {...registerForm.register("loginId")}
+                        data-testid="input-reg-login-id"
                       />
-                      {registerForm.formState.errors.email && (
-                        <p className="text-sm text-destructive">{registerForm.formState.errors.email.message}</p>
+                      <p className="text-xs text-muted-foreground">
+                        3-32 characters. Use letters, numbers, ".", "-", or "_".
+                      </p>
+                      {registerForm.formState.errors.loginId && (
+                        <p className="text-sm text-destructive">{registerForm.formState.errors.loginId.message}</p>
                       )}
                     </div>
 
@@ -371,6 +491,38 @@ export default function AuthPage() {
                         <p className="text-sm text-destructive">
                           {registerForm.formState.errors.passwordConfirm.message}
                         </p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-pin">6-digit PIN</Label>
+                      <Input
+                        id="reg-pin"
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="••••••"
+                        {...registerForm.register("pin")}
+                        data-testid="input-reg-pin"
+                      />
+                      {registerForm.formState.errors.pin && (
+                        <p className="text-sm text-destructive">{registerForm.formState.errors.pin.message}</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-pin-confirm">Confirm PIN</Label>
+                      <Input
+                        id="reg-pin-confirm"
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="••••••"
+                        {...registerForm.register("pinConfirm")}
+                        data-testid="input-reg-pin-confirm"
+                      />
+                      {registerForm.formState.errors.pinConfirm && (
+                        <p className="text-sm text-destructive">{registerForm.formState.errors.pinConfirm.message}</p>
                       )}
                     </div>
 

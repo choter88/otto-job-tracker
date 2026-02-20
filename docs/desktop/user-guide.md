@@ -43,7 +43,7 @@ You’ll use one of those on each Client computer.
 7. Sign in (existing user) or create a new login:
    - To create a new login, choose **First time here?** and submit an access request.
    - An owner/manager must approve the request on the Host in **Team**.
-   - New account setup still requires password + confirm password.
+   - New account setup requires **Login ID**, **password + confirm password**, and a **6-digit PIN + confirm PIN**.
 
 ### Windows note (one-time)
 
@@ -52,7 +52,7 @@ If Windows asks whether to allow Otto Tracker on your network, choose **Allow** 
 ## Adding team members
 
 1. New user opens the sign-in screen and clicks **First time here?**.
-2. New user submits first name, last name, email, and password.
+2. New user submits first name, last name, Login ID, password, and 6-digit PIN.
 3. On the Host, an Owner/Manager opens **Team** and approves the pending request.
 4. After approval, the new user can sign in normally.
 

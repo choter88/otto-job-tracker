@@ -131,6 +131,158 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     }
   };
 
+  const normalizeLoginId = (value: unknown): string =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ".")
+      .replace(/[^a-z0-9._-]/g, "")
+      .replace(/^[._-]+/, "")
+      .replace(/[._-]+$/, "");
+
+  const deriveLoginIdCandidates = (params: {
+    email?: unknown;
+    firstName?: unknown;
+    lastName?: unknown;
+    id?: unknown;
+  }): string[] => {
+    const emailLocal = String(params.email || "").trim().toLowerCase().split("@")[0] || "";
+    const first = String(params.firstName || "").trim().toLowerCase();
+    const last = String(params.lastName || "").trim().toLowerCase();
+    const id = String(params.id || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    const candidates = [
+      normalizeLoginId(emailLocal),
+      normalizeLoginId([first, last].filter(Boolean).join(".")),
+      normalizeLoginId([first, last].filter(Boolean).join("_")),
+      normalizeLoginId(first),
+      normalizeLoginId(last),
+      normalizeLoginId(`user-${id.slice(0, 8)}`),
+      "user",
+    ];
+    return Array.from(new Set(candidates.filter((candidate) => candidate.length >= 3)));
+  };
+
+  const getUniqueLoginId = (base: string, used: Set<string>): string => {
+    let candidate = normalizeLoginId(base);
+    if (!candidate || candidate.length < 3) candidate = "user";
+    if (!used.has(candidate)) return candidate;
+
+    let index = 2;
+    let next = `${candidate}-${index}`;
+    while (used.has(next)) {
+      index += 1;
+      next = `${candidate}-${index}`;
+    }
+    return next;
+  };
+
+  const ensureUserLoginColumns = (): void => {
+    if (!hasColumn("users", "login_id")) {
+      sqlite.prepare(`ALTER TABLE users ADD COLUMN login_id TEXT;`).run();
+    }
+    if (!hasColumn("users", "pin_hash")) {
+      sqlite.prepare(`ALTER TABLE users ADD COLUMN pin_hash TEXT;`).run();
+    }
+
+    const rows = sqlite
+      .prepare(
+        `SELECT id, email, first_name, last_name, login_id
+         FROM users
+         ORDER BY created_at ASC`,
+      )
+      .all() as Array<{
+      id: string;
+      email: string | null;
+      first_name: string | null;
+      last_name: string | null;
+      login_id: string | null;
+    }>;
+
+    const used = new Set<string>();
+    const update = sqlite.prepare(`UPDATE users SET login_id = ? WHERE id = ?`);
+    for (const row of rows) {
+      const currentLoginId = normalizeLoginId(row.login_id);
+      if (currentLoginId && !used.has(currentLoginId)) {
+        used.add(currentLoginId);
+        if (currentLoginId !== String(row.login_id || "")) {
+          update.run(currentLoginId, row.id);
+        }
+        continue;
+      }
+
+      const candidates = deriveLoginIdCandidates({
+        email: row.email,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        id: row.id,
+      });
+      if (currentLoginId) candidates.unshift(currentLoginId);
+      const firstAvailable = candidates.find((candidate) => !used.has(candidate));
+      const next = getUniqueLoginId(firstAvailable || candidates[0] || "user", used);
+      used.add(next);
+      update.run(next, row.id);
+    }
+
+    sqlite.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS users_login_id_unique ON users (login_id);`).run();
+  };
+
+  const ensureAccountSignupRequestAuthColumns = (): void => {
+    if (!hasColumn("account_signup_requests", "login_id")) {
+      sqlite.prepare(`ALTER TABLE account_signup_requests ADD COLUMN login_id TEXT;`).run();
+    }
+    if (!hasColumn("account_signup_requests", "pin_hash")) {
+      sqlite.prepare(`ALTER TABLE account_signup_requests ADD COLUMN pin_hash TEXT;`).run();
+    }
+
+    sqlite
+      .prepare(
+        `CREATE INDEX IF NOT EXISTS account_signup_requests_office_login_id_status_idx
+         ON account_signup_requests (office_id, login_id, status);`,
+      )
+      .run();
+
+    const rows = sqlite
+      .prepare(
+        `SELECT id, office_id, email, login_id
+         FROM account_signup_requests
+         ORDER BY created_at ASC`,
+      )
+      .all() as Array<{
+      id: string;
+      office_id: string;
+      email: string | null;
+      login_id: string | null;
+    }>;
+
+    const usedByOffice = new Map<string, Set<string>>();
+    const update = sqlite.prepare(`UPDATE account_signup_requests SET login_id = ? WHERE id = ?`);
+    for (const row of rows) {
+      const currentLoginId = normalizeLoginId(row.login_id);
+      const officeSet = usedByOffice.get(row.office_id) || new Set<string>();
+      if (currentLoginId) {
+        if (!officeSet.has(currentLoginId)) {
+          officeSet.add(currentLoginId);
+          usedByOffice.set(row.office_id, officeSet);
+          if (currentLoginId !== String(row.login_id || "")) {
+            update.run(currentLoginId, row.id);
+          }
+          continue;
+        }
+      }
+
+      const candidates = deriveLoginIdCandidates({
+        email: row.email,
+        id: row.id,
+      });
+      if (currentLoginId) candidates.unshift(currentLoginId);
+      const firstAvailable = candidates.find((candidate) => !officeSet.has(candidate));
+      const next = getUniqueLoginId(firstAvailable || candidates[0] || "user", officeSet);
+      officeSet.add(next);
+      usedByOffice.set(row.office_id, officeSet);
+      update.run(next, row.id);
+    }
+  };
+
   const statements: string[] = [
     `PRAGMA foreign_keys = ON;`,
     `PRAGMA journal_mode = WAL;`,
@@ -150,7 +302,9 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     `CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
+      login_id TEXT UNIQUE,
       password TEXT NOT NULL,
+      pin_hash TEXT,
       first_name TEXT NOT NULL,
       last_name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'staff',
@@ -214,7 +368,9 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
       id TEXT PRIMARY KEY,
       office_id TEXT NOT NULL REFERENCES offices(id),
       email TEXT NOT NULL,
+      login_id TEXT,
       password_hash TEXT NOT NULL,
+      pin_hash TEXT,
       first_name TEXT NOT NULL,
       last_name TEXT NOT NULL,
       requested_role TEXT NOT NULL DEFAULT 'staff',
@@ -231,6 +387,8 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
       ON account_signup_requests (office_id, status, created_at);`,
     `CREATE INDEX IF NOT EXISTS account_signup_requests_office_email_status_idx
       ON account_signup_requests (office_id, email, status);`,
+    `CREATE INDEX IF NOT EXISTS account_signup_requests_office_login_id_status_idx
+      ON account_signup_requests (office_id, login_id, status);`,
 
     `CREATE TABLE IF NOT EXISTS invitations (
       id TEXT PRIMARY KEY,
@@ -391,6 +549,8 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     // Migrations / forward-compat changes for existing installs.
     ensurePatientFirstName("jobs");
     ensurePatientFirstName("archived_jobs");
+    ensureUserLoginColumns();
+    ensureAccountSignupRequestAuthColumns();
     ensureJobFlagNoteColumns();
     ensureHighContrastOfficeColors();
   })();

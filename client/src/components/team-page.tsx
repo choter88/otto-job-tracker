@@ -16,6 +16,7 @@ type AssignableRole = "manager" | "staff" | "view_only";
 type AccountSignupRequest = {
   id: string;
   email: string;
+  loginId: string | null;
   firstName: string;
   lastName: string;
   requestedRole: string;
@@ -221,7 +222,7 @@ export default function TeamPage() {
                           <p className="font-medium">
                             {request.firstName} {request.lastName}
                           </p>
-                          <p className="text-sm text-muted-foreground">{request.email}</p>
+                          <p className="text-sm text-muted-foreground">Login ID: {request.loginId || "Not provided"}</p>
                         </div>
                         <p className="text-xs text-muted-foreground">{format(new Date(request.createdAt), "MMM d, h:mm a")}</p>
                       </div>
@@ -306,7 +307,9 @@ export default function TeamPage() {
                   <h4 className="font-semibold">
                     {member.firstName} {member.lastName}
                   </h4>
-                  <p className="text-sm text-muted-foreground">{member.email}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Login ID: {member.loginId || "Legacy account"}
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-3">

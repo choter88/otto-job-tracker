@@ -39,6 +39,7 @@ import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { broadcastToOffice } from "./sync-websocket";
+import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
 
 // PHI access logging helper for HIPAA compliance
 async function logPhiAccess(
@@ -76,9 +77,11 @@ async function logPhiAccess(
   }
 }
 
-function withoutPassword<T extends Record<string, any> | null | undefined>(user: T): Omit<NonNullable<T>, "password"> | null {
+function withoutPassword<T extends Record<string, any> | null | undefined>(
+  user: T,
+): Omit<NonNullable<T>, "password" | "pinHash"> | null {
   if (!user || typeof user !== "object") return null;
-  const { password: _password, ...rest } = user as any;
+  const { password: _password, pinHash: _pinHash, ...rest } = user as any;
   return rest;
 }
 
@@ -537,6 +540,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const user = await storage.createUser({
         email: adminEmail,
+        loginId:
+          normalizeLoginId(adminEmail.split("@")[0] || "") ||
+          normalizeLoginId(`${adminFirstName}.${adminLastName}`) ||
+          "owner",
         firstName: adminFirstName,
         lastName: adminLastName,
         password: await hashSecret(adminPassword),
@@ -1465,18 +1472,21 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
   app.post("/api/account-requests", async (req, res) => {
     try {
-      const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+      const loginId = normalizeLoginId(typeof req.body?.loginId === "string" ? req.body.loginId : "");
       const password = typeof req.body?.password === "string" ? req.body.password : "";
+      const pin = typeof req.body?.pin === "string" ? req.body.pin.trim() : "";
       const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
       const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
       const requestMessage =
         typeof req.body?.message === "string" ? req.body.message.trim().slice(0, 500) : "";
 
-      if (!email || !email.includes("@")) {
-        return res.status(400).json({ error: "A valid email address is required" });
-      }
+      const loginIdError = validateLoginId(loginId);
+      if (loginIdError) return res.status(400).json({ error: loginIdError });
       if (!password) {
         return res.status(400).json({ error: "Password is required" });
+      }
+      if (!isValidSixDigitPin(pin)) {
+        return res.status(400).json({ error: "PIN must be exactly 6 digits." });
       }
       if (!firstName) {
         return res.status(400).json({ error: "First name is required" });
@@ -1500,21 +1510,27 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (allOffices.length > 1) {
         return res
           .status(400)
-          .json({ error: "Multiple offices exist. Please ask your office owner for an invite link." });
+          .json({ error: "Multiple offices exist. Ask your office owner or manager to create your account manually." });
       }
 
       const office = allOffices[0];
 
-      const existingUser = await storage.getUserByEmail(email);
+      const existingUser = await storage.getUserByLoginId(loginId);
       if (existingUser) {
-        return res.status(409).json({ error: "An account with this email already exists. Please sign in." });
+        return res.status(409).json({ error: "An account with this Login ID already exists. Please sign in." });
       }
 
-      const pendingRequest = await storage.getPendingAccountSignupRequestByEmail(office.id, email);
+      const pendingRequest = await storage.getPendingAccountSignupRequestByLoginId(office.id, loginId);
       if (pendingRequest) {
         return res.status(409).json({
-          error: "A request for this email is already pending review. Ask an owner or manager to approve it.",
+          error: "A request for this Login ID is already pending review. Ask an owner or manager to approve it.",
         });
+      }
+
+      // Keep email storage populated for legacy compatibility, but generate a local-only internal address.
+      let internalEmail = buildLocalAuthEmail(loginId, office.id);
+      while (await storage.getUserByEmail(internalEmail)) {
+        internalEmail = buildLocalAuthEmail(loginId, office.id);
       }
 
       const trustProxy = process.env.OTTO_TRUST_PROXY === "true";
@@ -1527,8 +1543,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const accountRequest = await storage.createAccountSignupRequest({
         officeId: office.id,
-        email,
+        email: internalEmail,
+        loginId,
         passwordHash: await hashSecret(password),
+        pinHash: await hashSecret(pin),
         firstName,
         lastName,
         requestedRole: "staff",
@@ -1548,8 +1566,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               actorId: null,
               type: "team_update",
               title: "New account request",
-              message: `${firstName} ${lastName} requested access (${email}).`,
-              metadata: { accountRequestId: accountRequest.id, email },
+              message: `${firstName} ${lastName} requested access (Login ID: ${loginId}).`,
+              metadata: { accountRequestId: accountRequest.id, loginId },
               linkTo: "/dashboard/team",
             }),
           ),

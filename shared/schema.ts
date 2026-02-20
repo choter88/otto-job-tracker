@@ -16,7 +16,9 @@ export const users = sqliteTable(
   {
     id: text("id").primaryKey(),
     email: text("email").notNull(),
+    loginId: text("login_id"),
     password: text("password").notNull(),
+    pinHash: text("pin_hash"),
     firstName: text("first_name").notNull(),
     lastName: text("last_name").notNull(),
     role: text("role", { enum: userRoleValues }).default("staff").notNull(),
@@ -26,6 +28,7 @@ export const users = sqliteTable(
   },
   (table) => ({
     emailIdx: uniqueIndex("users_email_unique").on(table.email),
+    loginIdIdx: uniqueIndex("users_login_id_unique").on(table.loginId),
   }),
 );
 
@@ -115,7 +118,9 @@ export const accountSignupRequests = sqliteTable(
     id: text("id").primaryKey(),
     officeId: text("office_id").references(() => offices.id).notNull(),
     email: text("email").notNull(),
+    loginId: text("login_id"),
     passwordHash: text("password_hash").notNull(),
+    pinHash: text("pin_hash"),
     firstName: text("first_name").notNull(),
     lastName: text("last_name").notNull(),
     requestedRole: text("requested_role", { enum: userRoleValues }).default("staff").notNull(),
@@ -136,6 +141,11 @@ export const accountSignupRequests = sqliteTable(
     officeEmailStatusIdx: index("account_signup_requests_office_email_status_idx").on(
       table.officeId,
       table.email,
+      table.status,
+    ),
+    officeLoginIdStatusIdx: index("account_signup_requests_office_login_id_status_idx").on(
+      table.officeId,
+      table.loginId,
       table.status,
     ),
   }),
@@ -467,7 +477,7 @@ export const insertPhiAccessLogSchema = createInsertSchema(phiAccessLogs).omit({
 
 // Type exports
 export type User = typeof users.$inferSelect;
-export type PublicUser = Omit<User, "password">;
+export type PublicUser = Omit<User, "password" | "pinHash">;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Office = typeof offices.$inferSelect;
 export type InsertOffice = z.infer<typeof insertOfficeSchema>;

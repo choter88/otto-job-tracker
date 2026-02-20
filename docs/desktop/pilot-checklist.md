@@ -50,7 +50,8 @@ Backups should go to a shared office network folder (not the Host’s local driv
 3. If needed, paste Host address + Pairing code manually.
 4. Click **Test Connection** and approve on Host when prompted, then **Save & Restart**.
 5. Each team member signs in (existing) or clicks **First time here?** to submit an access request.
-6. On the Host, owner/manager approves each pending request in **Team**.
+6. New account requests include first/last name, Login ID, password, and 6-digit PIN.
+7. On the Host, owner/manager approves each pending request in **Team**.
 
 Windows note:
 - If Windows asks to allow network access for Otto Tracker, choose **Allow** (Private network).

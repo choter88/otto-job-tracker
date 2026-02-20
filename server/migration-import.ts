@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { sqlite } from "./db";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
+import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
 
 type ImportAdmin = {
   email: string;
@@ -432,6 +433,43 @@ export function importSnapshotV1(params: {
     });
   }
 
+  const usedLoginIds = new Set<string>();
+  const assignUniqueLoginId = (baseCandidate: string): string => {
+    let candidate = normalizeLoginId(baseCandidate);
+    if (!candidate || candidate.length < 3) candidate = "user";
+    if (!usedLoginIds.has(candidate)) {
+      usedLoginIds.add(candidate);
+      return candidate;
+    }
+
+    let index = 2;
+    let next = `${candidate}-${index}`;
+    while (usedLoginIds.has(next)) {
+      index += 1;
+      next = `${candidate}-${index}`;
+    }
+    usedLoginIds.add(next);
+    return next;
+  };
+
+  for (const row of userRows) {
+    const normalizedExisting = normalizeLoginId(String((row as any).login_id || ""));
+    if (normalizedExisting && !usedLoginIds.has(normalizedExisting)) {
+      (row as any).login_id = normalizedExisting;
+      usedLoginIds.add(normalizedExisting);
+      continue;
+    }
+
+    const candidates = deriveLoginIdCandidates({
+      email: (row as any).email,
+      firstName: (row as any).first_name,
+      lastName: (row as any).last_name,
+      id: (row as any).id,
+    });
+    const firstAvailable = candidates.find((candidate) => !usedLoginIds.has(candidate));
+    (row as any).login_id = assignUniqueLoginId(firstAvailable || candidates[0] || "user");
+  }
+
   assertNoDuplicates(userRows.map((u) => u.id), "user id");
   assertNoDuplicates(userRows.map((u) => u.email), "user email");
 
@@ -806,8 +844,8 @@ export function importSnapshotV1(params: {
   );
 
   const insertUser = sqlite.prepare(
-    `INSERT INTO users (id, email, password, first_name, last_name, role, office_id, created_at, updated_at)
-     VALUES (@id, @email, @password, @first_name, @last_name, @role, @office_id, @created_at, @updated_at)`,
+    `INSERT INTO users (id, email, login_id, password, first_name, last_name, role, office_id, created_at, updated_at)
+     VALUES (@id, @email, @login_id, @password, @first_name, @last_name, @role, @office_id, @created_at, @updated_at)`,
   );
 
   const insertJob = sqlite.prepare(

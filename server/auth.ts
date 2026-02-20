@@ -7,6 +7,7 @@ import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
 import { hashSecret, verifySecret } from "./secret-hash";
+import { isValidSixDigitPin, normalizeLoginId } from "./auth-identifiers";
 
 declare global {
   namespace Express {
@@ -15,7 +16,7 @@ declare global {
 }
 
 function withoutPassword(user: SelectUser) {
-  const { password: _password, ...rest } = user;
+  const { password: _password, pinHash: _pinHash, ...rest } = user;
   return rest;
 }
 
@@ -98,14 +99,23 @@ export function setupAuth(app: Express) {
   app.use(passport.session());
 
   passport.use(
-    new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
-      const user = await storage.getUserByEmail(email);
-      if (!user || !(await comparePasswords(password, user.password))) {
-        return done(null, false);
-      } else {
-        return done(null, user);
-      }
-    }),
+    new LocalStrategy(
+      { usernameField: "identifier", passReqToCallback: true },
+      async (req, identifier, password, done) => {
+        const fallbackEmail = typeof req.body?.email === "string" ? req.body.email : "";
+        const suppliedIdentifier =
+          typeof identifier === "string" && identifier.trim()
+            ? identifier
+            : fallbackEmail;
+
+        const user = await storage.getUserByIdentifier(suppliedIdentifier);
+        if (!user || !(await comparePasswords(password, user.password))) {
+          return done(null, false);
+        } else {
+          return done(null, user);
+        }
+      },
+    ),
   );
 
   passport.serializeUser((user, done) => done(null, user.id));
@@ -211,6 +221,30 @@ export function setupAuth(app: Express) {
 
   app.post("/api/login", passport.authenticate("local"), (req, res) => {
     res.status(200).json(withoutPassword(req.user as SelectUser));
+  });
+
+  app.post("/api/login/pin", async (req, res, next) => {
+    const loginId = normalizeLoginId(
+      typeof req.body?.loginId === "string" ? req.body.loginId : "",
+    );
+    const pin = typeof req.body?.pin === "string" ? req.body.pin.trim() : "";
+
+    if (!loginId) {
+      return res.status(400).json({ error: "Login ID is required" });
+    }
+    if (!isValidSixDigitPin(pin)) {
+      return res.status(400).json({ error: "PIN must be exactly 6 digits" });
+    }
+
+    const user = await storage.getUserByLoginId(loginId);
+    if (!user || !user.pinHash || !(await verifySecret(pin, user.pinHash))) {
+      return res.status(401).json({ error: "Invalid Login ID or PIN" });
+    }
+
+    req.login(user, (err) => {
+      if (err) return next(err);
+      res.status(200).json(withoutPassword(user));
+    });
   });
 
   app.post("/api/logout", (req, res, next) => {
