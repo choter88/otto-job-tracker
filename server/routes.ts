@@ -439,9 +439,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const officePhone = typeof officeBody?.phone === "string" ? officeBody.phone.trim() : undefined;
       const officeEmail = typeof officeBody?.email === "string" ? officeBody.email.trim() : undefined;
 
-      const adminEmail =
-        typeof adminBody?.email === "string" ? adminBody.email.trim().toLowerCase() : "";
+      const adminLoginIdRaw = typeof adminBody?.loginId === "string" ? adminBody.loginId : "";
+      const adminEmailFallback = typeof adminBody?.email === "string" ? adminBody.email : "";
+      const adminLoginId = normalizeLoginId(adminLoginIdRaw || adminEmailFallback.split("@")[0] || "");
       const adminPassword = typeof adminBody?.password === "string" ? adminBody.password : "";
+      const adminPin = typeof adminBody?.pin === "string" ? adminBody.pin.trim() : "";
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
@@ -451,14 +453,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (!officeName) {
         return res.status(400).json({ error: "Office name is required" });
       }
-      if (!adminEmail) {
-        return res.status(400).json({ error: "Admin email is required" });
+      const adminLoginIdError = validateLoginId(adminLoginId);
+      if (adminLoginIdError) {
+        return res.status(400).json({ error: adminLoginIdError });
       }
       if (!adminFirstName) {
         return res.status(400).json({ error: "Admin first name is required" });
       }
       if (!adminLastName) {
         return res.status(400).json({ error: "Admin last name is required" });
+      }
+      if (!isValidSixDigitPin(adminPin)) {
+        return res.status(400).json({ error: "PIN must be exactly 6 digits." });
       }
 
       const passwordValidation = validatePasswordComplexity(adminPassword);
@@ -481,9 +487,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(409).json({ error: "Multiple offices exist. Please contact support." });
       }
 
-      const existingUser = await storage.getUserByEmail(adminEmail);
+      const existingUser = await storage.getUserByLoginId(adminLoginId);
       if (existingUser) {
-        return res.status(409).json({ error: "A user with this email already exists." });
+        return res.status(409).json({ error: "A user with this Login ID already exists." });
       }
 
       let licenseSnapshot = getLicenseSnapshot();
@@ -538,15 +544,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         settings: mergedSettings,
       });
 
+      let adminEmail = buildLocalAuthEmail(adminLoginId, updatedOffice.id);
+      while (await storage.getUserByEmail(adminEmail)) {
+        adminEmail = buildLocalAuthEmail(adminLoginId, updatedOffice.id);
+      }
+
       const user = await storage.createUser({
         email: adminEmail,
-        loginId:
-          normalizeLoginId(adminEmail.split("@")[0] || "") ||
-          normalizeLoginId(`${adminFirstName}.${adminLastName}`) ||
-          "owner",
+        loginId: adminLoginId,
         firstName: adminFirstName,
         lastName: adminLastName,
         password: await hashSecret(adminPassword),
+        pinHash: await hashSecret(adminPin),
         officeId: updatedOffice.id,
         role: "owner",
       });
@@ -587,9 +596,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const officePhone = typeof officeBody?.phone === "string" ? officeBody.phone.trim() : undefined;
       const officeEmail = typeof officeBody?.email === "string" ? officeBody.email.trim() : undefined;
 
-      const adminEmail =
-        typeof adminBody?.email === "string" ? adminBody.email.trim().toLowerCase() : "";
+      const adminLoginIdRaw = typeof adminBody?.loginId === "string" ? adminBody.loginId : "";
+      const adminEmailFallback = typeof adminBody?.email === "string" ? adminBody.email : "";
+      const adminLoginId = normalizeLoginId(adminLoginIdRaw || adminEmailFallback.split("@")[0] || "");
       const adminPassword = typeof adminBody?.password === "string" ? adminBody.password : "";
+      const adminPin = typeof adminBody?.pin === "string" ? adminBody.pin.trim() : "";
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
@@ -612,14 +623,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           // ignore
         }
       }
-      if (!adminEmail) {
-        return res.status(400).json({ error: "Admin email is required" });
+      const adminLoginIdError = validateLoginId(adminLoginId);
+      if (adminLoginIdError) {
+        return res.status(400).json({ error: adminLoginIdError });
       }
       if (!adminFirstName) {
         return res.status(400).json({ error: "Admin first name is required" });
       }
       if (!adminLastName) {
         return res.status(400).json({ error: "Admin last name is required" });
+      }
+      if (!isValidSixDigitPin(adminPin)) {
+        return res.status(400).json({ error: "PIN must be exactly 6 digits." });
       }
 
       const passwordValidation = validatePasswordComplexity(adminPassword);
@@ -673,6 +688,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const adminPasswordHash = await hashSecret(adminPassword);
+      const adminPinHash = await hashSecret(adminPin);
 
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
       const activationVerifiedAt = activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null;
@@ -680,17 +696,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const result = importSnapshotV1({
         snapshot,
         admin: {
-          email: adminEmail,
+          loginId: adminLoginId,
           firstName: adminFirstName,
           lastName: adminLastName,
           passwordHash: adminPasswordHash,
+          pinHash: adminPinHash,
         },
         activationCodeLast4: activationCode.slice(-4),
         activationVerifiedAt,
       });
 
       const office = await storage.getOffice(result.officeId);
-      const user = await storage.getUserByEmail(result.adminEmail);
+      const user = await storage.getUser(result.adminUserId);
       if (!office || !user) {
         return res.status(500).json({ error: "Import completed but could not load the new office." });
       }

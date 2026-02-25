@@ -26,6 +26,8 @@ const passwordSchema = z
   );
 
 const ACTIVATION_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
+const LOGIN_ID_REGEX = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i;
+const PIN_REGEX = /^\d{6}$/;
 
 const setupSchema = z
   .object({
@@ -41,13 +43,23 @@ const setupSchema = z
     officeEmail: z.string().email("Please enter a valid email").optional().or(z.literal("")),
     adminFirstName: z.string().min(1, "First name is required"),
     adminLastName: z.string().min(1, "Last name is required"),
-    adminEmail: z.string().email("Please enter a valid email address"),
+    adminLoginId: z
+      .string()
+      .min(3, "Login ID must be at least 3 characters")
+      .max(32, "Login ID must be 32 characters or fewer")
+      .regex(LOGIN_ID_REGEX, "Login ID can use letters, numbers, '.', '-', and '_'"),
     adminPassword: passwordSchema,
     adminPasswordConfirm: z.string().min(1, "Please confirm the password"),
+    adminPin: z.string().regex(PIN_REGEX, "PIN must be exactly 6 digits"),
+    adminPinConfirm: z.string().regex(PIN_REGEX, "Please confirm your 6-digit PIN"),
   })
   .refine((data) => data.adminPassword === data.adminPasswordConfirm, {
     message: "Passwords do not match",
     path: ["adminPasswordConfirm"],
+  })
+  .refine((data) => data.adminPin === data.adminPinConfirm, {
+    message: "PINs do not match",
+    path: ["adminPinConfirm"],
   });
 
 type SetupFormData = z.infer<typeof setupSchema>;
@@ -93,9 +105,11 @@ export default function SetupPage() {
       officeEmail: "",
       adminFirstName: "",
       adminLastName: "",
-      adminEmail: "",
+      adminLoginId: "",
       adminPassword: "",
       adminPasswordConfirm: "",
+      adminPin: "",
+      adminPinConfirm: "",
     },
   });
 
@@ -156,8 +170,9 @@ export default function SetupPage() {
           admin: {
             firstName: data.adminFirstName,
             lastName: data.adminLastName,
-            email: data.adminEmail,
+            loginId: data.adminLoginId,
             password: data.adminPassword,
+            pin: data.adminPin,
           },
         }),
       });
@@ -229,8 +244,9 @@ export default function SetupPage() {
           admin: {
             firstName: data.adminFirstName,
             lastName: data.adminLastName,
-            email: data.adminEmail,
+            loginId: data.adminLoginId,
             password: data.adminPassword,
+            pin: data.adminPin,
           },
         }),
       });
@@ -385,7 +401,7 @@ export default function SetupPage() {
           <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
           <p className="text-muted-foreground">
             This only happens once, on the Host computer. You’ll activate the office, enter office details, and create the
-            first admin login.
+            first owner login.
           </p>
         </div>
 
@@ -397,7 +413,7 @@ export default function SetupPage() {
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <ol className="list-decimal pl-5 space-y-1">
               <li>Enter your Activation Code to verify your subscription (no patient data is sent).</li>
-              <li>Create your office record and first admin login (local to this office).</li>
+              <li>Create your office record and first owner login (local to this office).</li>
               <li>After setup, new users can request access from the sign-in screen and be approved in <b>Team</b>.</li>
             </ol>
             <Alert>
@@ -555,11 +571,10 @@ export default function SetupPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <UserPlus className="h-5 w-5 text-primary" />
-                Create the admin login
+                Create the owner login
               </CardTitle>
               <CardDescription>
-                This person can manage the office and add team members. It’s separate from the billing portal login (you
-                can use the same email if you want).
+                This owner login controls approvals and office settings so your team can start work quickly and safely.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -581,10 +596,11 @@ export default function SetupPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="adminEmail">Email *</Label>
-                <Input id="adminEmail" type="email" placeholder="admin@practice.com" {...form.register("adminEmail")} />
-                {form.formState.errors.adminEmail && (
-                  <p className="text-sm text-destructive">{form.formState.errors.adminEmail.message}</p>
+                <Label htmlFor="adminLoginId">Login ID *</Label>
+                <Input id="adminLoginId" placeholder="jane.cho" {...form.register("adminLoginId")} />
+                <p className="text-xs text-muted-foreground">3-32 characters. Use letters, numbers, ".", "-", or "_".</p>
+                {form.formState.errors.adminLoginId && (
+                  <p className="text-sm text-destructive">{form.formState.errors.adminLoginId.message}</p>
                 )}
               </div>
 
@@ -601,6 +617,29 @@ export default function SetupPage() {
                   <Input id="adminPasswordConfirm" type="password" {...form.register("adminPasswordConfirm")} />
                   {form.formState.errors.adminPasswordConfirm && (
                     <p className="text-sm text-destructive">{form.formState.errors.adminPasswordConfirm.message}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="adminPin">6-digit PIN *</Label>
+                  <Input id="adminPin" type="password" inputMode="numeric" maxLength={6} {...form.register("adminPin")} />
+                  {form.formState.errors.adminPin && (
+                    <p className="text-sm text-destructive">{form.formState.errors.adminPin.message}</p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="adminPinConfirm">Confirm PIN *</Label>
+                  <Input
+                    id="adminPinConfirm"
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    {...form.register("adminPinConfirm")}
+                  />
+                  {form.formState.errors.adminPinConfirm && (
+                    <p className="text-sm text-destructive">{form.formState.errors.adminPinConfirm.message}</p>
                   )}
                 </div>
               </div>

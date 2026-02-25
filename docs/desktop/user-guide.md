@@ -15,7 +15,7 @@
 3. On the Host, complete the one-time setup:
    - Enter your **Activation Code** (from the billing portal). Tip: if you used an activation link, the code may auto-fill.
    - Enter your **office details**
-   - Create the first **Admin login** (this is local to your office — it does not need to match the billing portal login)
+   - Create the first **Owner login** with **Login ID**, **password**, and **6-digit PIN**
 4. After setup completes, sign in and open **Team** to review pending account requests.
    - Team members can request access directly from the sign-in screen.
 

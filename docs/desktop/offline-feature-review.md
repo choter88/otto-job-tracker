@@ -102,7 +102,7 @@ For each item below:
 ### 3) Sign in / sign up (local accounts)
 
 **Current**
-- Local email/password accounts, session timeout, and Host-approved account requests for first-time users.
+- Local Login ID/password/PIN accounts, session timeout, and Host-approved account requests for first-time users.
 - Portal login is separate.
 
 **Recommendation: Keep**
@@ -115,7 +115,7 @@ For each item below:
 - On Host setup screen, explicitly say:
   - “Billing portal login is for your subscription.”
   - “Otto Tracker login is for staff inside the office.”
-  - “You may use the same email address, but passwords are separate.”
+  - “Staff use Login ID + password, with optional quick PIN unlock.”
 
 ### 4) Job tracking (create/edit/status/archive/restore/redo)
 

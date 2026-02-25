@@ -1,13 +1,14 @@
 import { randomUUID } from "crypto";
 import { sqlite } from "./db";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
-import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
+import { buildLocalAuthEmail, deriveLoginIdCandidates, normalizeLoginId, validateLoginId } from "./auth-identifiers";
 
 type ImportAdmin = {
-  email: string;
+  loginId: string;
   firstName: string;
   lastName: string;
   passwordHash: string;
+  pinHash: string;
 };
 
 const LEGACY_NO_LOGIN_MARKER = "LEGACY_IDENTITY_NO_LOGIN";
@@ -16,7 +17,7 @@ const ALLOWED_USER_ROLES = new Set(["owner", "manager", "staff", "view_only", "s
 
 export type ImportSnapshotResult = {
   officeId: string;
-  adminEmail: string;
+  adminUserId: string;
   importedCounts: Record<string, number>;
   synthesizedLegacyUsers: number;
 };
@@ -396,6 +397,7 @@ export function importSnapshotV1(params: {
     userRows.push({
       id,
       email,
+      pin_hash: asString((u as any).pinHash ?? (u as any).pin_hash).trim() || null,
       password,
       first_name: firstName,
       last_name: lastName,
@@ -406,24 +408,40 @@ export function importSnapshotV1(params: {
     });
   }
 
-  // Ensure admin user exists (either override snapshot user by email or add a new owner user).
-  const adminEmail = normalizeEmail(params.admin.email);
-  if (!adminEmail) {
-    throw new Error("Admin email is required");
+  // Ensure admin user exists (override by Login ID, otherwise add a new owner user).
+  const adminLoginId = normalizeLoginId(params.admin.loginId);
+  const adminLoginIdError = validateLoginId(adminLoginId);
+  if (adminLoginIdError) {
+    throw new Error(adminLoginIdError);
   }
+  if (!params.admin.pinHash) throw new Error("Admin PIN hash is required");
 
-  const existingAdmin = userRows.find((u) => String(u.email).toLowerCase() === adminEmail);
+  const existingAdmin = userRows.find(
+    (u) => normalizeLoginId(String((u as any).login_id || "")) === adminLoginId,
+  );
+  let adminUserId = "";
   if (existingAdmin) {
+    adminUserId = String(existingAdmin.id);
     existingAdmin.password = params.admin.passwordHash;
+    existingAdmin.pin_hash = params.admin.pinHash;
     existingAdmin.first_name = params.admin.firstName;
     existingAdmin.last_name = params.admin.lastName;
     existingAdmin.role = "owner";
+    existingAdmin.login_id = adminLoginId;
     existingAdmin.updated_at = now;
   } else {
+    const usedEmails = new Set(userRows.map((u) => String(u.email || "").toLowerCase()).filter(Boolean));
+    let adminEmail = buildLocalAuthEmail(adminLoginId, officeId);
+    while (usedEmails.has(adminEmail.toLowerCase())) {
+      adminEmail = buildLocalAuthEmail(adminLoginId, officeId);
+    }
+    adminUserId = randomUUID();
     userRows.push({
-      id: randomUUID(),
+      id: adminUserId,
       email: adminEmail,
+      login_id: adminLoginId,
       password: params.admin.passwordHash,
+      pin_hash: params.admin.pinHash,
       first_name: params.admin.firstName,
       last_name: params.admin.lastName,
       role: "owner",
@@ -488,6 +506,7 @@ export function importSnapshotV1(params: {
       id: normalized,
       email,
       password: LEGACY_NO_LOGIN_MARKER,
+      pin_hash: null,
       first_name: "Legacy",
       last_name: "User",
       role: "view_only",
@@ -844,8 +863,8 @@ export function importSnapshotV1(params: {
   );
 
   const insertUser = sqlite.prepare(
-    `INSERT INTO users (id, email, login_id, password, first_name, last_name, role, office_id, created_at, updated_at)
-     VALUES (@id, @email, @login_id, @password, @first_name, @last_name, @role, @office_id, @created_at, @updated_at)`,
+    `INSERT INTO users (id, email, login_id, password, pin_hash, first_name, last_name, role, office_id, created_at, updated_at)
+     VALUES (@id, @email, @login_id, @password, @pin_hash, @first_name, @last_name, @role, @office_id, @created_at, @updated_at)`,
   );
 
   const insertJob = sqlite.prepare(
@@ -922,5 +941,5 @@ export function importSnapshotV1(params: {
     for (const row of ruleRows) insertRule.run(row);
   })();
 
-  return { officeId, adminEmail, importedCounts, synthesizedLegacyUsers };
+  return { officeId, adminUserId, importedCounts, synthesizedLegacyUsers };
 }
