@@ -3,7 +3,7 @@
 ## What you need
 
 - All computers must be on the **same office network** (same Wi‑Fi or Ethernet).
-- Pick one computer to be the **Host computer (Main computer)** (usually a front desk computer that stays on).
+- Pick one computer to be the **Host computer** (usually a front desk computer that stays on).
 - The Host needs periodic internet access for licensing check-ins (no patient data is sent).
 - If check-ins are overdue, Otto Tracker keeps retrying and can continue in grace mode for a limited period before switching to **read-only**.
 - The Host computer should be set so it **does not go to sleep** during business hours (sleep will disconnect Clients).
@@ -38,8 +38,8 @@ You’ll use one of those on each Client computer.
 4. If auto-detect doesn’t find the Host, click **Enter Host details manually** and enter:
    - **Host address**
    - **Pairing code** (from the Host)
-5. Click **Connect & Restart**.
-   - Otto checks the connection, requests Host approval, then restarts automatically.
+5. Click **Connect & Finish**.
+   - Otto checks the connection, requests Host approval, and saves the connection in one flow.
 6. Approve the request on the **Host** when prompted.
 7. Sign in (existing user) or create a new login:
    - To create a new login, choose **First time here?** and submit an access request.

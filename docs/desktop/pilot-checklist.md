@@ -18,7 +18,7 @@ This is a short, practical checklist for getting a real office on the desktop ap
 
 ## Onsite setup (office)
 
-### A) Choose the Host computer (SOT)
+### A) Choose the Host computer
 
 Keep it simple:
 - Pick a computer that stays on all day (front desk is usually best).
@@ -46,9 +46,9 @@ Backups should go to a shared office network folder (not the Host’s local driv
 ### D) Install + connect each Client
 
 1. Install Otto Tracker and choose **Client**.
-2. Try **Auto-detect Main Computer** first.
+2. Try **Auto-detect Host Computer** first.
 3. If needed, paste Host address + Pairing code manually.
-4. Click **Test Connection** and approve on Host when prompted, then **Save & Restart**.
+4. Click **Connect & Finish** and approve on Host when prompted.
 5. Each team member signs in (existing) or clicks **First time here?** to submit an access request.
 6. New account requests include first/last name, Login ID, password, and 6-digit PIN.
 7. On the Host, owner/manager approves each pending request in **Team**.

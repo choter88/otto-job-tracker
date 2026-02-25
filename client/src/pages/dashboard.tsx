@@ -8,6 +8,7 @@ import OverdueJobs from "@/components/overdue-jobs";
 import TeamPage from "@/components/team-page";
 import NotificationRules from "@/components/notification-rules";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
+import HostApprovalCenter from "@/components/host-approval-center";
 import ImportantJobs from "@/pages/important-jobs";
 import NotificationBell from "@/components/notification-bell";
 import SettingsModal from "@/components/settings-modal";
@@ -213,6 +214,7 @@ export default function Dashboard() {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 pb-16">
+          <HostApprovalCenter />
           {/* Tab Content */}
           {renderTabContent()}
         </div>

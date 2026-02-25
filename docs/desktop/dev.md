@@ -23,7 +23,7 @@ If you see `tsx: command not found` or `electron: command not found`, it means s
 3. Choose **Client** and connect to the Host (auto-detect first, then manual Host details if needed).
    - In dev, the Host runs over HTTP and does not require a pairing code.
    - In the packaged desktop app, the Host runs over HTTPS and Clients will need the pairing code shown by **File → Show Host Address…**.
-   - Click **Connect & Restart** to run connection test + Host approval in one flow.
+   - Click **Connect & Finish** to run connection test + Host approval in one flow.
 
 ## Building installers (macOS/Windows)
 

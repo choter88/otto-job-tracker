@@ -410,9 +410,9 @@
         </div>
 
         <div id="clientSettings" class="client-panel" style="display:none">
-          <div class="step">Step 2 · Find Host computer (Main computer)</div>
+          <div class="step">Step 2 · Find Host computer</div>
           <div class="hint">
-            Recommended: auto-detect the Host computer, then click <b>Connect & Restart</b>.
+            Recommended: auto-detect the Host computer, then click <b>Connect & Finish</b>.
           </div>
 
           <div class="actions">
@@ -448,11 +448,11 @@
           <div id="manualLookupNote" class="hint danger" style="display:none; margin-top: 8px;"></div>
 
           <div class="step" style="margin-top: 14px;">Step 3 · Sign in</div>
-          <div class="hint">After restart, sign in with Login ID + password or PIN, or request account access.</div>
+          <div class="hint">After setup, sign in with Login ID + password or PIN, or request account access.</div>
         </div>
 
         <div class="actions footer">
-          <button id="save">Save & Restart</button>
+          <button id="save">Save & Continue</button>
         </div>
       </section>
     </main>
@@ -491,7 +491,7 @@
         clientSettings.style.display = selectedMode() === "client" ? "block" : "none";
         if (selectedMode() === "client") {
           saveBtn.disabled = connectionBusy;
-          saveBtn.textContent = "Connect & Restart";
+          saveBtn.textContent = "Connect & Finish";
           if (toggleManualEntryBtn) {
             toggleManualEntryBtn.textContent = manualEntryVisible
               ? "Hide manual Host details"
@@ -502,7 +502,7 @@
           }
         } else {
           saveBtn.disabled = connectionBusy;
-          saveBtn.textContent = "Save & Restart";
+          saveBtn.textContent = "Save & Continue";
           setDiscoverStatus("");
           clearDiscoveredHosts();
           manualEntryVisible = false;
@@ -587,7 +587,7 @@
           pairingCode.value = formatPairingCode(host.pairingCode);
         }
         setManualEntryVisible(true);
-        setConnectStatus("Host selected. Click Connect & Restart to finish.", "ok");
+        setConnectStatus("Host selected. Click Connect & Finish to finish setup.", "ok");
       }
 
       function renderDiscoveredHosts() {
@@ -698,7 +698,7 @@
               "err",
             );
             setManualEntryVisible(true);
-            setConnectStatus("Auto-detect did not find a Host computer. Enter details manually, then click Connect & Restart.", "err");
+            setConnectStatus("Auto-detect did not find a Host computer. Enter details manually, then click Connect & Finish.", "err");
             return;
           }
 
@@ -719,7 +719,7 @@
             "err",
           );
           setManualEntryVisible(true);
-          setConnectStatus("Auto-detect failed. Enter Host details manually, then click Connect & Restart.", "err");
+          setConnectStatus("Auto-detect failed. Enter Host details manually, then click Connect & Finish.", "err");
         } finally {
           window.clearInterval(progressTimer);
           setConnectionBusy(false);
@@ -819,8 +819,13 @@
             setConnectStatus("Step 2 of 3: Host approval not required in this build.", "ok");
           }
 
-          setConnectStatus("Step 3 of 3: Saving and restarting…", "ok");
-          await window.otto.saveConfig(config);
+          setConnectStatus("Step 3 of 3: Saving setup…", "ok");
+          const saveResult = await window.otto.saveConfig(config);
+          if (saveResult?.ok === false) {
+            setConnectStatus(saveResult?.message || "Could not finish setup. Please review Host details and try again.", "err");
+            return;
+          }
+          setConnectStatus("Setup complete. Opening workspace…", "ok");
         } catch {
           setConnectStatus("Connection failed. Please verify the Host address and Pairing code.", "err");
         } finally {
@@ -869,7 +874,10 @@
             alert("Setup is not ready. Please close Otto Tracker and open it again.");
             return;
           }
-          await window.otto.saveConfig(config);
+          const saveResult = await window.otto.saveConfig(config);
+          if (saveResult?.ok === false) {
+            alert(saveResult?.message || "Could not save setup. Please review your details and try again.");
+          }
         } catch (e) {
           alert("Could not save settings. Please close Otto Tracker and open it again.");
         }

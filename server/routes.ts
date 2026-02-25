@@ -190,12 +190,12 @@ function buildSetupHandshakeClientResponse(req: SetupHandshakeRequest) {
   const status = req.status;
   const message =
     status === "approved"
-      ? req.decisionNote || "Approved on the Main computer."
+      ? req.decisionNote || "Approved on the Host computer."
       : status === "denied"
-        ? req.decisionNote || "Request denied on the Main computer."
+        ? req.decisionNote || "Request denied on the Host computer."
         : status === "expired"
           ? req.decisionNote || "Approval request timed out."
-          : "Waiting for approval on the Main computer.";
+          : "Waiting for approval on the Host computer.";
 
   return {
     ok: status === "approved",
@@ -340,7 +340,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         status: "pending",
         createdAt,
         expiresAt,
-        message: "Waiting for approval on the Main computer.",
+        message: "Waiting for approval on the Host computer.",
       });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Could not create approval request" });
@@ -406,8 +406,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     const decision = decisionRaw as "approved" | "denied";
     const noteFallback =
       decision === "approved"
-        ? "Approved on the Main computer."
-        : "Denied on the Main computer.";
+        ? "Approved on the Host computer."
+        : "Denied on the Host computer.";
     const note = sanitizeSetupHandshakeText(req.body?.note, noteFallback, 220);
 
     found.status = decision;

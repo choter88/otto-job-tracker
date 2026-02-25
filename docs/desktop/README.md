@@ -17,14 +17,14 @@ The simplest desktop conversion keeps the web UI and API exactly as-is, but runs
 
 **One executable, two modes:**
 
-1) **Host (SOT) mode**
+1) **Host computer mode**
 - Runs the Express API locally
 - Stores the database locally *on the host computer* (SQLite file in the app data directory)
 - Serves the web UI/API to desktop clients on the LAN
 
 2) **Client mode**
 - Does **not** store the office database locally (may temporarily store a small **encrypted offline queue** to sync writes)
-- Opens a desktop window pointed at the Host’s URL (for example `https://SOT-IP:5150`) — no separate browser required
+- Opens a desktop window pointed at the Host’s URL (for example `https://HOST-IP:5150`) — no separate browser required
 - First-time connection uses a **pairing code** (shown on the Host) to trust the Host certificate
 - During setup, Client can auto-detect the Host, then requires Host-side approval before saving the connection
 
@@ -67,7 +67,7 @@ Details: `docs/security/hipaa.md`.
 - Package as a desktop app (recommended: Electron) that launches the local server + opens the UI.
 
 ### Phase 2 — LAN clients (baseline implemented)
-- “Connect to host” UX (auto-detect Host computer, manual fallback, single Connect & Restart action, Host approval).
+- “Connect to host” UX (auto-detect Host computer, manual fallback, single Connect & Finish action, Host approval).
 - Team onboarding UX (first-time access request + Host approval + Login ID/password/PIN credentials).
 - HTTPS from the host (self-issued cert + pinning in the desktop client).
 - Backup/restore flows (Host menu).

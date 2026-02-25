@@ -30,6 +30,7 @@ let cachedHostTlsInfo = null;
 let automaticBackupInterval = null;
 let backupWarningShown = false;
 let mainWindow = null;
+let setupWindow = null;
 let appReadyForOpenEvents = false;
 const pendingOpenUrls = [];
 const pendingOpenFiles = [];
@@ -44,8 +45,10 @@ const SETUP_APPROVAL_REQUEST_TIMEOUT_MS = 90_000;
 const SETUP_APPROVAL_POLL_INTERVAL_MS = 2_000;
 const HOST_APPROVAL_POLL_INTERVAL_MS = 3_000;
 const HOST_APPROVAL_PROMPT_COOLDOWN_MS = 45_000;
+const HOST_APPROVAL_CENTER_HEARTBEAT_TTL_MS = 20_000;
 let hostApprovalPollInterval = null;
 let hostApprovalPromptActive = false;
+let hostApprovalCenterHeartbeatAt = 0;
 const hostApprovalPromptedAt = new Map();
 
 process.on("uncaughtException", (error) => {
@@ -771,7 +774,7 @@ async function requestHostSetupApproval(payload) {
     return {
       ok: false,
       approved: false,
-      message: test?.message || "Could not connect to the Main computer.",
+      message: test?.message || "Could not connect to the Host computer.",
     };
   }
 
@@ -782,7 +785,7 @@ async function requestHostSetupApproval(payload) {
     return {
       ok: false,
       approved: false,
-      message: "Please enter a valid Main computer address.",
+      message: "Please enter a valid Host computer address.",
     };
   }
 
@@ -834,7 +837,7 @@ async function requestHostSetupApproval(payload) {
     return {
       ok: false,
       approved: false,
-      message: "Main computer did not return a valid approval request.",
+      message: "Host computer did not return a valid approval request.",
     };
   }
 
@@ -853,7 +856,7 @@ async function requestHostSetupApproval(payload) {
         return {
           ok: false,
           approved: false,
-          message: "Approval request expired. Ask someone at the Main computer to retry.",
+          message: "Approval request expired. Ask someone at the Host computer to retry.",
         };
       }
       return {
@@ -863,7 +866,7 @@ async function requestHostSetupApproval(payload) {
           statusResult?.json?.error ||
           statusResult?.json?.message ||
           statusResult?.error ||
-          "Could not read approval status from the Main computer.",
+          "Could not read approval status from the Host computer.",
       };
     }
 
@@ -871,12 +874,12 @@ async function requestHostSetupApproval(payload) {
     const message =
       String(statusResult?.json?.message || "").trim() ||
       (status === "approved"
-        ? "Approved on the Main computer."
+        ? "Approved on the Host computer."
         : status === "denied"
-          ? "Denied on the Main computer."
+          ? "Denied on the Host computer."
           : status === "expired"
             ? "Approval request timed out."
-            : "Waiting for approval on the Main computer.");
+            : "Waiting for approval on the Host computer.");
 
     if (status === "approved") {
       return { ok: true, approved: true, status, message };
@@ -892,7 +895,7 @@ async function requestHostSetupApproval(payload) {
     ok: false,
     approved: false,
     status: "timeout",
-    message: "Timed out waiting for Main computer approval.",
+    message: "Timed out waiting for Host computer approval.",
   };
 }
 
@@ -921,8 +924,19 @@ async function submitSetupApprovalDecisionFromHost(requestId, decision, note) {
   return result.ok;
 }
 
+function markHostApprovalCenterHeartbeat() {
+  hostApprovalCenterHeartbeatAt = Date.now();
+}
+
+function isHostApprovalCenterActive() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMinimized() || !mainWindow.isVisible()) return false;
+  return Date.now() - hostApprovalCenterHeartbeatAt <= HOST_APPROVAL_CENTER_HEARTBEAT_TTL_MS;
+}
+
 async function maybePromptForPendingHostApproval() {
   if (hostApprovalPromptActive) return;
+  if (isHostApprovalCenterActive()) return;
 
   const pending = await fetchPendingSetupApprovalsForHost();
   if (!Array.isArray(pending) || pending.length === 0) return;
@@ -982,13 +996,13 @@ async function maybePromptForPendingHostApproval() {
         });
 
     if (result.response === 0) {
-      await submitSetupApprovalDecisionFromHost(requestId, "approved", "Approved on the Main computer.");
+      await submitSetupApprovalDecisionFromHost(requestId, "approved", "Approved on the Host computer.");
       hostApprovalPromptedAt.delete(requestId);
       return;
     }
 
     if (result.response === 1) {
-      await submitSetupApprovalDecisionFromHost(requestId, "denied", "Denied on the Main computer.");
+      await submitSetupApprovalDecisionFromHost(requestId, "denied", "Denied on the Host computer.");
       hostApprovalPromptedAt.delete(requestId);
       return;
     }
@@ -1005,6 +1019,7 @@ function stopHostSetupApprovalPolling() {
     hostApprovalPollInterval = null;
   }
   hostApprovalPromptActive = false;
+  hostApprovalCenterHeartbeatAt = 0;
   hostApprovalPromptedAt.clear();
 }
 
@@ -1130,7 +1145,7 @@ async function testHostConnection(hostUrl, pairingCode) {
   }
 
   if (result?.json?.ok !== true) {
-    return { ok: false, message: "Main computer responded unexpectedly. Please try again." };
+    return { ok: false, message: "Host computer responded unexpectedly. Please try again." };
   }
 
   const certificateVerified = !isHttps || Boolean(result.fingerprintHex);
@@ -1138,7 +1153,7 @@ async function testHostConnection(hostUrl, pairingCode) {
     ok: true,
     message: certificateVerified
       ? "Connection successful."
-      : "Connection successful. Waiting for Main computer approval…",
+      : "Connection successful. Waiting for Host computer approval…",
   };
 }
 
@@ -1854,6 +1869,12 @@ function createBootWindow() {
 }
 
 function createSetupWindow() {
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    if (setupWindow.isMinimized()) setupWindow.restore();
+    setupWindow.focus();
+    return setupWindow;
+  }
+
   const win = new BrowserWindow({
     title: `${APP_DISPLAY_NAME} Setup`,
     width: 720,
@@ -1873,7 +1894,96 @@ function createSetupWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.loadFile(path.join(__dirname, "setup.html"));
   setupNoInternetNetworkGuard(win.webContents.session);
+  setupWindow = win;
+  win.on("closed", () => {
+    if (setupWindow === win) setupWindow = null;
+  });
   return win;
+}
+
+function getTargetUrlForConfig(config) {
+  const port = process.env.PORT || "5150";
+  if (config.mode === "host") {
+    return `${app.isPackaged ? "https" : "http"}://127.0.0.1:${port}`;
+  }
+  return config.hostUrl;
+}
+
+async function launchMainWindowForConfig(config, options = {}) {
+  const showBootWindow = options?.showBootWindow !== false;
+  setAppMenu(config);
+
+  let bootWindow = null;
+  if (config.mode === "host" && showBootWindow) {
+    bootWindow = createBootWindow();
+  }
+
+  try {
+    if (config.mode === "host") {
+      applyLicenseEgressAllowlist();
+    }
+
+    if (config.mode === "host" && app.isPackaged) {
+      applyHostTlsEnv();
+    }
+
+    if (config.mode === "host") {
+      const port = Number(process.env.PORT || "5150");
+      const available = await isPortAvailable(port, "0.0.0.0");
+      if (!available) {
+        await dialog.showMessageBox({
+          type: "error",
+          message: `Port ${port} is already in use`,
+          detail:
+            "Another app is using the port Otto Tracker needs.\n\n" +
+            "Please close the other app (or restart your computer) and try again.",
+        });
+        return false;
+      }
+    }
+
+    await maybeStartHostServer();
+
+    if (config.mode === "host") {
+      const protocol = app.isPackaged ? "https" : "http";
+      const port = process.env.PORT || "5150";
+      let readiness = await waitForHostReady({
+        protocol,
+        host: "127.0.0.1",
+        port,
+        timeoutMs: 30000,
+      });
+
+      while (!readiness.ok) {
+        const action = await showHostStartFailureDialog();
+        if (action !== 0) {
+          return false;
+        }
+        readiness = await waitForHostReady({
+          protocol,
+          host: "127.0.0.1",
+          port,
+          timeoutMs: 30000,
+        });
+      }
+    }
+
+    const targetUrl = getTargetUrlForConfig(config);
+    createWindow(targetUrl, config);
+    startHostSetupApprovalPolling(config);
+
+    if (config.mode === "host") {
+      await maybePromptForBackupFolder();
+      await maybeWarnAboutBackups();
+      scheduleAutomaticBackups();
+    }
+
+    return true;
+  } finally {
+    if (bootWindow && !bootWindow.isDestroyed()) {
+      bootWindow.close();
+    }
+  }
 }
 
 function setupContextMenu(win) {
@@ -2342,6 +2452,7 @@ async function exportSupportBundle() {
 
 ipcMain.handle("otto:config:get", async () => readConfig());
 ipcMain.handle("otto:config:set", async (_event, configInput) => {
+  const hadConfigFileBeforeWrite = fs.existsSync(getConfigPath());
   const previous = readConfig();
   const config = { ...getDefaultConfig(), ...previous, ...configInput };
 
@@ -2371,8 +2482,26 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
   }
 
   writeConfig(config);
+  if (!hadConfigFileBeforeWrite) {
+    const launched = await launchMainWindowForConfig(config, {
+      showBootWindow: config.mode === "host",
+    });
+    if (!launched) {
+      return {
+        ok: false,
+        relaunched: false,
+        message: "Could not start Otto Tracker with the selected setup. Please review your details and try again.",
+      };
+    }
+    if (setupWindow && !setupWindow.isDestroyed()) {
+      setupWindow.close();
+    }
+    return { ok: true, relaunched: false };
+  }
+
   app.relaunch();
   app.exit(0);
+  return { ok: true, relaunched: true };
 });
 
 ipcMain.handle("otto:connection:test", async (_event, payload) => {
@@ -2443,6 +2572,10 @@ ipcMain.handle("otto:supportBundle:export", async () => {
 
 ipcMain.handle("otto:sms:draft:open", async (_event, payload) => {
   return await openSmsDraft(payload || {});
+});
+
+ipcMain.on("otto:host-approval-center:heartbeat", () => {
+  markHostApprovalCenterHeartbeat();
 });
 
 function computeHostInfo() {
@@ -3105,84 +3238,15 @@ app.whenReady().then(async () => {
     }
   }
 
-  const config = readConfig();
-  setAppMenu(config);
-  if (!fs.existsSync(getConfigPath())) {
+  const hasConfigFile = fs.existsSync(getConfigPath());
+  if (!hasConfigFile) {
+    setAppMenu(getDefaultConfig());
     createSetupWindow();
     return;
   }
 
-  let bootWindow = null;
-  if (config.mode === "host") {
-    bootWindow = createBootWindow();
-  }
-
-  if (config.mode === "host") {
-    applyLicenseEgressAllowlist();
-  }
-
-  if (config.mode === "host" && app.isPackaged) {
-    applyHostTlsEnv();
-  }
-
-  if (config.mode === "host") {
-    const port = Number(process.env.PORT || "5150");
-    const available = await isPortAvailable(port, "0.0.0.0");
-    if (!available) {
-      await dialog.showMessageBox({
-        type: "error",
-        message: `Port ${port} is already in use`,
-        detail:
-          "Another app is using the port Otto Tracker needs.\n\n" +
-          "Please close the other app (or restart your computer) and try again.",
-      });
-      return;
-    }
-  }
-
-  await maybeStartHostServer();
-
-  if (config.mode === "host") {
-    const protocol = app.isPackaged ? "https" : "http";
-    const port = process.env.PORT || "5150";
-    let readiness = await waitForHostReady({
-      protocol,
-      host: "127.0.0.1",
-      port,
-      timeoutMs: 30000,
-    });
-
-    while (!readiness.ok) {
-      const action = await showHostStartFailureDialog();
-      if (action !== 0) {
-        return;
-      }
-      readiness = await waitForHostReady({
-        protocol,
-        host: "127.0.0.1",
-        port,
-        timeoutMs: 30000,
-      });
-    }
-  }
-
-  const port = process.env.PORT || "5150";
-  const targetUrl =
-    config.mode === "host"
-      ? `${app.isPackaged ? "https" : "http"}://127.0.0.1:${port}`
-      : config.hostUrl;
-  createWindow(targetUrl, config);
-  startHostSetupApprovalPolling(config);
-
-  if (bootWindow) {
-    bootWindow.close();
-  }
-
-  if (config.mode === "host") {
-    await maybePromptForBackupFolder();
-    await maybeWarnAboutBackups();
-    scheduleAutomaticBackups();
-  }
+  const config = readConfig();
+  await launchMainWindowForConfig(config, { showBootWindow: true });
 });
 
 app.on("window-all-closed", () => {
@@ -3221,18 +3285,13 @@ app.on("activate", () => {
     return;
   }
 
-  if (!fs.existsSync(getConfigPath())) {
+  const hasConfigFile = fs.existsSync(getConfigPath());
+  if (!hasConfigFile) {
+    setAppMenu(getDefaultConfig());
     createSetupWindow();
     return;
   }
 
   const config = readConfig();
-  setAppMenu(config);
-  const port = process.env.PORT || "5150";
-  const targetUrl =
-    config.mode === "host"
-      ? `${app.isPackaged ? "https" : "http"}://127.0.0.1:${port}`
-      : config.hostUrl;
-  createWindow(targetUrl, config);
-  startHostSetupApprovalPolling(config);
+  void launchMainWindowForConfig(config, { showBootWindow: false });
 });
