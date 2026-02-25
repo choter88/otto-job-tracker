@@ -67,7 +67,7 @@ Details: `docs/security/hipaa.md`.
 - Package as a desktop app (recommended: Electron) that launches the local server + opens the UI.
 
 ### Phase 2 — LAN clients (baseline implemented)
-- “Connect to host” UX (auto-detect or saved host address + pairing code + Host approval).
+- “Connect to host” UX (auto-detect Host computer, manual fallback, single Connect & Restart action, Host approval).
 - Team onboarding UX (first-time access request + Host approval + Login ID/password/PIN credentials).
 - HTTPS from the host (self-issued cert + pinning in the desktop client).
 - Backup/restore flows (Host menu).

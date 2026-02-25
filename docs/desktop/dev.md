@@ -1,6 +1,6 @@
 # Desktop development notes
 
-## Host (SOT) dev
+## Host computer dev
 
 1. Install the app’s dependencies (one-time per computer):
    - `npm install`
@@ -20,10 +20,10 @@ If you see `tsx: command not found` or `electron: command not found`, it means s
 1. Ensure the Host is running on a LAN-accessible IP (set `OTTO_LISTEN_HOST=0.0.0.0`).
 2. Start Electron on another machine:
    - `npm run desktop`
-3. Choose **Client** and connect to the Host (auto-detect first, then manual host URL if needed).
+3. Choose **Client** and connect to the Host (auto-detect first, then manual Host details if needed).
    - In dev, the Host runs over HTTP and does not require a pairing code.
    - In the packaged desktop app, the Host runs over HTTPS and Clients will need the pairing code shown by **File → Show Host Address…**.
-   - Client connection approval happens on the Host computer.
+   - Click **Connect & Restart** to run connection test + Host approval in one flow.
 
 ## Building installers (macOS/Windows)
 

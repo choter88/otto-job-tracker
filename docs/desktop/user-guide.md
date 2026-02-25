@@ -3,12 +3,12 @@
 ## What you need
 
 - All computers must be on the **same office network** (same Wi‑Fi or Ethernet).
-- Pick one computer to be the **Host (SOT)** (usually a front desk computer that stays on).
+- Pick one computer to be the **Host computer (Main computer)** (usually a front desk computer that stays on).
 - The Host needs periodic internet access for licensing check-ins (no patient data is sent).
 - If check-ins are overdue, Otto Tracker keeps retrying and can continue in grace mode for a limited period before switching to **read-only**.
 - The Host computer should be set so it **does not go to sleep** during business hours (sleep will disconnect Clients).
 
-## Step 1 — Install on the Host (SOT)
+## Step 1 — Install on the Host computer
 
 1. Install and open Otto Tracker.
 2. When asked, choose **“This computer is the Host”**.
@@ -34,12 +34,13 @@ You’ll use one of those on each Client computer.
 
 1. Install and open Otto Tracker.
 2. Choose **“This computer is a Client”**.
-3. Click **Auto-detect Main Computer** (recommended), or enter values manually:
-   - Paste the **Host address** into the box
-   - Enter the **Pairing code** (from the Host)
-4. Click **Test Connection**.
-5. Approve the request on the **Host** when prompted.
-6. If it says **Connection approved**, click **Save & Restart**.
+3. Click **Auto-detect Host Computer** (recommended).
+4. If auto-detect doesn’t find the Host, click **Enter Host details manually** and enter:
+   - **Host address**
+   - **Pairing code** (from the Host)
+5. Click **Connect & Restart**.
+   - Otto checks the connection, requests Host approval, then restarts automatically.
+6. Approve the request on the **Host** when prompted.
 7. Sign in (existing user) or create a new login:
    - To create a new login, choose **First time here?** and submit an access request.
    - An owner/manager must approve the request on the Host in **Team**.
@@ -88,7 +89,7 @@ This replaces the Host’s current data with the backup.
 - Confirm both computers are on the same Wi‑Fi/network.
 - Try a different Host address from **Show Host Address…**
 - Re-check the **Pairing code** (Client setup screen) matches the Host.
-- If auto-detect does not find the Host, manually copy both values from **File → Show Host Address…** on the Host.
+- If auto-detect does not find the Host, click **Enter Host details manually** and copy both values from **File → Show Host Address…** on the Host.
 
 ## If the office network drops briefly
 

@@ -260,6 +260,18 @@
         flex-wrap: wrap;
       }
 
+      .manual-toggle {
+        margin-top: 12px;
+      }
+
+      .manual-entry {
+        margin-top: 12px;
+        border: 1px dashed var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        background: rgba(248, 251, 255, 0.65);
+      }
+
       button {
         border: 1px solid var(--border);
         background: #fff;
@@ -398,39 +410,45 @@
         </div>
 
         <div id="clientSettings" class="client-panel" style="display:none">
-          <div class="step">Step 2 · Connect to Host</div>
-
-          <div class="field">
-            <label for="hostUrl">Host computer address</label>
-            <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
-            <div class="hint">Copy from the Host computer: <b>File → Show Host Address…</b></div>
-          </div>
-
-          <div class="field">
-            <label for="pairingCode">Pairing code</label>
-            <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
-            <div class="hint danger">Required on first connection to trust the Host certificate.</div>
+          <div class="step">Step 2 · Find Host computer (Main computer)</div>
+          <div class="hint">
+            Recommended: auto-detect the Host computer, then click <b>Connect & Restart</b>.
           </div>
 
           <div class="actions">
-            <button id="discoverHosts" type="button">Auto-detect Main Computer</button>
-            <button id="testConnection" type="button">Test Connection</button>
+            <button id="discoverHosts" type="button">Auto-detect Host Computer</button>
+          </div>
+
+          <button id="toggleManualEntry" class="manual-toggle" type="button">Enter Host details manually</button>
+
+          <div id="manualEntry" class="manual-entry" style="display:none">
+            <div class="field">
+              <label for="hostUrl">Host computer address</label>
+              <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
+              <div class="hint">Copy from the Host computer: <b>File → Show Host Address…</b></div>
+            </div>
+
+            <div class="field">
+              <label for="pairingCode">Pairing code</label>
+              <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
+              <div class="hint danger">Required on first connection to trust the Host certificate.</div>
+            </div>
           </div>
 
           <div id="discoverStatus" class="status"></div>
           <div id="discoverResults" class="box" style="display:none">
-            <label for="discoveredHostSelect">Detected Main computers</label>
+            <label for="discoveredHostSelect">Detected Host computers</label>
             <select id="discoveredHostSelect"></select>
             <div class="actions">
               <button id="useDiscoveredHost" type="button">Use Selected</button>
             </div>
           </div>
 
-          <div id="testStatus" class="status"></div>
+          <div id="connectStatus" class="status"></div>
           <div id="manualLookupNote" class="hint danger" style="display:none; margin-top: 8px;"></div>
 
-          <div class="step" style="margin-top: 14px;">Step 3 · Sign In</div>
-          <div class="hint">After saving, sign in with your Login ID and password (or PIN), or request new account access.</div>
+          <div class="step" style="margin-top: 14px;">Step 3 · Sign in</div>
+          <div class="hint">After restart, sign in with Login ID + password or PIN, or request account access.</div>
         </div>
 
         <div class="actions footer">
@@ -445,16 +463,18 @@
       const pairingCode = document.getElementById("pairingCode");
       const saveBtn = document.getElementById("save");
       const discoverBtn = document.getElementById("discoverHosts");
-      const testBtn = document.getElementById("testConnection");
+      const toggleManualEntryBtn = document.getElementById("toggleManualEntry");
+      const manualEntry = document.getElementById("manualEntry");
       const discoverStatus = document.getElementById("discoverStatus");
       const discoverResults = document.getElementById("discoverResults");
       const discoveredHostSelect = document.getElementById("discoveredHostSelect");
       const useDiscoveredHostBtn = document.getElementById("useDiscoveredHost");
-      const testStatus = document.getElementById("testStatus");
+      const connectStatus = document.getElementById("connectStatus");
       const manualLookupNote = document.getElementById("manualLookupNote");
       let existingConfig = null;
-      let testPassed = false;
+      let connectionBusy = false;
       let discoveredHosts = [];
+      let manualEntryVisible = false;
 
       function selectedMode() {
         return document.querySelector('input[name="mode"]:checked')?.value || "host";
@@ -470,11 +490,22 @@
       function render() {
         clientSettings.style.display = selectedMode() === "client" ? "block" : "none";
         if (selectedMode() === "client") {
-          saveBtn.disabled = !testPassed;
+          saveBtn.disabled = connectionBusy;
+          saveBtn.textContent = "Connect & Restart";
+          if (toggleManualEntryBtn) {
+            toggleManualEntryBtn.textContent = manualEntryVisible
+              ? "Hide manual Host details"
+              : "Enter Host details manually";
+          }
+          if (manualEntry) {
+            manualEntry.style.display = manualEntryVisible ? "block" : "none";
+          }
         } else {
-          saveBtn.disabled = false;
+          saveBtn.disabled = connectionBusy;
+          saveBtn.textContent = "Save & Restart";
           setDiscoverStatus("");
           clearDiscoveredHosts();
+          manualEntryVisible = false;
         }
         syncModeCards();
         updateManualLookupNote();
@@ -506,9 +537,19 @@
         if (discoveredHostSelect) discoveredHostSelect.innerHTML = "";
       }
 
+      function setManualEntryVisible(visible) {
+        manualEntryVisible = Boolean(visible);
+        render();
+      }
+
       function updateManualLookupNote() {
         if (!manualLookupNote) return;
         if (selectedMode() !== "client") {
+          manualLookupNote.style.display = "none";
+          manualLookupNote.textContent = "";
+          return;
+        }
+        if (!manualEntryVisible) {
           manualLookupNote.style.display = "none";
           manualLookupNote.textContent = "";
           return;
@@ -522,13 +563,13 @@
           return;
         }
 
-        let missing = "Main computer address or Pairing code";
-        if (!hasHost && !hasPairing) missing = "Main computer address and Pairing code";
-        else if (!hasHost) missing = "Main computer address";
+        let missing = "Host address or Pairing code";
+        if (!hasHost && !hasPairing) missing = "Host address and Pairing code";
+        else if (!hasHost) missing = "Host address";
         else if (!hasPairing) missing = "Pairing code";
 
         manualLookupNote.style.display = "block";
-        manualLookupNote.textContent = `${missing} not found yet. On the Main computer, open File → Show Host Address… and copy both values manually.`;
+        manualLookupNote.textContent = `${missing} not found yet. On the Host computer, open File → Show Host Address… and copy both values manually.`;
       }
 
       function describeDiscoveredHost(host) {
@@ -537,7 +578,7 @@
         return `${officeLabel}${host.url} (${setupState})`;
       }
 
-      function applyDiscoveredHostByIndex(index, { runTest = true } = {}) {
+      function applyDiscoveredHostByIndex(index) {
         const host = discoveredHosts[index];
         if (!host) return;
 
@@ -545,11 +586,8 @@
         if (host.pairingCode) {
           pairingCode.value = formatPairingCode(host.pairingCode);
         }
-        resetTestStatus();
-
-        if (runTest) {
-          void runConnectionTest();
-        }
+        setManualEntryVisible(true);
+        setConnectStatus("Host selected. Click Connect & Restart to finish.", "ok");
       }
 
       function renderDiscoveredHosts() {
@@ -576,21 +614,25 @@
         if (modeInput) modeInput.checked = true;
         hostUrl.value = config.hostUrl || "";
         pairingCode.value = formatPairingCode(config.pairingCode || "");
+        manualEntryVisible = Boolean(config.hostUrl || config.pairingCode);
         render();
       })();
 
-      function resetTestStatus() {
-        testPassed = false;
-        if (testStatus) {
-          testStatus.textContent = "";
-          testStatus.className = "status";
-        }
+      function setConnectionBusy(isBusy) {
+        connectionBusy = !!isBusy;
+        if (discoverBtn) discoverBtn.disabled = !!isBusy;
+        if (toggleManualEntryBtn) toggleManualEntryBtn.disabled = !!isBusy;
         render();
       }
 
-      function setConnectionBusy(isBusy) {
-        if (testBtn) testBtn.disabled = !!isBusy;
-        if (discoverBtn) discoverBtn.disabled = !!isBusy;
+      function setConnectStatus(message, kind = "") {
+        if (!connectStatus) return;
+        connectStatus.textContent = message || "";
+        connectStatus.className = `status${kind ? ` ${kind}` : ""}`;
+      }
+
+      function resetConnectStatus() {
+        setConnectStatus("");
       }
 
       function formatSeconds(ms) {
@@ -601,19 +643,23 @@
       function getDiscoveryProgressMessage(elapsedMs) {
         const elapsed = Number(elapsedMs) || 0;
         if (elapsed < 1200) return "Preparing auto-detect…";
-        if (elapsed < 5000) return "Checking the Main computer address you entered…";
+        if (elapsed < 5000) return "Checking the Host address you entered…";
         if (elapsed < 12000) return "Scanning nearby office-network addresses…";
-        if (elapsed < 25000) return "Validating possible Main computers…";
+        if (elapsed < 25000) return "Validating possible Host computers…";
         return "Still scanning the office network…";
       }
 
-      hostUrl.addEventListener("input", resetTestStatus);
+      hostUrl.addEventListener("input", () => {
+        setManualEntryVisible(true);
+        resetConnectStatus();
+      });
       pairingCode.addEventListener("input", () => {
         const formatted = formatPairingCode(pairingCode.value);
         if (pairingCode.value !== formatted) {
           pairingCode.value = formatted;
         }
-        resetTestStatus();
+        setManualEntryVisible(true);
+        resetConnectStatus();
       });
 
       async function runHostDiscovery() {
@@ -623,9 +669,9 @@
           return;
         }
 
-        if (discoverBtn) discoverBtn.disabled = true;
-        if (testBtn) testBtn.disabled = true;
+        setConnectionBusy(true);
         clearDiscoveredHosts();
+        resetConnectStatus();
         const startedAt = Date.now();
         const updateDiscoveryProgress = () => {
           const elapsedMs = Date.now() - startedAt;
@@ -648,100 +694,144 @@
 
           if (hosts.length === 0) {
             setDiscoverStatus(
-              `No Main computer found ${scanText}. Make sure the Host computer has Otto running and try again. If that fails, then manually enter the Host address and Pairing code from File → Show Host Address….`,
+              `No Host computer found ${scanText}. Make sure the Host computer has Otto running and try again. If that fails, manually enter the Host address and Pairing code from File → Show Host Address….`,
               "err",
             );
+            setManualEntryVisible(true);
+            setConnectStatus("Auto-detect did not find a Host computer. Enter details manually, then click Connect & Restart.", "err");
             return;
           }
 
           if (hosts.length === 1) {
-            setDiscoverStatus(`Found Main computer at ${hosts[0].url} ${scanText}.`, "ok");
-            applyDiscoveredHostByIndex(0, { runTest: true });
+            setDiscoverStatus(`Found Host computer at ${hosts[0].url} ${scanText}.`, "ok");
+            applyDiscoveredHostByIndex(0);
             return;
           }
 
-          setDiscoverStatus(`Found ${hosts.length} possible Main computers ${scanText}. Select one below.`, "ok");
+          setDiscoverStatus(`Found ${hosts.length} possible Host computers ${scanText}. Select one below.`, "ok");
           renderDiscoveredHosts();
-          applyDiscoveredHostByIndex(0, { runTest: false });
+          applyDiscoveredHostByIndex(0);
         } catch {
           clearDiscoveredHosts();
           const elapsedMs = Date.now() - startedAt;
           setDiscoverStatus(
-            `Auto-detect failed after ${formatSeconds(elapsedMs)}. Make sure the Host computer has Otto running and try again. If that fails, then manually enter the Host address and Pairing code from File → Show Host Address….`,
+            `Auto-detect failed after ${formatSeconds(elapsedMs)}. Make sure the Host computer has Otto running and try again. If that fails, manually enter the Host address and Pairing code from File → Show Host Address….`,
             "err",
           );
+          setManualEntryVisible(true);
+          setConnectStatus("Auto-detect failed. Enter Host details manually, then click Connect & Restart.", "err");
         } finally {
           window.clearInterval(progressTimer);
-          if (discoverBtn) discoverBtn.disabled = false;
-          if (testBtn) testBtn.disabled = false;
-          render();
+          setConnectionBusy(false);
         }
       }
 
-      async function runConnectionTest() {
-        if (!testStatus) return;
-        testStatus.textContent = "Testing connection…";
-        testStatus.className = "status";
-        setConnectionBusy(true);
+      function validateClientConfig(config) {
+        const normalizedConfig = {
+          hostUrl: config.hostUrl?.trim() || "",
+          pairingCode: config.pairingCode?.trim() || "",
+        };
 
-        const mode = selectedMode();
-        if (mode !== "client") {
-          testStatus.textContent = "";
-          setConnectionBusy(false);
-          return;
+        try {
+          const url = new URL(normalizedConfig.hostUrl);
+          const hostname = url.hostname;
+          const protocol = url.protocol;
+
+          const isPrivateIpv4 = (h) => {
+            const parts = h.split(".").map((p) => Number(p));
+            if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+            const [a, b] = parts;
+            if (a === 10) return true;
+            if (a === 127) return true;
+            if (a === 169 && b === 254) return true;
+            if (a === 172 && b >= 16 && b <= 31) return true;
+            if (a === 192 && b === 168) return true;
+            return false;
+          };
+
+          const isLocalHostname = (h) => {
+            if (!h) return false;
+            if (h === "localhost") return true;
+            if (h === "::1") return true;
+            if (!h.includes(".")) return true;
+            if (h.endsWith(".local")) return true;
+            return false;
+          };
+
+          if (!isLocalHostname(hostname) && !isPrivateIpv4(hostname)) {
+            return { ok: false, message: "Please enter an office-network Host address (example: https://192.168.1.10:5150)." };
+          }
+
+          const previousOrigin = (() => {
+            try {
+              return existingConfig?.hostUrl ? new URL(existingConfig.hostUrl).origin : null;
+            } catch {
+              return null;
+            }
+          })();
+
+          const nextOrigin = url.origin;
+          const hasTrustedForSameHost = Boolean(existingConfig?.trustedFingerprint256) && previousOrigin === nextOrigin;
+          const pairingHex = normalizedConfig.pairingCode.replace(/[^a-fA-F0-9]/g, "").toUpperCase();
+
+          if (protocol === "https:" && !hasTrustedForSameHost && pairingHex.length < 12) {
+            return { ok: false, message: "Enter the Pairing code shown on the Host (File → Show Host Address…)." };
+          }
+        } catch {
+          return { ok: false, message: "Please enter a valid Host URL (example: https://192.168.1.10:5150)." };
         }
 
+        return { ok: true };
+      }
+
+      async function runClientConnectAndSave() {
         const config = {
+          mode: "client",
           hostUrl: hostUrl.value?.trim() || "",
           pairingCode: pairingCode.value?.trim() || "",
         };
 
+        const validation = validateClientConfig(config);
+        if (!validation.ok) {
+          setManualEntryVisible(true);
+          setConnectStatus(validation.message || "Please review the Host details and try again.", "err");
+          return;
+        }
+
+        setConnectionBusy(true);
+        setConnectStatus("Step 1 of 3: Checking Host connection…");
         try {
           const result = await window.otto.testConnection(config);
-          if (result?.ok) {
-            if (!window.otto || typeof window.otto.requestHostApproval !== "function") {
-              testPassed = true;
-              testStatus.textContent = "Connection successful.";
-              testStatus.className = "status ok";
-            } else {
-              testPassed = false;
-              testStatus.textContent = "Connection verified. Waiting for Main computer approval…";
-              testStatus.className = "status";
-
-              const approval = await window.otto.requestHostApproval(config);
-              if (approval?.approved || approval?.ok) {
-                testPassed = true;
-                testStatus.textContent =
-                  approval?.message ||
-                  (approval?.unsupported
-                    ? "Connection successful. Host approval not required."
-                    : "Connection approved by Main computer.");
-                testStatus.className = "status ok";
-              } else {
-                testPassed = false;
-                testStatus.textContent =
-                  approval?.message || "Connection was not approved by the Main computer.";
-                testStatus.className = "status err";
-              }
-            }
-          } else {
-            testPassed = false;
-            testStatus.textContent = result?.message || "Connection failed.";
-            testStatus.className = "status err";
+          if (!result?.ok) {
+            setConnectStatus(result?.message || "Connection failed. Check the Host address and Pairing code.", "err");
+            return;
           }
-        } catch (e) {
-          testPassed = false;
-          testStatus.textContent = "Connection failed. Please check the Host address and pairing code.";
-          testStatus.className = "status err";
+
+          if (window.otto && typeof window.otto.requestHostApproval === "function") {
+            setConnectStatus("Step 2 of 3: Waiting for Host computer approval…");
+            const approval = await window.otto.requestHostApproval(config);
+            if (!approval?.approved && !approval?.ok) {
+              setConnectStatus(approval?.message || "Connection was not approved by the Host computer.", "err");
+              return;
+            }
+            setConnectStatus(approval?.message || "Host approval received.", "ok");
+          } else {
+            setConnectStatus("Step 2 of 3: Host approval not required in this build.", "ok");
+          }
+
+          setConnectStatus("Step 3 of 3: Saving and restarting…", "ok");
+          await window.otto.saveConfig(config);
+        } catch {
+          setConnectStatus("Connection failed. Please verify the Host address and Pairing code.", "err");
         } finally {
           setConnectionBusy(false);
         }
-
-        render();
       }
 
-      if (testBtn) {
-        testBtn.addEventListener("click", runConnectionTest);
+      if (toggleManualEntryBtn) {
+        toggleManualEntryBtn.addEventListener("click", () => {
+          setManualEntryVisible(!manualEntryVisible);
+        });
       }
       if (discoverBtn) {
         discoverBtn.addEventListener("click", runHostDiscovery);
@@ -750,83 +840,29 @@
         useDiscoveredHostBtn.addEventListener("click", () => {
           const index = Number(discoveredHostSelect.value);
           const safeIndex = Number.isFinite(index) ? index : 0;
-          applyDiscoveredHostByIndex(safeIndex, { runTest: true });
+          applyDiscoveredHostByIndex(safeIndex);
         });
       }
       if (discoveredHostSelect) {
         discoveredHostSelect.addEventListener("change", () => {
           const index = Number(discoveredHostSelect.value);
           const safeIndex = Number.isFinite(index) ? index : 0;
-          applyDiscoveredHostByIndex(safeIndex, { runTest: false });
+          applyDiscoveredHostByIndex(safeIndex);
         });
       }
 
       saveBtn.addEventListener("click", async () => {
         const mode = selectedMode();
+        if (mode === "client") {
+          await runClientConnectAndSave();
+          return;
+        }
+
         const config = {
           mode,
           hostUrl: hostUrl.value?.trim() || "https://127.0.0.1:5150",
           pairingCode: pairingCode.value?.trim() || "",
         };
-
-        if (mode === "client") {
-          if (!testPassed) {
-            alert("Please test the connection before saving.");
-            return;
-          }
-
-          try {
-            const url = new URL(config.hostUrl);
-            const hostname = url.hostname;
-            const protocol = url.protocol;
-
-            const isPrivateIpv4 = (h) => {
-              const parts = h.split(".").map((p) => Number(p));
-              if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
-              const [a, b] = parts;
-              if (a === 10) return true;
-              if (a === 127) return true;
-              if (a === 169 && b === 254) return true;
-              if (a === 172 && b >= 16 && b <= 31) return true;
-              if (a === 192 && b === 168) return true;
-              return false;
-            };
-
-            const isLocalHostname = (h) => {
-              if (!h) return false;
-              if (h === "localhost") return true;
-              if (h === "::1") return true;
-              if (!h.includes(".")) return true;
-              if (h.endsWith(".local")) return true;
-              return false;
-            };
-
-            if (!isLocalHostname(hostname) && !isPrivateIpv4(hostname)) {
-              alert("Please enter an office network address (example: https://192.168.1.10:5150).");
-              return;
-            }
-
-            const previousOrigin = (() => {
-              try {
-                return existingConfig?.hostUrl ? new URL(existingConfig.hostUrl).origin : null;
-              } catch {
-                return null;
-              }
-            })();
-
-            const nextOrigin = url.origin;
-            const hasTrustedForSameHost = Boolean(existingConfig?.trustedFingerprint256) && previousOrigin === nextOrigin;
-            const pairingHex = config.pairingCode.replace(/[^a-fA-F0-9]/g, "").toUpperCase();
-
-            if (protocol === "https:" && !hasTrustedForSameHost && pairingHex.length < 12) {
-              alert("Please enter the Pairing code shown on the Host (File → Show Host Address…).");
-              return;
-            }
-          } catch {
-            alert("Please enter a valid Host URL (example: https://192.168.1.10:5150).");
-            return;
-          }
-        }
 
         try {
           if (!window.otto || typeof window.otto.saveConfig !== "function") {

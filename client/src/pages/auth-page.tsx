@@ -218,7 +218,7 @@ export default function AuthPage() {
   const modeLabel = effectiveMode === "host" ? "Host" : "Client";
   const modeDescription =
     effectiveMode === "host"
-      ? "This is the main Host workstation for this office."
+      ? "This is the Host computer (Main computer) for this office."
       : "This workstation syncs to the Host over the office network.";
 
   return (
