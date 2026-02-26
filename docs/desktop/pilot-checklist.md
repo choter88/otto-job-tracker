@@ -5,7 +5,7 @@ This is a short, practical checklist for getting a real office on the desktop ap
 ## Before you go onsite (you + Otto)
 
 1. **Activation code ready**
-   - Create the office in the portal and copy the Activation Code.
+   - Create the office in the portal and copy the Host Claim Code (or legacy Activation Code).
 2. **Installers built**
    - On a Mac: run `npm run dist:desktop` to generate the `.dmg` in `release/`.
    - On Windows: run `npm run dist:desktop` to generate the `.exe` installer in `release/`.
@@ -34,7 +34,7 @@ Backups should go to a shared office network folder (not the Host’s local driv
 
 1. Install Otto Tracker and choose **Host**.
 2. Complete the in-app setup:
-   - Paste the Activation Code
+   - Paste the Host Claim Code
    - Enter office details
    - Create the first admin login
 3. Use **File → Choose Backup Folder…** and select the office network folder.

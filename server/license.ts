@@ -1,6 +1,6 @@
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
-import { portalActivate, portalCheckin } from "./license-client";
+import { portalActivate, portalCheckin, portalConsumeHostClaim } from "./license-client";
 
 let state: LicenseState | null = null;
 let checkinTimer: NodeJS.Timeout | null = null;
@@ -22,6 +22,7 @@ export function getLicenseSnapshot(): LicenseSnapshot {
 }
 
 const ACTIVATION_ALLOWED = /^[A-HJ-NP-Z2-9]+$/;
+const SETUP_CODE_ALLOWED = /^[A-Z0-9_-]+$/i;
 
 function normalizeActivationCode(input: string): string {
   const raw = String(input || "").trim().toUpperCase();
@@ -38,6 +39,52 @@ function compactActivationCode(input: string): string {
     .replace(/[^A-Z0-9]/g, "")
     .replace(/[IO01]/g, "");
   return stripped;
+}
+
+function isLikelyActivationCode(input: string): boolean {
+  const compacted = compactActivationCode(input);
+  return compacted.length === 16 && ACTIVATION_ALLOWED.test(compacted);
+}
+
+function normalizeSetupCode(input: string): string {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+
+  const normalizedActivation = normalizeActivationCode(raw);
+  if (isLikelyActivationCode(normalizedActivation)) {
+    return normalizedActivation;
+  }
+
+  const compact = raw.replace(/\s+/g, "");
+  if (!compact) return "";
+  if (!SETUP_CODE_ALLOWED.test(compact)) return raw;
+  return compact.toUpperCase();
+}
+
+function applyActivationResult(result: {
+  hostToken: string;
+  status: "ACTIVE" | "DISABLED";
+  serverTime: number;
+  nextCheckinDueAt: number;
+}): LicenseSnapshot {
+  updateState({
+    hostToken: result.hostToken,
+    officeStatus: result.status,
+    activatedAt: Date.now(),
+    lastSuccessfulCheckinAt: result.serverTime,
+    nextCheckinDueAt: result.nextCheckinDueAt,
+    serverTimeOffsetMs: result.serverTime - Date.now(),
+    lastAttemptAt: Date.now(),
+    lastError: "",
+    tokenInvalid: false,
+  });
+
+  return getLicenseSnapshot();
+}
+
+function throwLicenseRequestError(err: { statusCode?: number; code?: string; message?: string }): never {
+  const message = err?.code ? `${err.code}: ${err.message || "Request failed"}` : err?.message || "Request failed";
+  throw Object.assign(new Error(message), { statusCode: err?.statusCode || 500, code: err?.code || "REQUEST_FAILED" });
 }
 
 export async function activateLicense(activationCode: string): Promise<LicenseSnapshot> {
@@ -67,24 +114,35 @@ export async function activateLicense(activationCode: string): Promise<LicenseSn
   }
 
   if (!result.ok) {
-    const err = result.error;
-    const message = err.code ? `${err.code}: ${err.message}` : err.message;
-    throw Object.assign(new Error(message), { statusCode: err.statusCode, code: err.code });
+    throwLicenseRequestError(result.error);
   }
 
-  updateState({
-    hostToken: result.hostToken,
-    officeStatus: result.status,
-    activatedAt: Date.now(),
-    lastSuccessfulCheckinAt: result.serverTime,
-    nextCheckinDueAt: result.nextCheckinDueAt,
-    serverTimeOffsetMs: result.serverTime - Date.now(),
-    lastAttemptAt: Date.now(),
-    lastError: "",
-    tokenInvalid: false,
+  return applyActivationResult(result);
+}
+
+export async function activateHostForSetup(setupCode: string): Promise<LicenseSnapshot> {
+  const trimmed = normalizeSetupCode(setupCode);
+  if (!trimmed) {
+    throw new Error("Host Claim Code is required");
+  }
+
+  if (isLikelyActivationCode(trimmed)) {
+    return activateLicense(trimmed);
+  }
+
+  const current = getState();
+  const result = await portalConsumeHostClaim({
+    claimCode: trimmed,
+    installationId: current.installationId,
+    hostFingerprint256: current.hostFingerprint256,
+    appVersion: process.env.npm_package_version,
   });
 
-  return getLicenseSnapshot();
+  if (!result.ok) {
+    throwLicenseRequestError(result.error);
+  }
+
+  return applyActivationResult(result);
 }
 
 export async function forceCheckin(): Promise<LicenseSnapshot> {

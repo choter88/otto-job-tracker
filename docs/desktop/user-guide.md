@@ -13,7 +13,7 @@
 1. Install and open Otto Tracker.
 2. When asked, choose **“This computer is the Host”**.
 3. On the Host, complete the one-time setup:
-   - Enter your **Activation Code** (from the billing portal). Tip: if you used an activation link, the code may auto-fill.
+   - Enter your **Host Claim Code** (from the portal handoff page). Legacy Activation Codes still work during transition.
    - Enter your **office details**
    - Create the first **Owner login** with **Login ID**, **password**, and **6-digit PIN**
 4. After setup completes, sign in and open **Team** to review pending account requests.

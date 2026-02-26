@@ -34,7 +34,7 @@ import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
-import { activateLicense, forceCheckin, getLicenseSnapshot } from "./license";
+import { activateHostForSetup, activateLicense, forceCheckin, getLicenseSnapshot } from "./license";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
@@ -230,6 +230,82 @@ function withDefaultMessageTemplates(settingsInput: unknown): Record<string, any
     Array.isArray(settings.customStatuses) ? settings.customStatuses : undefined,
   );
   return settings;
+}
+
+function readSetupCodeFromBody(body: any): string {
+  const candidates = [body?.setupCode, body?.claimCode, body?.activationCode];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return "";
+}
+
+function setupCodeLast4(setupCode: string): string {
+  const compact = String(setupCode || "")
+    .replace(/\s+/g, "")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase();
+  if (!compact) return "";
+  return compact.slice(-4);
+}
+
+function parseSetupActivationFailure(error: any): { status: number; message: string } {
+  const status = typeof error?.statusCode === "number" ? error.statusCode : 0;
+  const code = String(error?.code || "").trim().toUpperCase();
+  const rawMessage = String(error?.message || "Activation failed")
+    .replace(/^[A-Z0-9_]+:\s*/i, "")
+    .trim();
+
+  if (status === 409 || code === "HOST_ALREADY_ACTIVATED") {
+    return {
+      status: 409,
+      message: "This office is already activated on another Host. In the portal, click “Replace Host”, then try again.",
+    };
+  }
+
+  if (code === "CLAIM_ENDPOINT_NOT_CONFIGURED") {
+    return {
+      status: 500,
+      message: "Host Claim Code verification is not configured on the portal yet.",
+    };
+  }
+
+  if (code === "CLAIM_ENDPOINT_NOT_FOUND") {
+    return {
+      status: 503,
+      message:
+        "This portal does not support Host Claim Codes yet. Use a legacy Activation Code for now or update the portal.",
+    };
+  }
+
+  if (code === "NOT_FOUND") {
+    return {
+      status: 400,
+      message: "Host Claim Code was not found. Generate a new code in the portal and try again.",
+    };
+  }
+
+  if (code === "PORTAL_UNREACHABLE" || code === "PORTAL_TIMEOUT" || status >= 500 || status === 0) {
+    return {
+      status: 503,
+      message:
+        "Host setup requires internet to verify your Host Claim Code. Check internet access on this Host computer and try again.",
+    };
+  }
+
+  if (status >= 400 && status < 500) {
+    return {
+      status,
+      message: rawMessage || "Host Claim Code was not accepted. Generate a new code in the portal and try again.",
+    };
+  }
+
+  return {
+    status: 500,
+    message: rawMessage || "Host setup could not verify your Host Claim Code.",
+  };
 }
 
 export function registerRoutes(app: Express): { server: AppServer; sessionMiddleware: any } {
@@ -428,8 +504,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
 
     try {
-      const activationCode =
-        typeof req.body?.activationCode === "string" ? req.body.activationCode.trim() : "";
+      const setupCode = readSetupCodeFromBody(req.body);
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
 
@@ -447,8 +522,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
-      if (!activationCode) {
-        return res.status(400).json({ error: "Activation Code is required" });
+      if (!setupCode) {
+        return res.status(400).json({ error: "Host Claim Code is required" });
       }
       if (!officeName) {
         return res.status(400).json({ error: "Office name is required" });
@@ -493,29 +568,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       let licenseSnapshot = getLicenseSnapshot();
-      let activationWarning: string | null = null;
       try {
-        licenseSnapshot = await activateLicense(activationCode);
+        licenseSnapshot = await activateHostForSetup(setupCode);
       } catch (error: any) {
-        const status = typeof error?.statusCode === "number" ? error.statusCode : 0;
-        const code = typeof error?.code === "string" ? error.code : "";
-        const msg = typeof error?.message === "string" ? error.message : "Activation failed";
-
-        // Hard failures the user must fix in the portal before continuing.
-        if (status === 409 || code === "HOST_ALREADY_ACTIVATED") {
-          return res.status(409).json({
-            error:
-              "This office is already activated on another Host. In the portal, click “Replace Host”, then try again.",
-          });
-        }
-        if (status >= 400 && status < 500) {
-          return res.status(status).json({ error: msg });
-        }
-
-        // Soft failure (network/timeout): allow setup, but the app will go read-only after grace.
-        activationWarning =
-          "We couldn’t verify your Activation Code right now. Otto Tracker will work for up to 7 days, then become read-only until activation succeeds.";
-        licenseSnapshot = getLicenseSnapshot();
+        const failure = parseSetupActivationFailure(error);
+        return res.status(failure.status).json({ error: failure.message });
       }
 
       const office =
@@ -530,8 +587,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
+      const setupCodeTail = setupCodeLast4(setupCode);
       mergedSettings.licensing = {
-        activationCodeLast4: activationCode.slice(-4),
+        setupCodeLast4: setupCodeTail,
+        activationCodeLast4: setupCodeTail,
         activationAttemptedAt: Date.now(),
         activationVerifiedAt: activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null,
       };
@@ -567,7 +626,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           office: updatedOffice,
           user: withoutPassword(user),
           license: licenseSnapshot,
-          activationWarning,
         });
       });
     } catch (error: any) {
@@ -585,8 +643,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
 
     try {
-      const activationCode =
-        typeof req.body?.activationCode === "string" ? req.body.activationCode.trim() : "";
+      const setupCode = readSetupCodeFromBody(req.body);
       const snapshot = req.body?.snapshot;
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
@@ -604,8 +661,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
-      if (!activationCode) {
-        return res.status(400).json({ error: "Activation Code is required" });
+      if (!setupCode) {
+        return res.status(400).json({ error: "Host Claim Code is required" });
       }
       if (!snapshot || typeof snapshot !== "object") {
         return res.status(400).json({ error: "Snapshot file is required" });
@@ -663,28 +720,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       let licenseSnapshot = getLicenseSnapshot();
-      let activationWarning: string | null = null;
       try {
-        licenseSnapshot = await activateLicense(activationCode);
+        licenseSnapshot = await activateHostForSetup(setupCode);
       } catch (error: any) {
-        const status = typeof error?.statusCode === "number" ? error.statusCode : 0;
-        const code = typeof error?.code === "string" ? error.code : "";
-        const msg = typeof error?.message === "string" ? error.message : "Activation failed";
-
-        // Hard failures the user must fix in the portal before continuing.
-        if (status === 409 || code === "HOST_ALREADY_ACTIVATED") {
-          return res.status(409).json({
-            error:
-              "This office is already activated on another Host. In the portal, click “Replace Host”, then try again.",
-          });
-        }
-        if (status >= 400 && status < 500) {
-          return res.status(status).json({ error: msg });
-        }
-
-        activationWarning =
-          "We couldn’t verify your Activation Code right now. Otto Tracker will work for up to 7 days, then become read-only until activation succeeds.";
-        licenseSnapshot = getLicenseSnapshot();
+        const failure = parseSetupActivationFailure(error);
+        return res.status(failure.status).json({ error: failure.message });
       }
 
       const adminPasswordHash = await hashSecret(adminPassword);
@@ -692,6 +732,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
       const activationVerifiedAt = activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null;
+      const setupCodeTail = setupCodeLast4(setupCode);
 
       const result = importSnapshotV1({
         snapshot,
@@ -702,7 +743,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           passwordHash: adminPasswordHash,
           pinHash: adminPinHash,
         },
-        activationCodeLast4: activationCode.slice(-4),
+        activationCodeLast4: setupCodeTail,
         activationVerifiedAt,
       });
 
@@ -740,7 +781,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           user: withoutPassword(user),
           importedCounts: result.importedCounts,
           license: licenseSnapshot,
-          activationWarning,
         });
       });
     } catch (error: any) {

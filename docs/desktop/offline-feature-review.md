@@ -30,7 +30,7 @@ It’s written to support decisions like **keep / modify / remove** and to align
 
 Top-level routes:
 
-- `/setup` — Host first-run setup (Activation Code, Office details, first admin login)
+- `/setup` — Host first-run setup (Host Claim Code, Office details, first admin login)
 - `/auth` — Sign in / request account access (local accounts; Host approval required for new sign-ins)
 - `/` and `/dashboard/:tab?` — Main dashboard with tabs:
   - Important
@@ -84,7 +84,7 @@ For each item below:
 ### 2) Activation + licensing (portal → desktop)
 
 **Current**
-- Host activation uses an Activation Code; desktop calls the hosted `/license/v1/*` API.
+- Host activation uses a Host Claim Code (legacy Activation Code supported); desktop calls hosted licensing/claim APIs.
 - Grace/read-only behavior is enforced locally by the desktop Host API based on license state.
 
 **Recommendation: Keep + refine UX**

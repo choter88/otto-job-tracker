@@ -222,6 +222,7 @@ function normalizeHex(value) {
 }
 
 const ACTIVATION_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
+const SETUP_CODE_REGEX = /^[A-Z0-9][A-Z0-9_-]{5,95}$/i;
 
 function normalizeActivationCode(value) {
   const cleaned = String(value || "")
@@ -243,8 +244,32 @@ function extractActivationCodeFromText(text) {
   return match ? match[0] : "";
 }
 
+function sanitizePendingSetupCode(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const activation = normalizeActivationCode(raw);
+  if (ACTIVATION_CODE_REGEX.test(activation)) {
+    return activation;
+  }
+
+  const compact = raw.replace(/\s+/g, "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 96);
+  if (!compact) return "";
+  if (!SETUP_CODE_REGEX.test(compact)) return "";
+  return compact.toUpperCase();
+}
+
+function extractSetupCodeFromText(text) {
+  const activation = extractActivationCodeFromText(text);
+  if (activation) return activation;
+
+  const match = String(text || "").match(/[A-Za-z0-9][A-Za-z0-9_-]{7,95}/);
+  if (!match) return "";
+  return sanitizePendingSetupCode(match[0]);
+}
+
 function writePendingActivationCode(value) {
-  const code = normalizeActivationCode(value);
+  const code = sanitizePendingSetupCode(value);
   if (!code) return false;
   fs.mkdirSync(path.dirname(getPendingActivationCodePath()), { recursive: true, mode: 0o700 });
   fs.writeFileSync(getPendingActivationCodePath(), code, { mode: 0o600 });
@@ -255,7 +280,7 @@ function readPendingActivationCode() {
   try {
     if (!fs.existsSync(getPendingActivationCodePath())) return "";
     const raw = fs.readFileSync(getPendingActivationCodePath(), "utf-8");
-    const code = normalizeActivationCode(raw);
+    const code = sanitizePendingSetupCode(raw);
     return code || "";
   } catch {
     return "";
@@ -278,13 +303,16 @@ async function handleOpenUrl(url) {
     if (parsed.protocol !== "otto:") return;
 
     const codeCandidate =
+      parsed.searchParams.get("claimCode") ||
+      parsed.searchParams.get("claim") ||
+      parsed.searchParams.get("hostClaimCode") ||
       parsed.searchParams.get("activationCode") ||
       parsed.searchParams.get("code") ||
       parsed.searchParams.get("activation") ||
       parsed.searchParams.get("token") ||
       "";
 
-    const extracted = extractActivationCodeFromText(codeCandidate) || extractActivationCodeFromText(parsed.pathname);
+    const extracted = extractSetupCodeFromText(codeCandidate) || extractSetupCodeFromText(parsed.pathname);
     if (extracted) {
       writePendingActivationCode(extracted);
     }
@@ -304,9 +332,16 @@ async function handleOpenFile(filePath) {
     let extracted = "";
     try {
       const parsed = JSON.parse(raw);
-      extracted = extractActivationCodeFromText(parsed?.activationCode || parsed?.code || "");
+      extracted = extractSetupCodeFromText(
+        parsed?.claimCode ||
+          parsed?.hostClaimCode ||
+          parsed?.activationCode ||
+          parsed?.code ||
+          parsed?.token ||
+          "",
+      );
     } catch {
-      extracted = extractActivationCodeFromText(raw);
+      extracted = extractSetupCodeFromText(raw);
     }
 
     if (extracted) {

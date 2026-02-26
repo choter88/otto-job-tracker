@@ -26,16 +26,41 @@ const passwordSchema = z
   );
 
 const ACTIVATION_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
+const SETUP_CODE_REGEX = /^[A-Z0-9][A-Z0-9_-]{5,95}$/i;
 const LOGIN_ID_REGEX = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i;
 const PIN_REGEX = /^\d{6}$/;
+
+function normalizeSetupCode(raw: string): string {
+  const value = String(raw || "").trim().replace(/\s+/g, "");
+  if (!value) return "";
+  return value.toUpperCase();
+}
+
+function formatSetupCode(raw: string): string {
+  const normalized = normalizeSetupCode(raw);
+  if (!normalized) return "";
+
+  const activationCompact = normalized.replace(/[^A-Z0-9]/g, "").replace(/[IO01]/g, "");
+  if (activationCompact.length <= 16) {
+    const groups = activationCompact.match(/.{1,4}/g) || [];
+    return groups.slice(0, 4).join("-").slice(0, 19);
+  }
+
+  return normalized.replace(/[^A-Z0-9_-]/g, "").slice(0, 96);
+}
 
 const setupSchema = z
   .object({
     activationCode: z
       .string()
-      .min(1, "Activation Code is required")
-      .refine((val) => ACTIVATION_CODE_REGEX.test(val), {
-        message: "Activation Code must look like XXXX-XXXX-XXXX-XXXX",
+      .min(1, "Host Claim Code is required")
+      .refine((val) => {
+        const normalized = normalizeSetupCode(val);
+        if (!normalized) return false;
+        if (ACTIVATION_CODE_REGEX.test(normalized)) return true;
+        return SETUP_CODE_REGEX.test(normalized);
+      }, {
+        message: "Enter a valid Host Claim Code (or legacy Activation Code).",
       }),
     officeName: z.string().min(1, "Office name is required"),
     officeAddress: z.string().optional(),
@@ -113,7 +138,7 @@ export default function SetupPage() {
     },
   });
 
-  const activationCodeValue = form.watch("activationCode");
+  const setupCodeValue = form.watch("activationCode");
 
   useEffect(() => {
     let cancelled = false;
@@ -126,7 +151,7 @@ export default function SetupPage() {
         if (cancelled) return;
         if (typeof pending !== "string") return;
 
-        const trimmed = pending.trim();
+        const trimmed = formatSetupCode(pending.trim());
         if (!trimmed) return;
 
         const current = form.getValues("activationCode");
@@ -144,23 +169,17 @@ export default function SetupPage() {
     };
   }, [form]);
 
-  const formatActivationCode = (raw: string) => {
-    const cleaned = String(raw || "")
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "")
-      .replace(/[IO01]/g, "");
-    const groups = cleaned.match(/.{1,4}/g) || [];
-    return groups.slice(0, 4).join("-").slice(0, 19);
-  };
-
   const bootstrapMutation = useMutation({
     mutationFn: async (data: SetupFormData) => {
+      const setupCode = normalizeSetupCode(data.activationCode);
       const res = await fetch("/api/setup/bootstrap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          activationCode: data.activationCode,
+          setupCode,
+          claimCode: setupCode,
+          activationCode: setupCode,
           office: {
             name: data.officeName,
             address: data.officeAddress || undefined,
@@ -227,13 +246,16 @@ export default function SetupPage() {
       if (!snapshot) {
         throw new Error("Please choose a migration snapshot file.");
       }
+      const setupCode = normalizeSetupCode(data.activationCode);
 
       const res = await fetch("/api/setup/import-snapshot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          activationCode: data.activationCode,
+          setupCode,
+          claimCode: setupCode,
+          activationCode: setupCode,
           snapshot,
           office: {
             name: data.officeName,
@@ -400,8 +422,8 @@ export default function SetupPage() {
         <div className="text-center">
           <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
           <p className="text-muted-foreground">
-            This only happens once, on the Host computer. You’ll activate the office, enter office details, and create the
-            first owner login.
+            This only happens once, on the Host computer. You’ll verify your Host Claim Code online, enter office details,
+            and create the first owner login.
           </p>
         </div>
 
@@ -412,10 +434,15 @@ export default function SetupPage() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <ol className="list-decimal pl-5 space-y-1">
-              <li>Enter your Activation Code to verify your subscription (no patient data is sent).</li>
+              <li>Enter your Host Claim Code to verify your office setup (no patient data is sent).</li>
               <li>Create your office record and first owner login (local to this office).</li>
               <li>After setup, new users can request access from the sign-in screen and be approved in <b>Team</b>.</li>
             </ol>
+            <Alert>
+              <AlertDescription>
+                This Host setup step requires internet access to verify your Host Claim Code.
+              </AlertDescription>
+            </Alert>
             <Alert>
               <AlertDescription>
                 Not the Host computer? Use <b>File → Change Connection…</b> to switch this computer to Client.
@@ -492,22 +519,22 @@ export default function SetupPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <KeyRound className="h-5 w-5 text-primary" />
-                Activation
+                Host claim
               </CardTitle>
               <CardDescription>
-                Paste the Activation Code from your billing portal (ottojobtracker.com/portal). This verifies your
-                subscription (no patient data is sent).
+                Paste the Host Claim Code from your portal handoff screen. Legacy Activation Codes are still accepted during
+                transition.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
-                <Label htmlFor="activationCode">Activation Code *</Label>
+                <Label htmlFor="activationCode">Host Claim Code *</Label>
                 <Input
                   id="activationCode"
-                  placeholder="XXXX-XXXX-XXXX-XXXX"
-                  value={activationCodeValue}
+                  placeholder="CLAIM-XXXX-XXXX or XXXX-XXXX-XXXX-XXXX"
+                  value={setupCodeValue}
                   onChange={(event) => {
-                    form.setValue("activationCode", formatActivationCode(event.target.value), {
+                    form.setValue("activationCode", formatSetupCode(event.target.value), {
                       shouldValidate: true,
                     });
                   }}
@@ -651,7 +678,7 @@ export default function SetupPage() {
                 data-testid="button-complete-setup"
               >
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {setupMode === "import" ? "Import & complete setup" : "Complete setup"}
+                {setupMode === "import" ? "Verify code, import, and complete setup" : "Verify code & complete setup"}
               </Button>
               {importMissingFile && (
                 <p className="text-xs text-muted-foreground">Choose a snapshot file above to enable import.</p>
