@@ -13,6 +13,13 @@
 On first launch, choose **Host** in the setup screen.
 Then complete the one-time in-app setup (`/setup`) to create the office + first admin login.
 
+Host setup claims are posted to the portal in this order:
+1. `/api/desktop/claims/consume` (canonical)
+2. `/portal/api/desktop/claims/consume` (alias)
+3. `/license/v1/claim-host` (legacy fallback)
+
+You can override the consume path with `OTTO_PORTAL_CLAIM_CONSUME_PATH` if needed.
+
 If you see `tsx: command not found` or `electron: command not found`, it means step 1 didn’t run (or didn’t finish).
 
 ## Client dev

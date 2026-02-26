@@ -251,7 +251,7 @@ function setupCodeLast4(setupCode: string): string {
   return compact.slice(-4);
 }
 
-function parseSetupActivationFailure(error: any): { status: number; message: string } {
+function parseSetupActivationFailure(error: any): { status: number; message: string; code: string } {
   const status = typeof error?.statusCode === "number" ? error.statusCode : 0;
   const code = String(error?.code || "").trim().toUpperCase();
   const rawMessage = String(error?.message || "Activation failed")
@@ -262,6 +262,7 @@ function parseSetupActivationFailure(error: any): { status: number; message: str
     return {
       status: 409,
       message: "This office is already activated on another Host. In the portal, click “Replace Host”, then try again.",
+      code: "HOST_ALREADY_ACTIVATED",
     };
   }
 
@@ -269,6 +270,7 @@ function parseSetupActivationFailure(error: any): { status: number; message: str
     return {
       status: 500,
       message: "Host Claim Code verification is not configured on the portal yet.",
+      code: "REQUEST_FAILED",
     };
   }
 
@@ -277,13 +279,47 @@ function parseSetupActivationFailure(error: any): { status: number; message: str
       status: 503,
       message:
         "This portal does not support Host Claim Codes yet. Use a legacy Activation Code for now or update the portal.",
+      code: "REQUEST_FAILED",
     };
   }
 
-  if (code === "NOT_FOUND") {
+  if (code === "CLAIM_NOT_FOUND" || code === "NOT_FOUND") {
+    return {
+      status: 404,
+      message: "Host Claim Code was not found. Generate a new code in the portal and try again.",
+      code: "CLAIM_NOT_FOUND",
+    };
+  }
+
+  if (code === "CLAIM_INVALID" || code === "INVALID_CODE") {
     return {
       status: 400,
-      message: "Host Claim Code was not found. Generate a new code in the portal and try again.",
+      message: rawMessage || "Host Claim Code is invalid. Check the code and try again.",
+      code: "CLAIM_INVALID",
+    };
+  }
+
+  if (code === "CLAIM_EXPIRED") {
+    return {
+      status: 410,
+      message: rawMessage || "Host Claim Code has expired. Generate a new code in the portal.",
+      code: "CLAIM_EXPIRED",
+    };
+  }
+
+  if (code === "CLAIM_USED") {
+    return {
+      status: 409,
+      message: rawMessage || "This Host Claim Code has already been used.",
+      code: "CLAIM_USED",
+    };
+  }
+
+  if (code === "RATE_LIMITED") {
+    return {
+      status: 429,
+      message: rawMessage || "Too many attempts. Wait a minute and try again.",
+      code: "RATE_LIMITED",
     };
   }
 
@@ -292,6 +328,7 @@ function parseSetupActivationFailure(error: any): { status: number; message: str
       status: 503,
       message:
         "Host setup requires internet to verify your Host Claim Code. Check internet access on this Host computer and try again.",
+      code: "REQUEST_FAILED",
     };
   }
 
@@ -299,12 +336,14 @@ function parseSetupActivationFailure(error: any): { status: number; message: str
     return {
       status,
       message: rawMessage || "Host Claim Code was not accepted. Generate a new code in the portal and try again.",
+      code: "REQUEST_FAILED",
     };
   }
 
   return {
     status: 500,
     message: rawMessage || "Host setup could not verify your Host Claim Code.",
+    code: "REQUEST_FAILED",
   };
 }
 
@@ -572,7 +611,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         licenseSnapshot = await activateHostForSetup(setupCode);
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);
-        return res.status(failure.status).json({ error: failure.message });
+        return res.status(failure.status).json({ error: failure.message, code: failure.code });
       }
 
       const office =
@@ -724,7 +763,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         licenseSnapshot = await activateHostForSetup(setupCode);
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);
-        return res.status(failure.status).json({ error: failure.message });
+        return res.status(failure.status).json({ error: failure.message, code: failure.code });
       }
 
       const adminPasswordHash = await hashSecret(adminPassword);

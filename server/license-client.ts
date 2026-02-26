@@ -138,7 +138,7 @@ export async function portalActivate(payload: {
 
 function getClaimConsumePathCandidates(): string[] {
   const fromEnv = String(process.env.OTTO_PORTAL_CLAIM_CONSUME_PATH || "").trim();
-  const defaults = ["/api/desktop/claims/consume", "/license/v1/claim-host"];
+  const defaults = ["/api/desktop/claims/consume", "/portal/api/desktop/claims/consume", "/license/v1/claim-host"];
   const candidates = [fromEnv, ...defaults].filter(Boolean);
   return Array.from(new Set(candidates));
 }
