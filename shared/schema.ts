@@ -66,7 +66,7 @@ export const jobs = sqliteTable(
       .default({})
       .notNull(),
     isRedoJob: integer("is_redo_job", { mode: "boolean" }).default(false).notNull(),
-    originalJobId: text("original_job_id").references(() => jobs.id, { onDelete: "set null" }),
+    originalJobId: text("original_job_id"), // self-reference FK handled at query level
     notes: text("notes"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),

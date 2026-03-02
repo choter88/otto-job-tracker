@@ -181,6 +181,7 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
         const optimisticJob = {
           id: clientJobId,
           orderId: `PENDING-${pendingSuffix}`,
+          _pendingSync: true, // marker for UI to show sync badge
           officeId: user?.officeId || '',
           ...data,
           phone: data.phone ? data.phone.replace(/\D/g, '') : '',
@@ -188,7 +189,7 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
           originalJobId: data.originalJobId || null,
           createdAt: new Date(data.createdAt),
           isRedoJob: data.isRedoJob || false,
-        } as Job;
+        } as unknown as Job;
         
         queryClient.setQueryData(["/api/jobs"], (old: Job[] | undefined) => 
           old ? [optimisticJob, ...old] : [optimisticJob]
@@ -312,7 +313,15 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <form onSubmit={form.handleSubmit(onSubmit, () => {
+          // Scroll to first validation error
+          requestAnimationFrame(() => {
+            const firstError = document.querySelector('[data-testid="dialog-job"] .text-destructive');
+            if (firstError) {
+              firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+          });
+        })} className="space-y-6">
           {/* Patient Information */}
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-3">

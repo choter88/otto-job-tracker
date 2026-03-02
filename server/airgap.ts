@@ -72,10 +72,8 @@ export function enforceAirgap(): void {
     throw new Error(`Outbound network blocked by OTTO_AIRGAP (hostname=${hostname})`);
   }
 
-  // @ts-expect-error - monkeypatch for runtime guard
-  http.request = (...args: any[]) => guardAndCall(originalHttpRequest, args);
-  // @ts-expect-error - monkeypatch for runtime guard
-  https.request = (...args: any[]) => guardAndCall(originalHttpsRequest, args);
+  (http as any).request = (...args: any[]) => guardAndCall(originalHttpRequest, args);
+  (https as any).request = (...args: any[]) => guardAndCall(originalHttpsRequest, args);
 
   if (originalFetch) {
     globalThis.fetch = async (...args: any[]) => {
@@ -107,7 +105,7 @@ export function enforceAirgap(): void {
         throw new Error(`Outbound network blocked by OTTO_AIRGAP (hostname=${hostname})`);
       }
 
-      return originalFetch(...args);
+      return (originalFetch as any)(...args);
     };
   }
 }

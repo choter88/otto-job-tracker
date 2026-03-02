@@ -89,6 +89,28 @@ const setupSchema = z
 
 type SetupFormData = z.infer<typeof setupSchema>;
 
+function PasswordChecklist({ value }: { value: string }) {
+  const rules = [
+    { label: "12+ characters", met: value.length >= 12 },
+    { label: "Uppercase letter", met: /[A-Z]/.test(value) },
+    { label: "Lowercase letter", met: /[a-z]/.test(value) },
+    { label: "Number", met: /[0-9]/.test(value) },
+    { label: "Special character", met: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(value) },
+  ];
+
+  if (!value) return null;
+
+  return (
+    <ul className="mt-1.5 space-y-0.5 text-xs">
+      {rules.map((rule) => (
+        <li key={rule.label} className={rule.met ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+          {rule.met ? "\u2713" : "\u2022"} {rule.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 type SetupStatus = {
   initialized: boolean;
   officeId: string | null;
@@ -139,6 +161,7 @@ export default function SetupPage() {
   });
 
   const setupCodeValue = form.watch("activationCode");
+  const adminPasswordValue = form.watch("adminPassword");
 
   useEffect(() => {
     let cancelled = false;
@@ -635,6 +658,7 @@ export default function SetupPage() {
                 <div className="space-y-2">
                   <Label htmlFor="adminPassword">Password *</Label>
                   <Input id="adminPassword" type="password" {...form.register("adminPassword")} />
+                  <PasswordChecklist value={adminPasswordValue || ""} />
                   {form.formState.errors.adminPassword && (
                     <p className="text-sm text-destructive">{form.formState.errors.adminPassword.message}</p>
                   )}

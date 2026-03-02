@@ -1518,10 +1518,10 @@ async function maybeStartHostServer() {
     throw new Error(`Server build not found at ${serverEntry}. Run \`npm run build\` first.`);
   }
 
-  void import(pathToFileURL(serverEntry).href).catch((error) => {
+  void import(pathToFileURL(serverEntry).href).catch(async (error) => {
     logStartup("Host server failed to start", error);
     try {
-      dialog.showMessageBox({
+      await dialog.showMessageBox({
         type: "error",
         message: "The Host server failed to start",
         detail:
@@ -1535,6 +1535,7 @@ async function maybeStartHostServer() {
     } catch {
       // ignore
     }
+    app.quit();
   });
 }
 

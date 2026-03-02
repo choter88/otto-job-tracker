@@ -1,5 +1,7 @@
 import type { Express, Request, Response } from "express";
 import fs from "fs";
+import os from "os";
+import path from "path";
 import { createServer as createHttpServer, type Server as HttpServer } from "http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "https";
 import { createHash, randomBytes } from "crypto";
@@ -40,6 +42,19 @@ import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { broadcastToOffice } from "./sync-websocket";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
+import type { User } from "@shared/schema";
+
+// Type-safe user accessors for authenticated routes.
+// These are safe to call in handlers guarded by requireAuth / requireOffice.
+type OfficeUser = User & { officeId: string };
+
+function getAuthUser(req: Request): User {
+  return req.user as User;
+}
+
+function getOfficeUser(req: Request): OfficeUser {
+  return req.user as OfficeUser;
+}
 
 // PHI access logging helper for HIPAA compliance
 async function logPhiAccess(
@@ -61,8 +76,8 @@ async function logPhiAccess(
     const userAgent = req.headers['user-agent'] || 'unknown';
     
     await storage.createPhiAccessLog({
-      userId: req.user.id,
-      officeId: req.user.officeId || null,
+      userId: getAuthUser(req).id,
+      officeId: getAuthUser(req).officeId || null,
       action,
       entityType,
       entityId,
@@ -151,6 +166,46 @@ const SETUP_HANDSHAKE_PENDING_LIMIT = 64;
 const SETUP_HANDSHAKE_TTL_MS = 2 * 60 * 1000;
 const SETUP_HANDSHAKE_RETENTION_MS = 10 * 60 * 1000;
 const setupHandshakeRequests = new Map<string, SetupHandshakeRequest>();
+
+// --- Handshake persistence to survive Host restarts ---
+let _handshakeFilePath: string | null = null;
+function handshakeFilePath(): string {
+  if (_handshakeFilePath) return _handshakeFilePath;
+  const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+  _handshakeFilePath = path.join(dataDir, "handshake-requests.json");
+  return _handshakeFilePath;
+}
+
+function persistHandshakeRequests() {
+  try {
+    const entries = Array.from(setupHandshakeRequests.entries());
+    fs.writeFileSync(handshakeFilePath(), JSON.stringify(entries), "utf-8");
+  } catch {
+    // Non-critical — ignore write failures
+  }
+}
+
+function loadHandshakeRequests() {
+  try {
+    const filePath = handshakeFilePath();
+    if (!fs.existsSync(filePath)) return;
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const entries: [string, SetupHandshakeRequest][] = JSON.parse(raw);
+    if (!Array.isArray(entries)) return;
+    for (const [id, req] of entries) {
+      if (id && req && typeof req.status === "string") {
+        setupHandshakeRequests.set(id, req);
+      }
+    }
+    // Immediately clean up expired entries
+    cleanupSetupHandshakeRequests();
+  } catch {
+    // Non-critical — ignore load failures
+  }
+}
+
+// Load persisted handshake state on module init
+loadHandshakeRequests();
 
 function generateSetupHandshakeId() {
   return randomBytes(16).toString("hex");
@@ -447,6 +502,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         requestedByIp,
       };
       setupHandshakeRequests.set(id, requestRecord);
+      persistHandshakeRequests();
 
       res.status(201).json({
         ok: true,
@@ -529,6 +585,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     found.decidedAt = Date.now();
     found.decisionNote = note;
     setupHandshakeRequests.set(requestId, found);
+    persistHandshakeRequests();
 
     res.json(buildSetupHandshakeClientResponse(found));
   });
@@ -830,10 +887,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // Job routes
   app.get("/api/jobs", requireOffice, async (req, res) => {
     try {
-      const jobs = await storage.getJobsByOffice(req.user.officeId);
+      const jobs = await storage.getJobsByOffice(getOfficeUser(req).officeId);
       
       // Log PHI access for viewing patient list
-      await logPhiAccess(req, 'view', 'patient_list', req.user.officeId, undefined, { jobCount: jobs.length });
+      await logPhiAccess(req, 'view', 'patient_list', getOfficeUser(req).officeId, undefined, { jobCount: jobs.length });
       
       res.json(jobs);
     } catch (error: any) {
@@ -850,7 +907,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
       
       const existingJob = await storage.getJobByTrayNumber(
-        req.user.officeId, 
+        getOfficeUser(req).officeId, 
         trayNumber,
         typeof excludeJobId === 'string' ? excludeJobId : undefined
       );
@@ -866,13 +923,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const requestedId = typeof req.body?.id === "string" ? req.body.id.trim() : "";
       if (requestedId) {
         const existing = await storage.getJob(requestedId);
-        if (existing && existing.officeId === req.user.officeId) {
+        if (existing && existing.officeId === getAuthUser(req).officeId) {
           return res.json(existing);
         }
       }
 
       // Get office settings to check identifier mode
-      const office = await storage.getOffice(req.user.officeId);
+      const office = await storage.getOffice(getOfficeUser(req).officeId);
       const officeSettings = (office?.settings || {}) as Record<string, any>;
       const jobIdentifierMode = officeSettings.jobIdentifierMode || "patientName";
       const normalizedFirstName = normalizePatientNamePart(req.body?.patientFirstName);
@@ -885,7 +942,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
         
         // Check for duplicate tray number
-        const existingJob = await storage.getJobByTrayNumber(req.user.officeId, req.body.trayNumber.trim());
+        const existingJob = await storage.getJobByTrayNumber(getOfficeUser(req).officeId, req.body.trayNumber.trim());
         if (existingJob) {
           return res.status(409).json({ 
             error: "Duplicate tray number", 
@@ -910,8 +967,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       
       const jobData = insertJobSchema.parse({
         ...normalizedBody,
-        officeId: req.user.officeId,
-        createdBy: req.user.id
+        officeId: getAuthUser(req).officeId,
+        createdBy: getAuthUser(req).id
       });
       
       const job = await storage.createJob(jobData);
@@ -931,7 +988,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.put("/api/jobs/:id", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const oldJob = await storage.getJob(req.params.id);
-      if (!oldJob || oldJob.officeId !== req.user.officeId) {
+      if (!oldJob || oldJob.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1007,7 +1064,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
       
-      const job = await storage.updateJob(req.params.id, updates as any, req.user.id);
+      const job = await storage.updateJob(req.params.id, updates as any, getAuthUser(req).id);
       
       // Log PHI access for updating patient record
       await logPhiAccess(req, 'update', 'job', job.id, job.orderId, { 
@@ -1017,7 +1074,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       
       if (oldJob && updates.status && oldJob.status !== updates.status) {
         // Send notifications while job still exists in database (fixes FK violation)
-        await notifyJobStatusChange(job, oldJob.status, req.user, storage);
+        await notifyJobStatusChange(job, oldJob.status, getAuthUser(req), storage);
         
         if (isAiSummaryEnabled()) {
           // Regenerate AI summary BEFORE archiving (while job still exists)
@@ -1041,7 +1098,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.delete("/api/jobs/:id", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.id);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1061,7 +1118,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
-      if (job.officeId !== req.user.officeId) {
+      if (job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1090,14 +1147,14 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       const { startDate, endDate, name } = req.query;
       const jobs = await storage.getArchivedJobsByOffice(
-        req.user.officeId,
+        getOfficeUser(req).officeId,
         startDate as string | undefined,
         endDate as string | undefined,
         name as string | undefined
       );
       
       // Log PHI access for viewing archived patient records
-      await logPhiAccess(req, 'view', 'archived_job', req.user.officeId, undefined, { 
+      await logPhiAccess(req, 'view', 'archived_job', getOfficeUser(req).officeId, undefined, { 
         jobCount: jobs.length,
         filters: { startDate, endDate, name }
       });
@@ -1116,7 +1173,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         .where(eq(archivedJobs.id, req.params.id))
         .limit(1);
 
-      if (!archived || archived.officeId !== req.user.officeId) {
+      if (!archived || archived.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Archived job not found" });
       }
 
@@ -1138,7 +1195,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // Overdue jobs
   app.get("/api/jobs/overdue", requireOffice, async (req, res) => {
     try {
-      const overdueJobs = await storage.getOverdueJobs(req.user.officeId);
+      const overdueJobs = await storage.getOverdueJobs(getOfficeUser(req).officeId);
       res.json(overdueJobs);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1148,7 +1205,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.get("/api/jobs/:jobId/status-history", requireOffice, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1194,7 +1251,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.get("/api/jobs/:jobId/comments", requireOffice, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1212,7 +1269,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.post("/api/jobs/:jobId/comments", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1228,7 +1285,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const commentData = insertJobCommentSchema.parse({
         ...req.body,
         jobId: req.params.jobId,
-        authorId: req.user.id
+        authorId: getAuthUser(req).id
       });
       
       const comment = await storage.createJobComment(commentData);
@@ -1236,7 +1293,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Log PHI access for creating comment
       await logPhiAccess(req, 'create', 'comment', comment.id, job.orderId, { jobId: req.params.jobId });
       
-      await notifyNewComment(job, comment, req.user, storage);
+      await notifyNewComment(job, comment, getAuthUser(req), storage);
       if (isAiSummaryEnabled()) {
         // Regenerate AI summary for flagged jobs when new comment is added
         await checkAndRegenerateSummary(req.params.jobId);
@@ -1261,11 +1318,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const job = await storage.getJob(existingComment.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Comment not found" });
       }
       
-      if (existingComment.authorId !== req.user.id) {
+      if (existingComment.authorId !== getAuthUser(req).id) {
         return res.status(403).json({ error: "Not authorized to edit this comment" });
       }
       
@@ -1288,7 +1345,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // Comment reads routes
   app.get("/api/jobs/unread-comments", requireOffice, async (req, res) => {
     try {
-      const unreadJobIds = await storage.getUnreadCommentJobIds(req.user.id, req.user.officeId);
+      const unreadJobIds = await storage.getUnreadCommentJobIds(getOfficeUser(req).id, getOfficeUser(req).officeId);
       res.json(unreadJobIds);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1297,7 +1354,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
   app.get("/api/jobs/comment-counts", requireOffice, async (req, res) => {
     try {
-      const commentCounts = await storage.getJobCommentCounts(req.user.officeId);
+      const commentCounts = await storage.getJobCommentCounts(getOfficeUser(req).officeId);
       res.json(commentCounts);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1307,11 +1364,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.put("/api/jobs/:jobId/comment-reads", requireOffice, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      const commentRead = await storage.updateCommentRead(req.user.id, req.params.jobId);
+      const commentRead = await storage.updateCommentRead(getAuthUser(req).id, req.params.jobId);
       res.json(commentRead);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1322,12 +1379,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.post("/api/jobs/:jobId/flag", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
       // Create flag immediately without waiting for summary
-      const flag = await storage.flagJob(req.user.id, req.params.jobId);
+      const flag = await storage.flagJob(getAuthUser(req).id, req.params.jobId);
       
       const shouldGenerateAiSummary = isAiSummaryEnabled();
 
@@ -1341,7 +1398,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
             }
             const office = await storage.getOffice(job.officeId);
             const summary = await generateJobSummary(req.params.jobId, office?.settings || {});
-            await storage.updateJobFlagAiSummary(req.user.id, req.params.jobId, summary);
+            await storage.updateJobFlagAiSummary(getAuthUser(req).id, req.params.jobId, summary);
             if (process.env.OTTO_DEBUG === "true") {
               console.log(`[AI Summary] Async summary generation completed for job ${req.params.jobId}`);
             }
@@ -1361,7 +1418,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.put("/api/jobs/:jobId/flag/note", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1371,13 +1428,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const [existingFlag] = await db
         .select({ id: jobFlags.id })
         .from(jobFlags)
-        .where(and(eq(jobFlags.userId, req.user.id), eq(jobFlags.jobId, req.params.jobId)));
+        .where(and(eq(jobFlags.userId, getAuthUser(req).id), eq(jobFlags.jobId, req.params.jobId)));
 
       if (!existingFlag) {
         return res.status(404).json({ error: "This job isn’t starred by you yet." });
       }
 
-      await storage.updateJobFlagImportantNote(req.user.id, req.params.jobId, trimmed);
+      await storage.updateJobFlagImportantNote(getAuthUser(req).id, req.params.jobId, trimmed);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1387,11 +1444,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.delete("/api/jobs/:jobId/flag", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      await storage.unflagJob(req.user.id, req.params.jobId);
+      await storage.unflagJob(getAuthUser(req).id, req.params.jobId);
       res.status(204).send();
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1400,7 +1457,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
   app.get("/api/jobs/flagged", requireOffice, async (req, res) => {
     try {
-      const flaggedJobs = await storage.getFlaggedJobsByOffice(req.user.officeId);
+      const flaggedJobs = await storage.getFlaggedJobsByOffice(getOfficeUser(req).officeId);
       res.json(flaggedJobs);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1410,7 +1467,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.get("/api/jobs/:jobId/flagged-by", requireOffice, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1432,7 +1489,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const job = await storage.getJob(req.params.jobId);
-      if (!job || job.officeId !== req.user.officeId) {
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Job not found" });
       }
 
@@ -1449,7 +1506,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // Office routes
   app.post("/api/offices", requireAuth, async (req, res) => {
     try {
-      if (req.user.officeId) {
+      if (getAuthUser(req).officeId) {
         return res.status(400).json({ error: "You already belong to an office." });
       }
 
@@ -1465,7 +1522,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const office = await storage.createOffice(createPayload);
       
       // Assign user as owner
-      await storage.updateUser(req.user.id, {
+      await storage.updateUser(getAuthUser(req).id, {
         officeId: office.id,
         role: "owner"
       });
@@ -1695,7 +1752,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         if (!allowedRoles.has(role)) {
           return res.status(400).json({ error: "Invalid role" });
         }
-        if (req.user.role === "manager" && role === "manager") {
+        if (getAuthUser(req).role === "manager" && role === "manager") {
           return res.status(403).json({ error: "Only an Owner can approve another Manager." });
         }
 
@@ -1703,12 +1760,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
         const createdUser = await storage.approveAccountSignupRequest(
           req.params.id,
-          req.user.officeId,
-          req.user.id,
+          getOfficeUser(req).officeId,
+          getAuthUser(req).id,
           requestedRole,
         );
 
-        broadcastToOffice(req.user.officeId, { type: "office_updated", ts: Date.now(), source: "account_request" });
+        broadcastToOffice(getOfficeUser(req).officeId, { type: "office_updated", ts: Date.now(), source: "account_request" });
         res.status(201).json(withoutPassword(createdUser));
       } catch (error: any) {
         if (String(error?.message || "").toLowerCase().includes("not found")) {
@@ -1725,8 +1782,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     requireRole(["owner", "manager"]),
     async (req, res) => {
       try {
-        await storage.rejectAccountSignupRequest(req.params.id, req.user.officeId, req.user.id);
-        broadcastToOffice(req.user.officeId, { type: "office_updated", ts: Date.now(), source: "account_request" });
+        await storage.rejectAccountSignupRequest(req.params.id, getOfficeUser(req).officeId, getOfficeUser(req).id);
+        broadcastToOffice(getOfficeUser(req).officeId, { type: "office_updated", ts: Date.now(), source: "account_request" });
         res.status(204).send();
       } catch (error: any) {
         if (String(error?.message || "").toLowerCase().includes("not found")) {
@@ -1741,12 +1798,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.put("/api/users/:id", requireOffice, requireRole(["owner", "manager"]), async (req, res) => {
     try {
       const targetUser = await storage.getUser(req.params.id);
-      if (!targetUser || targetUser.officeId !== req.user.officeId) {
+      if (!targetUser || targetUser.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "User not found" });
       }
 
       // Avoid self-edits through this endpoint (UI already blocks it).
-      if (targetUser.id === req.user.id) {
+      if (targetUser.id === getAuthUser(req).id) {
         return res.status(400).json({ error: "You can’t update your own role here." });
       }
 
@@ -1783,7 +1840,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(400).json({ error: "No changes provided" });
       }
 
-      const actingRole = req.user.role;
+      const actingRole = getAuthUser(req).role;
       if (actingRole === "manager") {
         // Managers can manage staff/view-only users only.
         if (targetUser.role === "owner" || targetUser.role === "manager") {
@@ -1798,7 +1855,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const isRemoving = Object.prototype.hasOwnProperty.call(updates, "officeId") && updates.officeId === null;
       const roleChangingAwayFromOwner = updates.role && targetUser.role === "owner" && updates.role !== "owner";
       if (targetUser.role === "owner" && (isRemoving || roleChangingAwayFromOwner)) {
-        const members = await storage.getUsersInOffice(req.user.officeId);
+        const members = await storage.getUsersInOffice(getOfficeUser(req).officeId);
         const ownerCount = members.filter((u) => u.role === "owner").length;
         if (ownerCount <= 1) {
           return res.status(400).json({ error: "You can’t remove the last Owner from the office." });
@@ -1815,7 +1872,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // Join request routes
   app.post("/api/join-requests", requireAuth, async (req, res) => {
     try {
-      if (req.user.officeId) {
+      if (getAuthUser(req).officeId) {
         return res.status(400).json({ error: "You already belong to an office." });
       }
 
@@ -1827,7 +1884,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(400).json({ error: "Owner not found" });
       }
       
-      const request = await storage.createJoinRequest(req.user.id, owner.officeId, message);
+      const request = await storage.createJoinRequest(getAuthUser(req).id, owner.officeId, message);
       res.status(201).json(request);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1840,7 +1897,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     requireRole(["owner", "manager"]),
     async (req, res) => {
     try {
-      const pending = await storage.getJoinRequestsByOffice(req.user.officeId);
+      const pending = await storage.getJoinRequestsByOffice(getOfficeUser(req).officeId);
       const request = pending.find((r: any) => r.id === req.params.id);
       if (!request) {
         return res.status(404).json({ error: "Join request not found" });
@@ -1865,7 +1922,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     requireRole(["owner", "manager"]),
     async (req, res) => {
     try {
-      const pending = await storage.getJoinRequestsByOffice(req.user.officeId);
+      const pending = await storage.getJoinRequestsByOffice(getOfficeUser(req).officeId);
       const request = pending.find((r: any) => r.id === req.params.id);
       if (!request) {
         return res.status(404).json({ error: "Join request not found" });
@@ -1883,8 +1940,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       const invitationData = insertInvitationSchema.parse({
         ...req.body,
-        officeId: req.user.officeId,
-        invitedBy: req.user.id,
+        officeId: getAuthUser(req).officeId,
+        invitedBy: getAuthUser(req).id,
       });
       
       // Generate a unique token
@@ -1909,7 +1966,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
   app.get("/api/invitations", requireOffice, async (req, res) => {
     try {
-      const invitations = await storage.getInvitationsByOffice(req.user.officeId);
+      const invitations = await storage.getInvitationsByOffice(getOfficeUser(req).officeId);
       res.json(invitations);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1924,7 +1981,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(404).json({ error: "Invitation not found" });
       }
       
-      if (invitation.officeId !== req.user.officeId) {
+      if (invitation.officeId !== getAuthUser(req).officeId) {
         return res.status(403).json({ error: "Access denied" });
       }
       
@@ -1966,11 +2023,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
   app.post("/api/invitations/accept/:token", requireAuth, async (req, res) => {
     try {
-      if (req.user.officeId) {
+      if (getAuthUser(req).officeId) {
         return res.status(400).json({ error: "You already belong to an office." });
       }
 
-      await storage.acceptInvitation(req.params.token, req.user.id);
+      await storage.acceptInvitation(req.params.token, getAuthUser(req).id);
       res.status(200).json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1980,7 +2037,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // Notification rules routes
   app.get("/api/notification-rules", requireOffice, async (req, res) => {
     try {
-      const rules = await storage.getNotificationRulesByOffice(req.user.officeId);
+      const rules = await storage.getNotificationRulesByOffice(getOfficeUser(req).officeId);
       res.json(rules);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1991,7 +2048,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       const ruleData = insertNotificationRuleSchema.parse({
         ...req.body,
-        officeId: req.user.officeId
+        officeId: getAuthUser(req).officeId
       });
       
       const rule = await storage.createNotificationRule(ruleData);
@@ -2005,7 +2062,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       // Verify rule belongs to user's office
       const existingRule = await storage.getNotificationRule(req.params.id);
-      if (!existingRule || existingRule.officeId !== req.user.officeId) {
+      if (!existingRule || existingRule.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Notification rule not found" });
       }
       
@@ -2039,7 +2096,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       // Verify rule belongs to user's office
       const existingRule = await storage.getNotificationRule(req.params.id);
-      if (!existingRule || existingRule.officeId !== req.user.officeId) {
+      if (!existingRule || existingRule.officeId !== getAuthUser(req).officeId) {
         return res.status(404).json({ error: "Notification rule not found" });
       }
       
@@ -2056,10 +2113,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const { startDate, endDate, jobType } = req.query;
       
       // Get active jobs
-      const activeJobs = await storage.getJobsByOffice(req.user.officeId);
+      const activeJobs = await storage.getJobsByOffice(getOfficeUser(req).officeId);
       
       // Get archived jobs
-      const archivedJobs = await storage.getArchivedJobsByOffice(req.user.officeId);
+      const archivedJobs = await storage.getArchivedJobsByOffice(getOfficeUser(req).officeId);
       
       // Filter by date range and job type if provided
       const start = startDate ? new Date(startDate as string) : new Date(0);
@@ -2153,7 +2210,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const office = await storage.toggleOfficeStatus(req.params.id, enabled);
       
       await storage.createAuditLog({
-        adminId: req.user!.id,
+        adminId: getAuthUser(req).id,
         action: enabled ? 'enable_office' : 'disable_office',
         targetType: 'office',
         targetId: req.params.id,
@@ -2180,7 +2237,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       const auditData = insertAdminAuditLogSchema.parse({
         ...req.body,
-        adminId: req.user!.id
+        adminId: getAuthUser(req).id
       });
       
       const log = await storage.createAuditLog(auditData);
@@ -2228,7 +2285,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
 
-      const notifications = await storage.getNotificationsByUser(req.user.id, {
+      const notifications = await storage.getNotificationsByUser(getAuthUser(req).id, {
         unreadOnly,
         limit,
         offset
@@ -2245,7 +2302,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
 
     try {
-      const count = await storage.getUnreadNotificationCount(req.user.id);
+      const count = await storage.getUnreadNotificationCount(getAuthUser(req).id);
       res.json({ count });
     } catch (error: any) {
       console.error("GET /api/notifications/unread-count - Error:", error.message);
@@ -2257,7 +2314,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
 
     try {
-      const notification = await storage.markNotificationRead(req.params.id, req.user.id);
+      const notification = await storage.markNotificationRead(req.params.id, getAuthUser(req).id);
       res.json(notification);
     } catch (error: any) {
       console.error("PATCH /api/notifications/:id/read - Error:", error.message);
@@ -2273,7 +2330,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
 
     try {
-      await storage.markAllNotificationsRead(req.user.id);
+      await storage.markAllNotificationsRead(getAuthUser(req).id);
       res.json({ success: true });
     } catch (error: any) {
       console.error("PATCH /api/notifications/read-all - Error:", error.message);
@@ -2285,7 +2342,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
 
     try {
-      await storage.deleteNotification(req.params.id, req.user.id);
+      await storage.deleteNotification(req.params.id, getAuthUser(req).id);
       res.status(204).send();
     } catch (error: any) {
       console.error("DELETE /api/notifications/:id - Error:", error.message);
@@ -2331,13 +2388,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       if (jobId && typeof jobId === "string") {
         const job = await storage.getJob(jobId);
-        if (!job || job.officeId !== req.user.officeId) {
+        if (!job || job.officeId !== getAuthUser(req).officeId) {
           return res.status(404).json({ error: "Job not found" });
         }
       }
       
       // Check if patient has opted in
-      const optIn = await storage.getSmsOptIn(phone, req.user.officeId);
+      const optIn = await storage.getSmsOptIn(phone, getOfficeUser(req).officeId);
       if (!optIn) {
         return res.status(400).json({ error: "Patient has not opted in to SMS notifications" });
       }

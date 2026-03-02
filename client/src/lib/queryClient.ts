@@ -47,15 +47,23 @@ function isMutatingMethod(method: string): boolean {
 function shouldQueueOffline(method: string, url: string): boolean {
   if (!isMutatingMethod(method)) return false;
 
-  // Only queue core job operations for now (jobs, comments, flags, archive/restore).
+  // Queue core job operations including comments, flags, and archive/restore.
   const absolute = withApiBase(url);
   try {
     const parsed = new URL(absolute, window.location.origin);
     const path = parsed.pathname;
-    if (!path.startsWith("/api/jobs")) return false;
-    if (path.includes("/comment-reads")) return false; // not important enough to queue
-    if (path.includes("/summary")) return false; // AI summary is not available offline
-    return true;
+
+    // Job CRUD, status changes, archive/restore/redo
+    if (path.startsWith("/api/jobs")) {
+      if (path.includes("/comment-reads")) return false; // read-tracking, not important enough
+      if (path.includes("/summary")) return false; // AI summary is not available offline
+      return true;
+    }
+
+    // Archived job operations (restore, redo)
+    if (path.startsWith("/api/archived-jobs")) return true;
+
+    return false;
   } catch {
     return false;
   }
