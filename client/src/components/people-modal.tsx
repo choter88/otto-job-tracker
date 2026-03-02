@@ -22,12 +22,12 @@ export default function PeopleModal({ open, onOpenChange }: PeopleModalProps) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("members");
 
-  const { data: members = [] } = useQuery({
+  const { data: members = [] } = useQuery<any[]>({
     queryKey: ["/api/offices", user?.officeId, "members"],
     enabled: !!user?.officeId && open,
   });
 
-  const { data: joinRequests = [] } = useQuery({
+  const { data: joinRequests = [] } = useQuery<any[]>({
     queryKey: ["/api/offices", user?.officeId, "join-requests"],
     enabled: !!user?.officeId && open,
   });

@@ -818,7 +818,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10">
+                {/* Bulk selection hidden until bulk operations are implemented */}
+                <TableHead className="w-10 hidden">
                   <Checkbox
                     className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
                     checked={filteredJobs.length > 0 && selectedJobs.length === filteredJobs.length}
@@ -910,7 +911,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   onClick={() => handleOpenJobDetails(job, "overview")}
                   data-testid={`row-job-${job.id}`}
                 >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
+                  {/* Bulk selection hidden until bulk operations are implemented */}
+                  <TableCell className="hidden" onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
                       checked={selectedJobs.includes(job.id)}
@@ -944,8 +946,21 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       <span className="font-medium truncate">
                         {getPatientLabel(job)}
                       </span>
+                      {(job as any)._pendingSync && (
+                        <Badge
+                          className="text-[10px] px-1.5 py-0 h-5 border-0"
+                          style={{
+                            backgroundColor: 'hsl(220 14% 50% / 0.15)',
+                            color: 'hsl(220 14% 46%)'
+                          }}
+                          title="This job hasn't synced to the Host yet. The order ID will update once synced."
+                          data-testid={`badge-pending-${job.id}`}
+                        >
+                          SYNCING
+                        </Badge>
+                      )}
                       {job.isRedoJob && (
-                        <Badge 
+                        <Badge
                           className="text-[10px] px-1.5 py-0 h-5 border-0"
                           style={{
                             backgroundColor: 'hsl(38 92% 50% / 0.15)',
@@ -1143,21 +1158,20 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </p>
         </div>
 
-        {/* Bulk Actions */}
-        {selectedJobs.length > 0 && (
+        {/* Bulk Actions - hidden until bulk operations are implemented */}
+        {false && selectedJobs.length > 0 && (
           <div className="p-4 bg-muted border-t border-border">
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium">
-                {selectedJobs.length} jobs selected
+                {selectedJobs.length} job{selectedJobs.length === 1 ? "" : "s"} selected
               </p>
-              <div className="flex gap-2">
-                <Button variant="secondary" size="sm" data-testid="button-bulk-update">
-                  Update Status
-                </Button>
-                <Button variant="destructive" size="sm" data-testid="button-bulk-delete">
-                  Delete Selected
-                </Button>
-              </div>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline hover:text-foreground"
+                onClick={() => setSelectedJobs([])}
+              >
+                Clear selection
+              </button>
             </div>
           </div>
         )}

@@ -3,6 +3,7 @@ import { queryClient } from "@/lib/queryClient";
 import { subscribeOutbox, flushOutbox } from "@/lib/offline-outbox";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
+import { AlertTriangle, RefreshCw, LogIn, WifiOff, Wifi } from "lucide-react";
 
 function buildSyncWsUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -212,6 +213,10 @@ export default function SyncManager() {
     return () => window.clearInterval(timer);
   }, [attemptFlush, userId]);
 
+  const handleRelogin = useCallback(() => {
+    window.location.href = "/auth";
+  }, []);
+
   if (!user) return null;
 
   const mode = String(desktopConfig?.mode || "").toLowerCase();
@@ -220,15 +225,7 @@ export default function SyncManager() {
   const connectionLabel = modeIsClient ? (connected ? "Connected" : "Disconnected") : "Local";
 
   const hasPending = pendingCount > 0;
-  const syncLabel = !modeIsClient
-    ? null
-    : syncing
-      ? `Syncing… (${pendingCount})`
-      : syncError
-        ? `Sync paused: ${syncError}`
-        : hasPending
-          ? `Offline changes: ${pendingCount}`
-          : null;
+  const blockedByAuth = syncError?.includes("sign in");
 
   const backupInfo = (() => {
     if (mode !== "host") return null;
@@ -281,27 +278,71 @@ export default function SyncManager() {
       ? "bg-emerald-500"
       : "bg-destructive";
 
-  return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-      <div className="flex items-center justify-between gap-4 px-4 py-2 text-xs">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="font-medium text-foreground">{modeLabel}</span>
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span className={`h-2 w-2 rounded-full ${connectionDotClass}`} />
-            {connectionLabel}
-          </span>
-          {syncLabel && <span className="text-amber-600 dark:text-amber-400">{syncLabel}</span>}
-        </div>
+  // Prominent offline/sync banner shown above the status bar when there are issues
+  const showOfflineBanner = modeIsClient && (!connected || hasPending || syncError);
 
-        <div className="flex items-center gap-3 min-w-0 text-muted-foreground">
-          {backupLabel && (
-            <span className={backupWarn ? "text-amber-600 dark:text-amber-400" : ""}>
-              {backupLabel}
-            </span>
+  return (
+    <>
+      {/* Prominent sync/offline banner */}
+      {showOfflineBanner && (
+        <div className="fixed bottom-[41px] left-0 right-0 z-50">
+          {!connected && !hasPending && (
+            <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-t border-amber-200 dark:border-amber-800 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-200">
+              <WifiOff className="h-4 w-4 shrink-0" />
+              <span>Working offline. Changes you make will save automatically when reconnected.</span>
+            </div>
           )}
-          {licenseLabel && <span className="text-amber-600 dark:text-amber-400">{licenseLabel}</span>}
+          {hasPending && !blockedByAuth && (
+            <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-t border-amber-200 dark:border-amber-800 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-200">
+              {syncing ? (
+                <RefreshCw className="h-4 w-4 shrink-0 animate-spin" />
+              ) : (
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+              )}
+              <span>
+                {syncing
+                  ? `Syncing ${pendingCount} change${pendingCount === 1 ? "" : "s"}…`
+                  : `${pendingCount} change${pendingCount === 1 ? "" : "s"} waiting to sync${!connected ? " — will sync when reconnected" : ""}`}
+              </span>
+            </div>
+          )}
+          {blockedByAuth && (
+            <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-t border-red-200 dark:border-red-800 px-4 py-2.5 text-sm text-red-800 dark:text-red-200">
+              <LogIn className="h-4 w-4 shrink-0" />
+              <span>{pendingCount} change{pendingCount === 1 ? "" : "s"} waiting to sync.</span>
+              <button
+                type="button"
+                onClick={handleRelogin}
+                className="ml-1 underline font-medium hover:text-red-900 dark:hover:text-red-100"
+              >
+                Sign in to sync
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Bottom status bar */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+        <div className="flex items-center justify-between gap-4 px-4 py-2 text-xs">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="font-medium text-foreground">{modeLabel}</span>
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span className={`h-2 w-2 rounded-full ${connectionDotClass}`} />
+              {connectionLabel}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 min-w-0 text-muted-foreground">
+            {backupLabel && (
+              <span className={backupWarn ? "text-amber-600 dark:text-amber-400" : ""}>
+                {backupLabel}
+              </span>
+            )}
+            {licenseLabel && <span className="text-amber-600 dark:text-amber-400">{licenseLabel}</span>}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

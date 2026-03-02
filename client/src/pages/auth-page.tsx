@@ -58,6 +58,28 @@ type LoginFormData = z.infer<typeof loginSchema>;
 type PinLoginFormData = z.infer<typeof pinLoginSchema>;
 type RegisterFormData = z.infer<typeof registerSchema>;
 
+function PasswordChecklist({ value }: { value: string }) {
+  const rules = [
+    { label: "12+ characters", met: value.length >= 12 },
+    { label: "Uppercase letter", met: /[A-Z]/.test(value) },
+    { label: "Lowercase letter", met: /[a-z]/.test(value) },
+    { label: "Number", met: /[0-9]/.test(value) },
+    { label: "Special character", met: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(value) },
+  ];
+
+  if (!value) return null;
+
+  return (
+    <ul className="mt-1.5 space-y-0.5 text-xs">
+      {rules.map((rule) => (
+        <li key={rule.label} className={rule.met ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+          {rule.met ? "\u2713" : "\u2022"} {rule.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 type SetupStatus = {
   initialized: boolean;
   officeId: string | null;
@@ -73,6 +95,7 @@ export default function AuthPage() {
   const [loginMethod, setLoginMethod] = useState<"password" | "pin">("password");
   const [requestSubmittedMessage, setRequestSubmittedMessage] = useState<string | null>(null);
   const [desktopMode, setDesktopMode] = useState<DesktopMode>("unknown");
+  const [sharedLoginId, setSharedLoginId] = useState("");
 
   const { data: setupStatus, isLoading: setupLoading } = useQuery<SetupStatus>({
     queryKey: ["/api/setup/status"],
@@ -133,6 +156,18 @@ export default function AuthPage() {
       lastName: "",
     },
   });
+
+  const registerPasswordValue = registerForm.watch("password");
+
+  // Sync shared login ID into the active form when switching methods
+  useEffect(() => {
+    if (!sharedLoginId) return;
+    if (loginMethod === "password") {
+      loginForm.setValue("identifier", sharedLoginId);
+    } else {
+      pinLoginForm.setValue("loginId", sharedLoginId);
+    }
+  }, [loginMethod, sharedLoginId, loginForm, pinLoginForm]);
 
   const requestAccessMutation = useMutation({
     mutationFn: async (payload: Omit<RegisterFormData, "passwordConfirm" | "pinConfirm">) => {
@@ -285,17 +320,25 @@ export default function AuthPage() {
                   )}
                 </div>
                 {!setupStatus.selfSignupEnabled && (
-                  <p className="text-sm text-muted-foreground">
-                    Account requests are disabled for this office. Ask an owner or manager to create your account.
-                  </p>
+                  <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+                    New account requests are turned off. Ask an owner or manager to create your account on the Host.
+                  </div>
                 )}
               </CardHeader>
               <CardContent className="flex-1 overflow-y-auto">
                 {!showSignup ? (
                   <div className="space-y-4">
                     {requestSubmittedMessage && (
-                      <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-primary">
-                        {requestSubmittedMessage}
+                      <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-primary flex items-start justify-between gap-2">
+                        <span>{requestSubmittedMessage}</span>
+                        <button
+                          type="button"
+                          className="shrink-0 text-primary/60 hover:text-primary text-lg leading-none"
+                          onClick={() => setRequestSubmittedMessage(null)}
+                          aria-label="Dismiss"
+                        >
+                          &times;
+                        </button>
                       </div>
                     )}
 
@@ -304,7 +347,12 @@ export default function AuthPage() {
                         type="button"
                         variant={loginMethod === "password" ? "secondary" : "ghost"}
                         className="h-8"
-                        onClick={() => setLoginMethod("password")}
+                        onClick={() => {
+                          // Preserve login ID when switching methods
+                          const currentId = pinLoginForm.getValues("loginId");
+                          if (currentId) setSharedLoginId(currentId);
+                          setLoginMethod("password");
+                        }}
                         data-testid="button-login-method-password"
                       >
                         Password
@@ -313,7 +361,12 @@ export default function AuthPage() {
                         type="button"
                         variant={loginMethod === "pin" ? "secondary" : "ghost"}
                         className="h-8"
-                        onClick={() => setLoginMethod("pin")}
+                        onClick={() => {
+                          // Preserve login ID when switching methods
+                          const currentId = loginForm.getValues("identifier");
+                          if (currentId) setSharedLoginId(currentId);
+                          setLoginMethod("pin");
+                        }}
                         data-testid="button-login-method-pin"
                       >
                         PIN
@@ -470,9 +523,7 @@ export default function AuthPage() {
                         {...registerForm.register("password")}
                         data-testid="input-reg-password"
                       />
-                      <p className="text-xs text-muted-foreground">
-                        12+ characters with uppercase, lowercase, number, and symbol.
-                      </p>
+                      <PasswordChecklist value={registerPasswordValue || ""} />
                       {registerForm.formState.errors.password && (
                         <p className="text-sm text-destructive">{registerForm.formState.errors.password.message}</p>
                       )}

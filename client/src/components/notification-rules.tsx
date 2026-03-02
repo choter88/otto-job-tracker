@@ -35,12 +35,12 @@ export default function NotificationRules() {
   const [editingRule, setEditingRule] = useState<NotificationRule | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
 
-  const { data: notificationRules = [], isLoading } = useQuery({
+  const { data: notificationRules = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/notification-rules"],
     enabled: !!user?.officeId,
   });
 
-  const { data: office } = useQuery({
+  const { data: office } = useQuery<Record<string, any>>({
     queryKey: ["/api/offices", user?.officeId],
     enabled: !!user?.officeId,
   });

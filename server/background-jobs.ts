@@ -86,15 +86,16 @@ cron.schedule('0 0 * * *', async () => {
           updatedOffices.add(rule.officeId);
         }
         
-        if (rule.smsEnabled && rule.smsTemplate) {
+        if (rule.smsEnabled && rule.smsTemplate && job.phone) {
+          const jobPhone = job.phone;
           const optIn = await db.select()
             .from(smsOptIns)
             .where(and(
-              eq(smsOptIns.phone, job.phone),
+              eq(smsOptIns.phone, jobPhone),
               eq(smsOptIns.officeId, job.officeId)
             ))
             .limit(1);
-          
+
           if (optIn.length > 0) {
             const smsMessage = substituteTemplate(rule.smsTemplate, {
               job_type: job.jobType,
@@ -102,12 +103,12 @@ cron.schedule('0 0 * * *', async () => {
               days: daysOverdue,
               office_phone: officePhone
             });
-            
-            const result = await sendSMS(job.phone, smsMessage);
+
+            const result = await sendSMS(jobPhone, smsMessage);
             
             await storage.logSms({
               jobId: job.id,
-              phone: job.phone,
+              phone: jobPhone,
               message: smsMessage,
               status: result.success ? 'sent' : 'failed',
               messageSid: result.messageSid || null,

@@ -1237,7 +1237,7 @@ export class DatabaseStorage implements IStorage {
   async createNotificationRule(rule: InsertNotificationRule): Promise<NotificationRule> {
     const [newRule] = await db
       .insert(notificationRules)
-      .values({ id: randomUUID(), ...rule })
+      .values({ id: randomUUID(), ...rule } as any)
       .returning();
     return newRule;
   }
@@ -1360,7 +1360,7 @@ export class DatabaseStorage implements IStorage {
   async createNotification(notification: InsertNotification): Promise<Notification> {
     const [newNotification] = await db
       .insert(notifications)
-      .values({ id: randomUUID(), ...notification })
+      .values({ id: randomUUID(), ...notification } as any)
       .returning();
     return newNotification;
   }
@@ -1550,7 +1550,7 @@ export class DatabaseStorage implements IStorage {
   async createAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog> {
     const [auditLog] = await db
       .insert(adminAuditLogs)
-      .values({ id: randomUUID(), ...log })
+      .values({ id: randomUUID(), ...log } as any)
       .returning();
     return auditLog;
   }
@@ -1566,7 +1566,7 @@ export class DatabaseStorage implements IStorage {
   async createPhiAccessLog(log: InsertPhiAccessLog): Promise<PhiAccessLog> {
     const [accessLog] = await db
       .insert(phiAccessLogs)
-      .values({ id: randomUUID(), ...log })
+      .values({ id: randomUUID(), ...log } as any)
       .returning();
     return accessLog;
   }
