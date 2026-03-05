@@ -1,6 +1,8 @@
+import os from "os";
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
-import { portalActivate, portalCheckin, portalConsumeHostClaim } from "./license-client";
+import { portalActivate, portalCheckin, portalConsumeHostClaim, portalValidateHostClaim } from "./license-client";
+import type { ClaimValidationResult } from "./license-client";
 
 let state: LicenseState | null = null;
 let checkinTimer: NodeJS.Timeout | null = null;
@@ -145,18 +147,85 @@ export async function activateHostForSetup(setupCode: string): Promise<LicenseSn
   return applyActivationResult(result);
 }
 
+export type ClaimValidation = {
+  validated: boolean;
+  office?: ClaimValidationResult extends { ok: true } ? ClaimValidationResult["office"] : never;
+  portalUser?: ClaimValidationResult extends { ok: true } ? ClaimValidationResult["portalUser"] : never;
+  fallbackToConsume?: boolean;
+};
+
+export async function validateClaimForSetup(setupCode: string): Promise<ClaimValidation> {
+  const trimmed = normalizeSetupCode(setupCode);
+  if (!trimmed) {
+    throw new Error("Host Claim Code is required");
+  }
+
+  // Legacy activation codes don't support validation — fall back to single-submit flow
+  if (isLikelyActivationCode(trimmed)) {
+    return { validated: true, fallbackToConsume: true };
+  }
+
+  const current = getState();
+  const result = await portalValidateHostClaim({
+    claimCode: trimmed,
+    installationId: current.installationId,
+    hostFingerprint256: current.hostFingerprint256,
+    appVersion: process.env.npm_package_version,
+  });
+
+  if (!result.ok) {
+    if (result.error.code === "VALIDATE_NOT_SUPPORTED") {
+      // Old portal without validate endpoint — fall back to single-submit flow
+      return { validated: true, fallbackToConsume: true };
+    }
+    throwLicenseRequestError(result.error);
+  }
+
+  return {
+    validated: true,
+    office: result.office,
+    portalUser: result.portalUser,
+  };
+}
+
+function getLocalAddresses(): string[] {
+  const port = process.env.PORT || "5150";
+  const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
+  const nets = os.networkInterfaces();
+  return Object.values(nets)
+    .flat()
+    .filter((n): n is os.NetworkInterfaceInfo => Boolean(n))
+    .filter((n) => n.family === "IPv4" && !n.internal && !n.address.startsWith("169.254."))
+    .map((n) => `${protocol}://${n.address}:${port}`);
+}
+
+function computePairingCode(fingerprint256: string): string {
+  const hex = fingerprint256.replace(/[^a-fA-F0-9]/g, "").toLowerCase();
+  if (hex.length < 12) return "";
+  return `${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}`;
+}
+
 export async function forceCheckin(): Promise<LicenseSnapshot> {
   const current = getState();
   if (!current.hostToken) {
     return getLicenseSnapshot();
   }
 
-  const result = await portalCheckin({
+  const checkinPayload: Parameters<typeof portalCheckin>[0] = {
     hostToken: current.hostToken,
     installationId: current.installationId,
     hostFingerprint256: current.hostFingerprint256,
     appVersion: process.env.npm_package_version,
-  });
+  };
+
+  // Include connection info so the portal can assist client discovery
+  const addrs = getLocalAddresses();
+  if (addrs.length > 0) checkinPayload.localAddresses = addrs;
+  const pc = computePairingCode(current.hostFingerprint256);
+  if (pc) checkinPayload.pairingCode = pc;
+  if (current.hostFingerprint256) checkinPayload.tlsFingerprint256 = current.hostFingerprint256;
+
+  const result = await portalCheckin(checkinPayload);
 
   if (!result.ok) {
     const err = result.error;

@@ -36,7 +36,7 @@ import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
-import { activateHostForSetup, activateLicense, forceCheckin, getLicenseSnapshot } from "./license";
+import { activateHostForSetup, activateLicense, forceCheckin, getLicenseSnapshot, validateClaimForSetup } from "./license";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
@@ -458,6 +458,27 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to read setup status" });
+    }
+  });
+
+  // Validate a claim code without consuming it — returns office + user details for pre-fill
+  app.post("/api/setup/verify-claim", async (req, res) => {
+    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
+    if (!isLoopbackIp(remote)) {
+      return res.status(403).json({ error: "Setup must be completed on the Host computer." });
+    }
+
+    const setupCode = readSetupCodeFromBody(req.body);
+    if (!setupCode) {
+      return res.status(400).json({ error: "Host Claim Code is required." });
+    }
+
+    try {
+      const result = await validateClaimForSetup(setupCode);
+      res.json(result);
+    } catch (error: any) {
+      const failure = parseSetupActivationFailure(error);
+      res.status(failure.status).json({ error: failure.message, code: failure.code });
     }
   });
 

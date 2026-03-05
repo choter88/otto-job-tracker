@@ -300,7 +300,7 @@ function clearPendingActivationCode() {
 async function handleOpenUrl(url) {
   try {
     const parsed = new URL(String(url));
-    if (parsed.protocol !== "otto:") return;
+    if (parsed.protocol !== "otto:" && parsed.protocol !== "otto-desktop:") return;
 
     const codeCandidate =
       parsed.searchParams.get("claimCode") ||
@@ -2614,6 +2614,102 @@ ipcMain.on("otto:host-approval-center:heartbeat", () => {
   markHostApprovalCenterHeartbeat();
 });
 
+ipcMain.handle("otto:portal:find-host", async (_event, payload) => {
+  return await portalFindHost(payload);
+});
+
+function getPortalBaseUrl() {
+  const raw = String(process.env.OTTO_LICENSE_BASE_URL || "https://ottojobtracker.com").trim();
+  try {
+    return new URL(raw);
+  } catch {
+    return new URL("https://ottojobtracker.com");
+  }
+}
+
+async function portalFindHost(payload) {
+  const { email, password } = payload || {};
+  if (!email || !password) {
+    return { ok: false, message: "Email and password are required." };
+  }
+
+  const base = getPortalBaseUrl();
+  const url = new URL("/portal/api/auth/desktop-token", base);
+
+  try {
+    const body = JSON.stringify({ email, password });
+    const result = await new Promise((resolve, reject) => {
+      const mod = url.protocol === "https:" ? https : http;
+      const req = mod.request(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 10000,
+      }, (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data);
+            resolve({ status: res.statusCode, json });
+          } catch {
+            resolve({ status: res.statusCode, json: null });
+          }
+        });
+      });
+      req.on("error", (err) => reject(err));
+      req.on("timeout", () => {
+        req.destroy();
+        reject(new Error("Portal request timed out."));
+      });
+      req.write(body);
+      req.end();
+    });
+
+    if (result.status === 401) {
+      return { ok: false, message: "Invalid email or password." };
+    }
+
+    if (result.status === 404) {
+      return { ok: false, message: "Portal does not support host discovery. Use Auto-detect or Manual entry." };
+    }
+
+    if (result.status < 200 || result.status >= 300) {
+      const msg = result.json?.error || result.json?.message || `Portal returned status ${result.status}`;
+      return { ok: false, message: String(msg) };
+    }
+
+    const json = result.json;
+    if (!json || !Array.isArray(json.offices)) {
+      return { ok: false, message: "Unexpected response from portal." };
+    }
+
+    const hosts = json.offices
+      .filter((o) => o && o.host)
+      .map((o) => ({
+        officeId: o.officeId || o.portalOfficeId || "",
+        officeName: o.officeName || o.name || "",
+        role: o.role || "",
+        localAddresses: Array.isArray(o.host.localAddresses) ? o.host.localAddresses : [],
+        pairingCode: o.host.pairingCode || "",
+        tlsFingerprint256: o.host.tlsFingerprint256 || "",
+        lastCheckinAt: o.host.lastCheckinAt || 0,
+      }));
+
+    return { ok: true, hosts };
+  } catch (err) {
+    const isTimeout = err && err.message && err.message.includes("timed out");
+    return {
+      ok: false,
+      message: isTimeout
+        ? "Can't reach portal. Use Auto-detect or Manual entry instead."
+        : "Could not connect to portal. Check internet access and try again.",
+    };
+  }
+}
+
 function computeHostInfo() {
   const port = process.env.PORT || "5150";
   const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
@@ -3266,7 +3362,7 @@ app.whenReady().then(async () => {
     await handleOpenFile(filePath);
   }
   for (const arg of process.argv) {
-    if (typeof arg === "string" && arg.startsWith("otto:")) {
+    if (typeof arg === "string" && (arg.startsWith("otto:") || arg.startsWith("otto-desktop:"))) {
       await handleOpenUrl(arg);
     }
     if (typeof arg === "string" && arg.toLowerCase().endsWith(".otto-license")) {
@@ -3297,7 +3393,7 @@ app.on("second-instance", (_event, argv) => {
   if (appReadyForOpenEvents && Array.isArray(argv)) {
     void (async () => {
       for (const arg of argv) {
-        if (typeof arg === "string" && arg.startsWith("otto:")) {
+        if (typeof arg === "string" && (arg.startsWith("otto:") || arg.startsWith("otto-desktop:"))) {
           await handleOpenUrl(arg);
         }
         if (typeof arg === "string" && arg.toLowerCase().endsWith(".otto-license")) {

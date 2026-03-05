@@ -340,6 +340,55 @@
         color: #991b1b;
       }
 
+      .tabs {
+        display: flex;
+        gap: 0;
+        border-bottom: 2px solid var(--border);
+        margin-bottom: 14px;
+      }
+
+      .tab-btn {
+        border: none;
+        border-bottom: 2px solid transparent;
+        background: none;
+        color: var(--muted-foreground);
+        padding: 8px 14px;
+        margin-bottom: -2px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        border-radius: 0;
+        transition: color 150ms ease, border-color 150ms ease;
+      }
+
+      .tab-btn:hover {
+        color: var(--foreground);
+        background: none;
+        border-color: transparent;
+        border-bottom-color: rgba(37, 99, 235, 0.3);
+        box-shadow: none;
+      }
+
+      .tab-btn.active {
+        color: var(--primary);
+        border-bottom-color: var(--primary);
+      }
+
+      .tab-panel {
+        display: none;
+      }
+
+      .tab-panel.active {
+        display: block;
+      }
+
+      .stale-warning {
+        margin-top: 6px;
+        font-size: 12px;
+        color: #b45309;
+        font-weight: 560;
+      }
+
       .footer {
         margin-top: 18px;
         padding-top: 14px;
@@ -411,17 +460,64 @@
 
         <div id="clientSettings" class="client-panel" style="display:none">
           <div class="step">Step 2 · Find Host computer</div>
-          <div class="hint">
-            Recommended: auto-detect the Host computer, then click <b>Connect & Finish</b>.
+
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="portal" type="button">Sign in to find Host</button>
+            <button class="tab-btn" data-tab="autodetect" type="button">Auto-detect</button>
+            <button class="tab-btn" data-tab="manual" type="button">Manual entry</button>
           </div>
 
-          <div class="actions">
-            <button id="discoverHosts" type="button">Auto-detect Host Computer</button>
+          <!-- Tab: Portal sign-in -->
+          <div id="tabPortal" class="tab-panel active">
+            <div class="hint">
+              Sign in with your portal account to find the Host computer registered to your office.
+            </div>
+            <div class="field">
+              <label for="portalEmail">Portal email</label>
+              <input id="portalEmail" type="text" placeholder="you@example.com" />
+            </div>
+            <div class="field">
+              <label for="portalPassword">Portal password</label>
+              <input id="portalPassword" type="text" placeholder="Password"
+                     style="-webkit-text-security: disc;" />
+            </div>
+            <div class="actions">
+              <button id="portalFindHostBtn" type="button">Find my Host</button>
+            </div>
+            <div id="portalStatus" class="status"></div>
+            <div id="portalResults" class="box" style="display:none">
+              <label for="portalHostSelect">Your offices</label>
+              <select id="portalHostSelect"></select>
+              <div id="portalStaleWarning" class="stale-warning" style="display:none"></div>
+              <div class="actions">
+                <button id="usePortalHost" type="button">Connect</button>
+              </div>
+            </div>
           </div>
 
-          <button id="toggleManualEntry" class="manual-toggle" type="button">Enter Host details manually</button>
+          <!-- Tab: Auto-detect -->
+          <div id="tabAutodetect" class="tab-panel">
+            <div class="hint">
+              Recommended: auto-detect the Host computer on your office network.
+            </div>
+            <div class="actions">
+              <button id="discoverHosts" type="button">Auto-detect Host Computer</button>
+            </div>
+            <div id="discoverStatus" class="status"></div>
+            <div id="discoverResults" class="box" style="display:none">
+              <label for="discoveredHostSelect">Detected Host computers</label>
+              <select id="discoveredHostSelect"></select>
+              <div class="actions">
+                <button id="useDiscoveredHost" type="button">Use Selected</button>
+              </div>
+            </div>
+          </div>
 
-          <div id="manualEntry" class="manual-entry" style="display:none">
+          <!-- Tab: Manual entry -->
+          <div id="tabManual" class="tab-panel">
+            <div class="hint">
+              Enter the Host address and Pairing code. On the Host computer, open <b>File → Show Host Address…</b> to find these values.
+            </div>
             <div class="field">
               <label for="hostUrl">Host computer address</label>
               <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
@@ -432,15 +528,6 @@
               <label for="pairingCode">Pairing code</label>
               <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
               <div class="hint danger">Required on first connection to trust the Host certificate.</div>
-            </div>
-          </div>
-
-          <div id="discoverStatus" class="status"></div>
-          <div id="discoverResults" class="box" style="display:none">
-            <label for="discoveredHostSelect">Detected Host computers</label>
-            <select id="discoveredHostSelect"></select>
-            <div class="actions">
-              <button id="useDiscoveredHost" type="button">Use Selected</button>
             </div>
           </div>
 
@@ -463,18 +550,28 @@
       const pairingCode = document.getElementById("pairingCode");
       const saveBtn = document.getElementById("save");
       const discoverBtn = document.getElementById("discoverHosts");
-      const toggleManualEntryBtn = document.getElementById("toggleManualEntry");
-      const manualEntry = document.getElementById("manualEntry");
       const discoverStatus = document.getElementById("discoverStatus");
       const discoverResults = document.getElementById("discoverResults");
       const discoveredHostSelect = document.getElementById("discoveredHostSelect");
       const useDiscoveredHostBtn = document.getElementById("useDiscoveredHost");
       const connectStatus = document.getElementById("connectStatus");
       const manualLookupNote = document.getElementById("manualLookupNote");
+
+      // Portal sign-in elements
+      const portalEmail = document.getElementById("portalEmail");
+      const portalPassword = document.getElementById("portalPassword");
+      const portalFindHostBtn = document.getElementById("portalFindHostBtn");
+      const portalStatus = document.getElementById("portalStatus");
+      const portalResults = document.getElementById("portalResults");
+      const portalHostSelect = document.getElementById("portalHostSelect");
+      const portalStaleWarning = document.getElementById("portalStaleWarning");
+      const usePortalHostBtn = document.getElementById("usePortalHost");
+
       let existingConfig = null;
       let connectionBusy = false;
       let discoveredHosts = [];
-      let manualEntryVisible = false;
+      let portalHosts = [];
+      let activeTab = "portal";
 
       function selectedMode() {
         return document.querySelector('input[name="mode"]:checked')?.value || "host";
@@ -487,25 +584,35 @@
         });
       }
 
+      // --- Tab switching ---
+      function switchTab(tabName) {
+        activeTab = tabName;
+        document.querySelectorAll(".tab-btn").forEach((btn) => {
+          btn.classList.toggle("active", btn.dataset.tab === tabName);
+        });
+        document.querySelectorAll(".tab-panel").forEach((panel) => {
+          panel.classList.remove("active");
+        });
+        const panelId = "tab" + tabName.charAt(0).toUpperCase() + tabName.slice(1);
+        const panel = document.getElementById(panelId);
+        if (panel) panel.classList.add("active");
+        resetConnectStatus();
+      }
+
+      document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+      });
+
       function render() {
         clientSettings.style.display = selectedMode() === "client" ? "block" : "none";
         if (selectedMode() === "client") {
           saveBtn.disabled = connectionBusy;
           saveBtn.textContent = "Connect & Finish";
-          if (toggleManualEntryBtn) {
-            toggleManualEntryBtn.textContent = manualEntryVisible
-              ? "Hide manual Host details"
-              : "Enter Host details manually";
-          }
-          if (manualEntry) {
-            manualEntry.style.display = manualEntryVisible ? "block" : "none";
-          }
         } else {
           saveBtn.disabled = connectionBusy;
           saveBtn.textContent = "Save & Continue";
           setDiscoverStatus("");
           clearDiscoveredHosts();
-          manualEntryVisible = false;
         }
         syncModeCards();
         updateManualLookupNote();
@@ -537,19 +644,13 @@
         if (discoveredHostSelect) discoveredHostSelect.innerHTML = "";
       }
 
-      function setManualEntryVisible(visible) {
-        manualEntryVisible = Boolean(visible);
-        render();
+      function switchToManualTab() {
+        switchTab("manual");
       }
 
       function updateManualLookupNote() {
         if (!manualLookupNote) return;
-        if (selectedMode() !== "client") {
-          manualLookupNote.style.display = "none";
-          manualLookupNote.textContent = "";
-          return;
-        }
-        if (!manualEntryVisible) {
+        if (selectedMode() !== "client" || activeTab !== "manual") {
           manualLookupNote.style.display = "none";
           manualLookupNote.textContent = "";
           return;
@@ -586,7 +687,6 @@
         if (host.pairingCode) {
           pairingCode.value = formatPairingCode(host.pairingCode);
         }
-        setManualEntryVisible(true);
         setConnectStatus("Host selected. Click Connect & Finish to finish setup.", "ok");
       }
 
@@ -614,14 +714,16 @@
         if (modeInput) modeInput.checked = true;
         hostUrl.value = config.hostUrl || "";
         pairingCode.value = formatPairingCode(config.pairingCode || "");
-        manualEntryVisible = Boolean(config.hostUrl || config.pairingCode);
+        if (config.hostUrl || config.pairingCode) {
+          switchTab("manual");
+        }
         render();
       })();
 
       function setConnectionBusy(isBusy) {
         connectionBusy = !!isBusy;
         if (discoverBtn) discoverBtn.disabled = !!isBusy;
-        if (toggleManualEntryBtn) toggleManualEntryBtn.disabled = !!isBusy;
+        if (portalFindHostBtn) portalFindHostBtn.disabled = !!isBusy;
         render();
       }
 
@@ -650,16 +752,16 @@
       }
 
       hostUrl.addEventListener("input", () => {
-        setManualEntryVisible(true);
         resetConnectStatus();
+        updateManualLookupNote();
       });
       pairingCode.addEventListener("input", () => {
         const formatted = formatPairingCode(pairingCode.value);
         if (pairingCode.value !== formatted) {
           pairingCode.value = formatted;
         }
-        setManualEntryVisible(true);
         resetConnectStatus();
+        updateManualLookupNote();
       });
 
       async function runHostDiscovery() {
@@ -697,7 +799,7 @@
               `No Host computer found ${scanText}. Make sure the Host computer has Otto running and try again. If that fails, manually enter the Host address and Pairing code from File → Show Host Address….`,
               "err",
             );
-            setManualEntryVisible(true);
+            switchToManualTab();
             setConnectStatus("Auto-detect did not find a Host computer. Enter details manually, then click Connect & Finish.", "err");
             return;
           }
@@ -718,7 +820,7 @@
             `Auto-detect failed after ${formatSeconds(elapsedMs)}. Make sure the Host computer has Otto running and try again. If that fails, manually enter the Host address and Pairing code from File → Show Host Address….`,
             "err",
           );
-          setManualEntryVisible(true);
+          switchToManualTab();
           setConnectStatus("Auto-detect failed. Enter Host details manually, then click Connect & Finish.", "err");
         } finally {
           window.clearInterval(progressTimer);
@@ -793,7 +895,7 @@
 
         const validation = validateClientConfig(config);
         if (!validation.ok) {
-          setManualEntryVisible(true);
+          switchToManualTab();
           setConnectStatus(validation.message || "Please review the Host details and try again.", "err");
           return;
         }
@@ -833,11 +935,133 @@
         }
       }
 
-      if (toggleManualEntryBtn) {
-        toggleManualEntryBtn.addEventListener("click", () => {
-          setManualEntryVisible(!manualEntryVisible);
+      // --- Portal sign-in flow ---
+      function setPortalStatus(message, kind = "") {
+        if (!portalStatus) return;
+        portalStatus.textContent = message || "";
+        portalStatus.className = `status${kind ? ` ${kind}` : ""}`;
+      }
+
+      function clearPortalResults() {
+        portalHosts = [];
+        if (portalResults) portalResults.style.display = "none";
+        if (portalHostSelect) portalHostSelect.innerHTML = "";
+        if (portalStaleWarning) {
+          portalStaleWarning.style.display = "none";
+          portalStaleWarning.textContent = "";
+        }
+      }
+
+      function applyPortalHostByIndex(index) {
+        const host = portalHosts[index];
+        if (!host) return;
+
+        // Pick the first local address
+        const addr = Array.isArray(host.localAddresses) && host.localAddresses.length > 0
+          ? host.localAddresses[0]
+          : "";
+        if (addr) hostUrl.value = addr;
+        if (host.pairingCode) pairingCode.value = formatPairingCode(host.pairingCode);
+
+        // Show stale warning if lastCheckinAt is >24h ago
+        if (portalStaleWarning && host.lastCheckinAt) {
+          const ageMs = Date.now() - host.lastCheckinAt;
+          if (ageMs > 24 * 60 * 60 * 1000) {
+            portalStaleWarning.style.display = "block";
+            portalStaleWarning.textContent = "Host hasn't checked in recently. Try Auto-detect if this doesn't work.";
+          } else {
+            portalStaleWarning.style.display = "none";
+          }
+        }
+
+        setConnectStatus("Host selected. Click Connect & Finish to finish setup.", "ok");
+      }
+
+      function renderPortalHosts() {
+        if (!portalResults || !portalHostSelect) return;
+        portalHostSelect.innerHTML = "";
+        portalHosts.forEach((host, index) => {
+          const option = document.createElement("option");
+          option.value = String(index);
+          const label = host.officeName || `Office ${index + 1}`;
+          const addr = Array.isArray(host.localAddresses) && host.localAddresses[0]
+            ? ` - ${host.localAddresses[0]}`
+            : "";
+          option.textContent = `${label}${addr}`;
+          portalHostSelect.appendChild(option);
+        });
+        portalResults.style.display = "block";
+      }
+
+      async function runPortalFindHost() {
+        if (!window.otto || typeof window.otto.portalFindHost !== "function") {
+          setPortalStatus("Portal sign-in is not available in this build. Use Auto-detect or Manual entry.", "err");
+          return;
+        }
+
+        const email = portalEmail?.value?.trim() || "";
+        const password = portalPassword?.value || "";
+        if (!email || !password) {
+          setPortalStatus("Please enter your portal email and password.", "err");
+          return;
+        }
+
+        setConnectionBusy(true);
+        clearPortalResults();
+        setPortalStatus("Signing in to portal…");
+
+        try {
+          const result = await window.otto.portalFindHost({ email, password });
+
+          // Clear password from memory
+          if (portalPassword) portalPassword.value = "";
+
+          if (!result?.ok) {
+            setPortalStatus(result?.message || "Could not find Host. Try Auto-detect or Manual entry.", "err");
+            return;
+          }
+
+          const hosts = Array.isArray(result.hosts) ? result.hosts : [];
+          portalHosts = hosts;
+
+          if (hosts.length === 0) {
+            setPortalStatus("No Host found for your account. Try Auto-detect or Manual entry.", "err");
+            return;
+          }
+
+          if (hosts.length === 1) {
+            setPortalStatus(`Found Host: ${hosts[0].officeName || hosts[0].localAddresses?.[0] || "1 office"}`, "ok");
+            renderPortalHosts();
+            applyPortalHostByIndex(0);
+            return;
+          }
+
+          setPortalStatus(`Found ${hosts.length} offices. Select one below.`, "ok");
+          renderPortalHosts();
+          applyPortalHostByIndex(0);
+        } catch {
+          setPortalStatus("Portal sign-in failed. Try Auto-detect or Manual entry.", "err");
+        } finally {
+          setConnectionBusy(false);
+        }
+      }
+
+      if (portalFindHostBtn) {
+        portalFindHostBtn.addEventListener("click", runPortalFindHost);
+      }
+      if (usePortalHostBtn && portalHostSelect) {
+        usePortalHostBtn.addEventListener("click", () => {
+          const index = Number(portalHostSelect.value);
+          applyPortalHostByIndex(Number.isFinite(index) ? index : 0);
         });
       }
+      if (portalHostSelect) {
+        portalHostSelect.addEventListener("change", () => {
+          const index = Number(portalHostSelect.value);
+          applyPortalHostByIndex(Number.isFinite(index) ? index : 0);
+        });
+      }
+
       if (discoverBtn) {
         discoverBtn.addEventListener("click", runHostDiscovery);
       }

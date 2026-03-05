@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("otto", {
   setWindowMinWidth: (width) => ipcRenderer.invoke("otto:window:set-min-width", width),
   hostApprovalCenterHeartbeat: () => ipcRenderer.send("otto:host-approval-center:heartbeat"),
   openSmsDraft: (payload) => ipcRenderer.invoke("otto:sms:draft:open", payload),
+  portalFindHost: (payload) => ipcRenderer.invoke("otto:portal:find-host", payload),
   showDiagnostics: () => ipcRenderer.invoke("otto:diagnostics:show"),
   exportSupportBundle: () => ipcRenderer.invoke("otto:supportBundle:export"),
 });

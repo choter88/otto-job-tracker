@@ -24,7 +24,8 @@
       {
         "name": "Otto Tracker Activation",
         "schemes": [
-          "otto"
+          "otto",
+          "otto-desktop"
         ]
       }
     ],
