@@ -2,9 +2,13 @@
 set -euo pipefail
 
 PROFILE="${NOTARY_PROFILE:-otto-notary}"
+OUT_DIR="release-mac"
+VERSION="${npm_package_version:-$(node -p "require('./package.json').version")}"
 
 echo "=== Building web + server bundle ==="
 npm run build
+
+rm -rf "${OUT_DIR}"
 
 notarize_dmg() {
   local arch="$1"
@@ -57,15 +61,15 @@ notarize_dmg() {
 
 echo ""
 echo "=== Building macOS ARM (apple silicon) ==="
-npx electron-builder --mac --arm64
-ARM_DMG="$(ls -t release/*-arm64*.dmg 2>/dev/null | head -n 1 || true)"
-ARM_APP="$(find release/mac-arm64 -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -n 1 || true)"
+npx electron-builder --mac --arm64 -c.directories.output="${OUT_DIR}"
+ARM_DMG="$(ls -t "${OUT_DIR}"/*-arm64*.dmg 2>/dev/null | head -n 1 || true)"
+ARM_APP="$(find "${OUT_DIR}/mac-arm64" -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -n 1 || true)"
 
 echo ""
 echo "=== Building macOS x64 (intel) ==="
-npx electron-builder --mac --x64
-X64_DMG="$(ls -t release/*-x64*.dmg 2>/dev/null | head -n 1 || true)"
-X64_APP="$(find release/mac -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -n 1 || true)"
+npx electron-builder --mac --x64 -c.directories.output="${OUT_DIR}"
+X64_DMG="$(ls -t "${OUT_DIR}"/*-x64*.dmg 2>/dev/null | head -n 1 || true)"
+X64_APP="$(find "${OUT_DIR}/mac" -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -n 1 || true)"
 
 notarize_dmg "arm64" "${ARM_DMG}" "${ARM_APP}"
 notarize_dmg "x64"   "${X64_DMG}" "${X64_APP}"
@@ -74,3 +78,6 @@ echo ""
 echo "=== Release complete ==="
 echo "  ARM64: ${ARM_DMG}"
 echo "  x64:   ${X64_DMG}"
+echo ""
+echo "To publish as a GitHub Release:"
+echo "  gh release create v${VERSION} ${ARM_DMG} ${X64_DMG} --title \"Otto Tracker v${VERSION}\" --generate-notes"

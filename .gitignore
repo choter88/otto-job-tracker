@@ -19,5 +19,7 @@ prod_*.sql
 *.db
 .otto-data
 release
+release-mac
+release-win
 dist-electron
 out
