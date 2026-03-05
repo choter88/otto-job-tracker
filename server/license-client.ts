@@ -200,6 +200,9 @@ export async function portalCheckin(payload: {
   installationId: string;
   hostFingerprint256: string;
   appVersion?: string;
+  localAddresses?: string[];
+  pairingCode?: string;
+  tlsFingerprint256?: string;
 }): Promise<LicenseCheckinResult | { ok: false; error: LicenseRequestError }> {
   const base = getLicenseBaseUrl();
   const url = new URL("/license/v1/checkin", base);
@@ -228,4 +231,69 @@ export async function portalCheckin(payload: {
     nextCheckinDueAt,
     status: officeStatus,
   };
+}
+
+// --- Claim validation (non-destructive, returns office + user details) ---
+
+export type ClaimValidationResult = {
+  ok: true;
+  office?: {
+    name?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    portalOfficeId?: string;
+  };
+  portalUser?: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+  };
+};
+
+export async function portalValidateHostClaim(payload: {
+  claimCode: string;
+  installationId: string;
+  hostFingerprint256: string;
+  appVersion?: string;
+}): Promise<ClaimValidationResult | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/api/desktop/claims/validate", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+
+  if (status === 404) {
+    return {
+      ok: false,
+      error: { statusCode: 404, code: "VALIDATE_NOT_SUPPORTED", message: "Portal does not support claim validation." },
+    };
+  }
+
+  if (status < 200 || status >= 300) {
+    return { ok: false, error: errorFromResponse(status, json) };
+  }
+
+  const result: ClaimValidationResult = { ok: true };
+
+  const officeData = json?.office;
+  if (officeData && typeof officeData === "object") {
+    result.office = {
+      name: typeof officeData.name === "string" ? officeData.name : undefined,
+      address: typeof officeData.address === "string" ? officeData.address : undefined,
+      phone: typeof officeData.phone === "string" ? officeData.phone : undefined,
+      email: typeof officeData.email === "string" ? officeData.email : undefined,
+      portalOfficeId: typeof officeData.portalOfficeId === "string" ? officeData.portalOfficeId : undefined,
+    };
+  }
+
+  const userData = json?.portalUser;
+  if (userData && typeof userData === "object") {
+    result.portalUser = {
+      firstName: typeof userData.firstName === "string" ? userData.firstName : undefined,
+      lastName: typeof userData.lastName === "string" ? userData.lastName : undefined,
+      email: typeof userData.email === "string" ? userData.email : undefined,
+    };
+  }
+
+  return result;
 }

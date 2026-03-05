@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, KeyRound, Building2, UserPlus, ShieldAlert } from "lucide-react";
+import { Loader2, KeyRound, Building2, UserPlus, ShieldAlert, ArrowLeft, CheckCircle2 } from "lucide-react";
 
 const passwordSchema = z
   .string()
@@ -76,18 +76,38 @@ const setupSchema = z
     adminPassword: passwordSchema,
     adminPasswordConfirm: z.string().min(1, "Please confirm the password"),
     adminPin: z.string().regex(PIN_REGEX, "PIN must be exactly 6 digits"),
-    adminPinConfirm: z.string().regex(PIN_REGEX, "Please confirm your 6-digit PIN"),
+    adminPinConfirm: z.string().optional(),
   })
   .refine((data) => data.adminPassword === data.adminPasswordConfirm, {
     message: "Passwords do not match",
     path: ["adminPasswordConfirm"],
   })
-  .refine((data) => data.adminPin === data.adminPinConfirm, {
+  .refine((data) => {
+    if (!data.adminPinConfirm) return true;
+    return data.adminPin === data.adminPinConfirm;
+  }, {
     message: "PINs do not match",
     path: ["adminPinConfirm"],
   });
 
 type SetupFormData = z.infer<typeof setupSchema>;
+
+type ClaimData = {
+  validated: boolean;
+  fallbackToConsume?: boolean;
+  office?: {
+    name?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    portalOfficeId?: string;
+  };
+  portalUser?: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+  };
+};
 
 function PasswordChecklist({ value }: { value: string }) {
   const rules = [
@@ -122,6 +142,8 @@ export default function SetupPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [setupStep, setSetupStep] = useState<"claim" | "details">("claim");
+  const [claimData, setClaimData] = useState<ClaimData | null>(null);
   const [setupMode, setSetupMode] = useState<"new" | "import">("new");
   const [snapshot, setSnapshot] = useState<any | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
@@ -163,6 +185,63 @@ export default function SetupPage() {
   const setupCodeValue = form.watch("activationCode");
   const adminPasswordValue = form.watch("adminPassword");
 
+  const hasPortalUser = Boolean(claimData?.portalUser);
+
+  // --- Verify claim mutation (step 1 → step 2) ---
+  const verifyClaimMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const setupCode = normalizeSetupCode(code);
+      const res = await fetch("/api/setup/verify-claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ setupCode, claimCode: setupCode, activationCode: setupCode }),
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message = payload?.error || payload?.message || res.statusText || "Verification failed";
+        throw new Error(message);
+      }
+      return payload as ClaimData;
+    },
+    onSuccess: (data) => {
+      setClaimData(data);
+
+      // Pre-fill office fields from portal response
+      if (data.office) {
+        if (data.office.name) form.setValue("officeName", data.office.name, { shouldValidate: true });
+        if (data.office.address) form.setValue("officeAddress", data.office.address);
+        if (data.office.phone) form.setValue("officePhone", data.office.phone);
+        if (data.office.email) form.setValue("officeEmail", data.office.email);
+      }
+
+      // Pre-fill owner fields from portal user
+      if (data.portalUser) {
+        if (data.portalUser.firstName) form.setValue("adminFirstName", data.portalUser.firstName);
+        if (data.portalUser.lastName) form.setValue("adminLastName", data.portalUser.lastName);
+        if (data.portalUser.email) {
+          // Derive login ID from portal email (local part)
+          const emailLocal = data.portalUser.email.split("@")[0] || "";
+          const sanitized = emailLocal.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 32);
+          if (sanitized.length >= 3 && !form.getValues("adminLoginId")) {
+            form.setValue("adminLoginId", sanitized);
+          }
+        }
+      }
+
+      setSetupStep("details");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Claim verification failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Load pending activation code from Electron bridge
   useEffect(() => {
     let cancelled = false;
 
@@ -180,6 +259,8 @@ export default function SetupPage() {
         const current = form.getValues("activationCode");
         if (!current) {
           form.setValue("activationCode", trimmed, { shouldValidate: true });
+          // Auto-verify the pending code
+          verifyClaimMutation.mutate(trimmed);
         }
       } catch {
         // ignore
@@ -190,7 +271,7 @@ export default function SetupPage() {
     return () => {
       cancelled = true;
     };
-  }, [form]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const bootstrapMutation = useMutation({
     mutationFn: async (data: SetupFormData) => {
@@ -362,7 +443,7 @@ export default function SetupPage() {
             </div>
             <CardTitle className="text-center">Setup must be done on the Host</CardTitle>
             <CardDescription className="text-center">
-              This office hasn’t been set up yet. Please open Otto Tracker on the Host computer and complete setup there.
+              This office hasn't been set up yet. Please open Otto Tracker on the Host computer and complete setup there.
             </CardDescription>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground space-y-2">
@@ -428,6 +509,13 @@ export default function SetupPage() {
     }
   };
 
+  const handleVerifyClaim = async () => {
+    const valid = await form.trigger("activationCode");
+    if (!valid) return;
+    const code = form.getValues("activationCode");
+    verifyClaimMutation.mutate(code);
+  };
+
   const onSubmit = (data: SetupFormData) => {
     if (setupMode === "import") {
       importMutation.mutate(data);
@@ -437,45 +525,89 @@ export default function SetupPage() {
   };
 
   const isSubmitting = bootstrapMutation.isPending || importMutation.isPending;
+  const isVerifying = verifyClaimMutation.isPending;
   const importMissingFile = setupMode === "import" && !snapshot;
 
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
-      <div className="w-full max-w-4xl space-y-6">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
-          <p className="text-muted-foreground">
-            This only happens once, on the Host computer. You’ll verify your Host Claim Code online, enter office details,
-            and create the first owner login.
-          </p>
-        </div>
+  // --- Step 1: Claim code entry ---
+  if (setupStep === "claim") {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
+        <div className="w-full max-w-2xl space-y-6">
+          <div className="text-center">
+            <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
+            <p className="text-muted-foreground">
+              Enter your Host Claim Code to get started. We'll verify it online and pre-fill your office details.
+            </p>
+          </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Before you start</CardTitle>
-            <CardDescription>What this setup does and why.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <ol className="list-decimal pl-5 space-y-1">
-              <li>Enter your Host Claim Code to verify your office setup (no patient data is sent).</li>
-              <li>Create your office record and first owner login (local to this office).</li>
-              <li>After setup, new users can request access from the sign-in screen and be approved in <b>Team</b>.</li>
-            </ol>
-            <Alert>
-              <AlertDescription>
-                This Host setup step requires internet access to verify your Host Claim Code.
-              </AlertDescription>
-            </Alert>
-            <Alert>
-              <AlertDescription>
-                Not the Host computer? Use <b>File → Change Connection…</b> to switch this computer to Client.
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Before you start</CardTitle>
+              <CardDescription>What this setup does and why.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm text-muted-foreground">
+              <ol className="list-decimal pl-5 space-y-1">
+                <li>Enter your Host Claim Code to verify your office setup (no patient data is sent).</li>
+                <li>Create your office record and first owner login (local to this office).</li>
+                <li>After setup, new users can request access from the sign-in screen and be approved in <b>Team</b>.</li>
+              </ol>
+              <Alert>
+                <AlertDescription>
+                  This Host setup step requires internet access to verify your Host Claim Code.
+                </AlertDescription>
+              </Alert>
+              <Alert>
+                <AlertDescription>
+                  Not the Host computer? Use <b>File → Change Connection…</b> to switch this computer to Client.
+                </AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
 
-        <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-6 lg:grid-cols-2">
-          <Card className="lg:col-span-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <KeyRound className="h-5 w-5 text-primary" />
+                Host claim
+              </CardTitle>
+              <CardDescription>
+                Paste the Host Claim Code from your portal handoff screen. Legacy Activation Codes are still accepted during
+                transition.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="activationCode">Host Claim Code *</Label>
+                <Input
+                  id="activationCode"
+                  placeholder="CLAIM-XXXX-XXXX or XXXX-XXXX-XXXX-XXXX"
+                  value={setupCodeValue}
+                  onChange={(event) => {
+                    form.setValue("activationCode", formatSetupCode(event.target.value), {
+                      shouldValidate: true,
+                    });
+                  }}
+                  disabled={isVerifying}
+                  data-testid="input-activation-code"
+                />
+                {form.formState.errors.activationCode && (
+                  <p className="text-sm text-destructive">{form.formState.errors.activationCode.message}</p>
+                )}
+              </div>
+
+              <Button
+                type="button"
+                className="w-full"
+                disabled={isVerifying || !setupCodeValue}
+                onClick={handleVerifyClaim}
+              >
+                {isVerifying && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Verify & Continue
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
             <CardHeader>
               <CardTitle>Office migration (optional)</CardTitle>
               <CardDescription>
@@ -511,7 +643,7 @@ export default function SetupPage() {
                     type="file"
                     accept=".otto-snapshot.json,application/json"
                     onChange={(event) => handleSnapshotFile(event.target.files?.[0] || null)}
-                    disabled={isSubmitting}
+                    disabled={isVerifying}
                   />
                   {snapshotError && <p className="text-sm text-destructive">{snapshotError}</p>}
 
@@ -537,39 +669,36 @@ export default function SetupPage() {
               )}
             </CardContent>
           </Card>
+        </div>
+      </div>
+    );
+  }
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <KeyRound className="h-5 w-5 text-primary" />
-                Host claim
-              </CardTitle>
-              <CardDescription>
-                Paste the Host Claim Code from your portal handoff screen. Legacy Activation Codes are still accepted during
-                transition.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="activationCode">Host Claim Code *</Label>
-                <Input
-                  id="activationCode"
-                  placeholder="CLAIM-XXXX-XXXX or XXXX-XXXX-XXXX-XXXX"
-                  value={setupCodeValue}
-                  onChange={(event) => {
-                    form.setValue("activationCode", formatSetupCode(event.target.value), {
-                      shouldValidate: true,
-                    });
-                  }}
-                  data-testid="input-activation-code"
-                />
-                {form.formState.errors.activationCode && (
-                  <p className="text-sm text-destructive">{form.formState.errors.activationCode.message}</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+  // --- Step 2: Office details + owner login (pre-filled from claim verification) ---
+  const preFilledFromPortal = claimData && !claimData.fallbackToConsume && Boolean(claimData.office?.name || claimData.portalUser?.firstName);
 
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
+      <div className="w-full max-w-4xl space-y-6">
+        <div className="text-center">
+          <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
+          <p className="text-muted-foreground">
+            {preFilledFromPortal
+              ? "We've pre-filled your office details from the portal. Confirm everything looks right and create your owner login."
+              : "Enter your office details and create the first owner login."}
+          </p>
+        </div>
+
+        {preFilledFromPortal && (
+          <Alert className="border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <AlertDescription className="text-emerald-700 dark:text-emerald-300">
+              Claim code verified. Office details have been pre-filled from your portal account.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -579,7 +708,9 @@ export default function SetupPage() {
               <CardDescription>
                 {setupMode === "import"
                   ? "These are loaded from the snapshot. You can adjust them now or later in Settings."
-                  : "This is shown inside the app for your team."}
+                  : preFilledFromPortal
+                    ? "Pre-filled from your portal account — edit if needed."
+                    : "This is shown inside the app for your team."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -617,6 +748,41 @@ export default function SetupPage() {
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <KeyRound className="h-5 w-5 text-primary" />
+                Host claim
+              </CardTitle>
+              <CardDescription>
+                Your verified claim code. Go back to change it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="activationCodeDisplay">Host Claim Code</Label>
+                <Input
+                  id="activationCodeDisplay"
+                  value={setupCodeValue}
+                  disabled
+                  className="bg-muted"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSetupStep("claim");
+                  setClaimData(null);
+                }}
+              >
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                Change code
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card className="lg:col-span-2">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -624,7 +790,9 @@ export default function SetupPage() {
                 Create the owner login
               </CardTitle>
               <CardDescription>
-                This owner login controls approvals and office settings so your team can start work quickly and safely.
+                {hasPortalUser
+                  ? "Pre-filled from your portal account — edit if needed. This owner login controls approvals and office settings."
+                  : "This owner login controls approvals and office settings so your team can start work quickly and safely."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -680,19 +848,21 @@ export default function SetupPage() {
                     <p className="text-sm text-destructive">{form.formState.errors.adminPin.message}</p>
                   )}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="adminPinConfirm">Confirm PIN *</Label>
-                  <Input
-                    id="adminPinConfirm"
-                    type="password"
-                    inputMode="numeric"
-                    maxLength={6}
-                    {...form.register("adminPinConfirm")}
-                  />
-                  {form.formState.errors.adminPinConfirm && (
-                    <p className="text-sm text-destructive">{form.formState.errors.adminPinConfirm.message}</p>
-                  )}
-                </div>
+                {!hasPortalUser && (
+                  <div className="space-y-2">
+                    <Label htmlFor="adminPinConfirm">Confirm PIN *</Label>
+                    <Input
+                      id="adminPinConfirm"
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={6}
+                      {...form.register("adminPinConfirm")}
+                    />
+                    {form.formState.errors.adminPinConfirm && (
+                      <p className="text-sm text-destructive">{form.formState.errors.adminPinConfirm.message}</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <Button
@@ -702,7 +872,7 @@ export default function SetupPage() {
                 data-testid="button-complete-setup"
               >
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {setupMode === "import" ? "Verify code, import, and complete setup" : "Verify code & complete setup"}
+                {setupMode === "import" ? "Import & complete setup" : "Complete setup"}
               </Button>
               {importMissingFile && (
                 <p className="text-xs text-muted-foreground">Choose a snapshot file above to enable import.</p>
