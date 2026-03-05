@@ -2,54 +2,75 @@
 set -euo pipefail
 
 PROFILE="${NOTARY_PROFILE:-otto-notary}"
-APP_PATH="${APP_PATH:-}"
-DMG_PATH="${DMG_PATH:-}"
 
-echo "Building signed macOS artifacts..."
-npm run dist:desktop
+echo "=== Building web + server bundle ==="
+npm run build
 
-if [[ -z "${DMG_PATH}" ]]; then
-  DMG_PATH="$(ls -t release/*.dmg 2>/dev/null | head -n 1 || true)"
-fi
+notarize_dmg() {
+  local arch="$1"
+  local dmg_path="$2"
+  local app_path="$3"
 
-if [[ -z "${APP_PATH}" ]]; then
-  APP_PATH="$(find release -maxdepth 2 -type d -name "*.app" | head -n 1 || true)"
-fi
+  echo ""
+  echo "=== Notarizing ${arch} ==="
 
-if [[ -z "${DMG_PATH}" || ! -f "${DMG_PATH}" ]]; then
-  echo "No DMG found in release/."
-  exit 1
-fi
+  if [[ ! -f "${dmg_path}" ]]; then
+    echo "DMG not found: ${dmg_path}"
+    return 1
+  fi
 
-if [[ ! -d "${APP_PATH}" ]]; then
-  echo "App bundle not found in release/. Set APP_PATH explicitly if needed."
-  exit 1
-fi
+  if [[ ! -d "${app_path}" ]]; then
+    echo "App bundle not found: ${app_path}"
+    return 1
+  fi
 
-echo "Verifying code signature on ${APP_PATH}..."
-SIGN_INFO="$(codesign -dv --verbose=4 "${APP_PATH}" 2>&1 || true)"
-if [[ "${SIGN_INFO}" == *"Signature=adhoc"* ]]; then
-  echo "${SIGN_INFO}"
-  echo "App is ad-hoc signed. Fix Developer ID signing before notarizing."
-  exit 1
-fi
+  echo "Verifying code signature on ${app_path}..."
+  local sign_info
+  sign_info="$(codesign -dv --verbose=4 "${app_path}" 2>&1 || true)"
 
-if [[ "${SIGN_INFO}" == *"TeamIdentifier=not set"* ]]; then
-  echo "${SIGN_INFO}"
-  echo "TeamIdentifier is not set. Developer ID identity was not applied."
-  exit 1
-fi
+  if [[ "${sign_info}" == *"Signature=adhoc"* ]]; then
+    echo "${sign_info}"
+    echo "App is ad-hoc signed. Fix Developer ID signing before notarizing."
+    return 1
+  fi
 
-codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+  if [[ "${sign_info}" == *"TeamIdentifier=not set"* ]]; then
+    echo "${sign_info}"
+    echo "TeamIdentifier is not set. Developer ID identity was not applied."
+    return 1
+  fi
 
-echo "Submitting ${DMG_PATH} to Apple notary service (profile: ${PROFILE})..."
-xcrun notarytool submit "${DMG_PATH}" -p "${PROFILE}" --wait
+  codesign --verify --deep --strict --verbose=2 "${app_path}"
 
-echo "Stapling notarization ticket..."
-xcrun stapler staple "${DMG_PATH}"
-xcrun stapler validate "${DMG_PATH}"
+  echo "Submitting ${dmg_path} to Apple notary service (profile: ${PROFILE})..."
+  xcrun notarytool submit "${dmg_path}" -p "${PROFILE}" --wait
 
-echo "Running Gatekeeper assessment..."
-spctl -a -vv -t open "${DMG_PATH}"
+  echo "Stapling notarization ticket..."
+  xcrun stapler staple "${dmg_path}"
+  xcrun stapler validate "${dmg_path}"
 
-echo "Done: ${DMG_PATH}"
+  echo "Running Gatekeeper assessment..."
+  spctl -a -vv -t open "${dmg_path}"
+
+  echo "Done: ${dmg_path}"
+}
+
+echo ""
+echo "=== Building macOS ARM (apple silicon) ==="
+npx electron-builder --mac --arm64
+ARM_DMG="$(ls -t release/*-arm64*.dmg 2>/dev/null | head -n 1 || true)"
+ARM_APP="$(find release/mac-arm64 -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -n 1 || true)"
+
+echo ""
+echo "=== Building macOS x64 (intel) ==="
+npx electron-builder --mac --x64
+X64_DMG="$(ls -t release/*-x64*.dmg 2>/dev/null | head -n 1 || true)"
+X64_APP="$(find release/mac -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -n 1 || true)"
+
+notarize_dmg "arm64" "${ARM_DMG}" "${ARM_APP}"
+notarize_dmg "x64"   "${X64_DMG}" "${X64_APP}"
+
+echo ""
+echo "=== Release complete ==="
+echo "  ARM64: ${ARM_DMG}"
+echo "  x64:   ${X64_DMG}"
