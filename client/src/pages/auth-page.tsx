@@ -26,29 +26,31 @@ const pinLoginSchema = z.object({
   pin: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
 });
 
+const forgotPinSchema = z.object({
+  loginId: z
+    .string()
+    .min(3, "Login ID must be at least 3 characters")
+    .max(32, "Login ID must be 32 characters or fewer")
+    .regex(/^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i, "Enter a valid Login ID"),
+  pin: z.string().regex(/^\d{6}$/, "New PIN must be exactly 6 digits"),
+  pinConfirm: z.string().regex(/^\d{6}$/, "Please confirm your 6-digit PIN"),
+})
+  .refine((data) => data.pin === data.pinConfirm, {
+    message: "PINs do not match",
+    path: ["pinConfirm"],
+  });
+
 const registerSchema = z.object({
   loginId: z
     .string()
     .min(3, "Login ID must be at least 3 characters")
     .max(32, "Login ID must be 32 characters or fewer")
     .regex(/^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i, "Login ID can include letters, numbers, '.', '-', and '_'"),
-  password: z
-    .string()
-    .min(12, "Password must be at least 12 characters")
-    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
-    .regex(/[0-9]/, "Password must contain at least one number")
-    .regex(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/, "Password must contain at least one special character"),
-  passwordConfirm: z.string().min(1, "Please confirm your password"),
   pin: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
   pinConfirm: z.string().regex(/^\d{6}$/, "Please confirm your 6-digit PIN"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
 })
-  .refine((data) => data.password === data.passwordConfirm, {
-    message: "Passwords do not match",
-    path: ["passwordConfirm"],
-  })
   .refine((data) => data.pin === data.pinConfirm, {
     message: "PINs do not match",
     path: ["pinConfirm"],
@@ -57,28 +59,7 @@ const registerSchema = z.object({
 type LoginFormData = z.infer<typeof loginSchema>;
 type PinLoginFormData = z.infer<typeof pinLoginSchema>;
 type RegisterFormData = z.infer<typeof registerSchema>;
-
-function PasswordChecklist({ value }: { value: string }) {
-  const rules = [
-    { label: "12+ characters", met: value.length >= 12 },
-    { label: "Uppercase letter", met: /[A-Z]/.test(value) },
-    { label: "Lowercase letter", met: /[a-z]/.test(value) },
-    { label: "Number", met: /[0-9]/.test(value) },
-    { label: "Special character", met: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(value) },
-  ];
-
-  if (!value) return null;
-
-  return (
-    <ul className="mt-1.5 space-y-0.5 text-xs">
-      {rules.map((rule) => (
-        <li key={rule.label} className={rule.met ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
-          {rule.met ? "\u2713" : "\u2022"} {rule.label}
-        </li>
-      ))}
-    </ul>
-  );
-}
+type ForgotPinFormData = z.infer<typeof forgotPinSchema>;
 
 type SetupStatus = {
   initialized: boolean;
@@ -94,6 +75,8 @@ export default function AuthPage() {
   const [showSignup, setShowSignup] = useState(false);
   const [loginMethod, setLoginMethod] = useState<"password" | "pin">("password");
   const [requestSubmittedMessage, setRequestSubmittedMessage] = useState<string | null>(null);
+  const [pinResetMessage, setPinResetMessage] = useState<string | null>(null);
+  const [showForgotPin, setShowForgotPin] = useState(false);
   const [desktopMode, setDesktopMode] = useState<DesktopMode>("unknown");
   const [sharedLoginId, setSharedLoginId] = useState("");
 
@@ -148,8 +131,6 @@ export default function AuthPage() {
     resolver: zodResolver(registerSchema),
     defaultValues: {
       loginId: "",
-      password: "",
-      passwordConfirm: "",
       pin: "",
       pinConfirm: "",
       firstName: "",
@@ -157,7 +138,10 @@ export default function AuthPage() {
     },
   });
 
-  const registerPasswordValue = registerForm.watch("password");
+  const forgotPinForm = useForm<ForgotPinFormData>({
+    resolver: zodResolver(forgotPinSchema),
+    defaultValues: { loginId: "", pin: "", pinConfirm: "" },
+  });
 
   // Sync shared login ID into the active form when switching methods
   useEffect(() => {
@@ -187,6 +171,27 @@ export default function AuthPage() {
     },
     onError: (error: Error) => {
       registerForm.setError("root", { type: "server", message: error.message });
+    },
+  });
+
+  const forgotPinMutation = useMutation({
+    mutationFn: async (payload: { loginId: string; pin: string }) => {
+      const res = await apiRequest("POST", "/api/pin-reset-requests", payload);
+      return (await res.json()) as { message?: string };
+    },
+    onMutate: () => {
+      forgotPinForm.clearErrors("root");
+    },
+    onSuccess: (payload) => {
+      setShowForgotPin(false);
+      setPinResetMessage(
+        payload?.message ||
+          "If this Login ID exists, a PIN reset request has been submitted for review.",
+      );
+      forgotPinForm.reset();
+    },
+    onError: (error: Error) => {
+      forgotPinForm.setError("root", { type: "server", message: error.message });
     },
   });
 
@@ -244,9 +249,14 @@ export default function AuthPage() {
   };
 
   const onRegister = (data: RegisterFormData) => {
-    const { passwordConfirm: _passwordConfirm, pinConfirm: _pinConfirm, ...payload } = data;
+    const { pinConfirm: _pinConfirm, ...payload } = data;
     setRequestSubmittedMessage(null);
     requestAccessMutation.mutate(payload);
+  };
+
+  const onForgotPin = (data: ForgotPinFormData) => {
+    setPinResetMessage(null);
+    forgotPinMutation.mutate({ loginId: data.loginId, pin: data.pin });
   };
 
   const officeName = setupStatus?.officeName || "your office";
@@ -416,50 +426,158 @@ export default function AuthPage() {
                           Continue
                         </Button>
                       </form>
-                    ) : (
-                      <form onSubmit={pinLoginForm.handleSubmit(onPinLogin)} className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="pin-login-id">Login ID</Label>
-                          <Input
-                            id="pin-login-id"
-                            type="text"
-                            autoCapitalize="none"
-                            autoCorrect="off"
-                            placeholder="jane.cho"
-                            {...pinLoginForm.register("loginId")}
-                            data-testid="input-pin-login-id"
-                          />
-                          {pinLoginForm.formState.errors.loginId && (
-                            <p className="text-sm text-destructive">{pinLoginForm.formState.errors.loginId.message}</p>
+                    ) : !showForgotPin ? (
+                        <form onSubmit={pinLoginForm.handleSubmit(onPinLogin)} className="space-y-4">
+                          {pinResetMessage && (
+                            <div className="rounded-md border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 px-3 py-2 text-sm text-green-800 dark:text-green-300 flex items-start justify-between gap-2">
+                              <span>{pinResetMessage}</span>
+                              <button
+                                type="button"
+                                className="shrink-0 text-green-600/60 hover:text-green-800 dark:hover:text-green-300 text-lg leading-none"
+                                onClick={() => setPinResetMessage(null)}
+                                aria-label="Dismiss"
+                              >
+                                &times;
+                              </button>
+                            </div>
                           )}
-                        </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="pin-login-id">Login ID</Label>
+                            <Input
+                              id="pin-login-id"
+                              type="text"
+                              autoCapitalize="none"
+                              autoCorrect="off"
+                              placeholder="jane.cho"
+                              {...pinLoginForm.register("loginId")}
+                              data-testid="input-pin-login-id"
+                            />
+                            {pinLoginForm.formState.errors.loginId && (
+                              <p className="text-sm text-destructive">{pinLoginForm.formState.errors.loginId.message}</p>
+                            )}
+                          </div>
 
-                        <div className="space-y-2">
-                          <Label htmlFor="pin-login">PIN</Label>
-                          <Input
-                            id="pin-login"
-                            type="password"
-                            inputMode="numeric"
-                            maxLength={6}
-                            placeholder="••••••"
-                            {...pinLoginForm.register("pin")}
-                            data-testid="input-pin-login"
-                          />
-                          {pinLoginForm.formState.errors.pin && (
-                            <p className="text-sm text-destructive">{pinLoginForm.formState.errors.pin.message}</p>
+                          <div className="space-y-2">
+                            <Label htmlFor="pin-login">PIN</Label>
+                            <Input
+                              id="pin-login"
+                              type="password"
+                              inputMode="numeric"
+                              maxLength={6}
+                              placeholder="••••••"
+                              {...pinLoginForm.register("pin")}
+                              data-testid="input-pin-login"
+                            />
+                            {pinLoginForm.formState.errors.pin && (
+                              <p className="text-sm text-destructive">{pinLoginForm.formState.errors.pin.message}</p>
+                            )}
+                          </div>
+
+                          <Button
+                            type="submit"
+                            className="w-full"
+                            disabled={pinLoginMutation.isPending}
+                            data-testid="button-pin-sign-in"
+                          >
+                            {pinLoginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Unlock with PIN
+                          </Button>
+
+                          <button
+                            type="button"
+                            className="w-full text-center text-sm text-muted-foreground hover:text-primary underline-offset-4 hover:underline"
+                            onClick={() => {
+                              const currentId = pinLoginForm.getValues("loginId");
+                              if (currentId) forgotPinForm.setValue("loginId", currentId);
+                              setShowForgotPin(true);
+                            }}
+                            data-testid="button-forgot-pin"
+                          >
+                            Forgot PIN?
+                          </button>
+                        </form>
+                      ) : (
+                        <form onSubmit={forgotPinForm.handleSubmit(onForgotPin)} className="space-y-4">
+                          <p className="text-sm text-muted-foreground">
+                            Enter your Login ID and a new 6-digit PIN. An owner or manager will review your request on the Host.
+                          </p>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="forgot-pin-login-id">Login ID</Label>
+                            <Input
+                              id="forgot-pin-login-id"
+                              type="text"
+                              autoCapitalize="none"
+                              autoCorrect="off"
+                              placeholder="jane.cho"
+                              {...forgotPinForm.register("loginId")}
+                              data-testid="input-forgot-pin-login-id"
+                            />
+                            {forgotPinForm.formState.errors.loginId && (
+                              <p className="text-sm text-destructive">{forgotPinForm.formState.errors.loginId.message}</p>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="forgot-pin-new">New 6-digit PIN</Label>
+                            <Input
+                              id="forgot-pin-new"
+                              type="password"
+                              inputMode="numeric"
+                              maxLength={6}
+                              placeholder="••••••"
+                              {...forgotPinForm.register("pin")}
+                              data-testid="input-forgot-pin-new"
+                            />
+                            {forgotPinForm.formState.errors.pin && (
+                              <p className="text-sm text-destructive">{forgotPinForm.formState.errors.pin.message}</p>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="forgot-pin-confirm">Confirm new PIN</Label>
+                            <Input
+                              id="forgot-pin-confirm"
+                              type="password"
+                              inputMode="numeric"
+                              maxLength={6}
+                              placeholder="••••••"
+                              {...forgotPinForm.register("pinConfirm")}
+                              data-testid="input-forgot-pin-confirm"
+                            />
+                            {forgotPinForm.formState.errors.pinConfirm && (
+                              <p className="text-sm text-destructive">{forgotPinForm.formState.errors.pinConfirm.message}</p>
+                            )}
+                          </div>
+
+                          {forgotPinForm.formState.errors.root && (
+                            <p className="text-sm text-destructive">{forgotPinForm.formState.errors.root.message}</p>
                           )}
-                        </div>
 
-                        <Button
-                          type="submit"
-                          className="w-full"
-                          disabled={pinLoginMutation.isPending}
-                          data-testid="button-pin-sign-in"
-                        >
-                          {pinLoginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          Unlock with PIN
-                        </Button>
-                      </form>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="flex-1"
+                              onClick={() => {
+                                setShowForgotPin(false);
+                                forgotPinForm.reset();
+                              }}
+                              data-testid="button-forgot-pin-cancel"
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              type="submit"
+                              className="flex-1"
+                              disabled={forgotPinMutation.isPending}
+                              data-testid="button-forgot-pin-submit"
+                            >
+                              {forgotPinMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Submit Reset
+                            </Button>
+                          </div>
+                        </form>
                     )}
                   </div>
                 ) : (
@@ -511,37 +629,6 @@ export default function AuthPage() {
                       </p>
                       {registerForm.formState.errors.loginId && (
                         <p className="text-sm text-destructive">{registerForm.formState.errors.loginId.message}</p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-password">Password</Label>
-                      <Input
-                        id="reg-password"
-                        type="password"
-                        placeholder="••••••••••••"
-                        {...registerForm.register("password")}
-                        data-testid="input-reg-password"
-                      />
-                      <PasswordChecklist value={registerPasswordValue || ""} />
-                      {registerForm.formState.errors.password && (
-                        <p className="text-sm text-destructive">{registerForm.formState.errors.password.message}</p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-password-confirm">Confirm password</Label>
-                      <Input
-                        id="reg-password-confirm"
-                        type="password"
-                        placeholder="••••••••••••"
-                        {...registerForm.register("passwordConfirm")}
-                        data-testid="input-reg-password-confirm"
-                      />
-                      {registerForm.formState.errors.passwordConfirm && (
-                        <p className="text-sm text-destructive">
-                          {registerForm.formState.errors.passwordConfirm.message}
-                        </p>
                       )}
                     </div>
 

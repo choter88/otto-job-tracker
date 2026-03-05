@@ -390,6 +390,22 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     `CREATE INDEX IF NOT EXISTS account_signup_requests_office_login_id_status_idx
       ON account_signup_requests (office_id, login_id, status);`,
 
+    `CREATE TABLE IF NOT EXISTS pin_reset_requests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      office_id TEXT NOT NULL REFERENCES offices(id),
+      new_pin_hash TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      reviewed_by TEXT REFERENCES users(id),
+      reviewed_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    );`,
+
+    `CREATE INDEX IF NOT EXISTS pin_reset_requests_office_status_idx
+      ON pin_reset_requests (office_id, status);`,
+    `CREATE INDEX IF NOT EXISTS pin_reset_requests_user_status_idx
+      ON pin_reset_requests (user_id, status);`,
+
     `CREATE TABLE IF NOT EXISTS invitations (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL,

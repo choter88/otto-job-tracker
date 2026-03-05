@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Trash2, Clock, Check, X } from "lucide-react";
+import { Users, Trash2, Clock, Check, X, KeyRound } from "lucide-react";
 import { format } from "date-fns";
 import type { PublicUser } from "@shared/schema";
 
@@ -26,6 +26,16 @@ type AccountSignupRequest = {
   createdAt: string;
 };
 
+type PinResetRequestItem = {
+  id: string;
+  userId: string;
+  firstName: string;
+  lastName: string;
+  loginId: string | null;
+  status: string;
+  createdAt: string;
+};
+
 export default function TeamPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -41,6 +51,11 @@ export default function TeamPage() {
 
   const { data: accountRequests = [] } = useQuery<AccountSignupRequest[]>({
     queryKey: ["/api/offices", user?.officeId, "account-requests"],
+    enabled: !!user?.officeId && canManageTeam,
+  });
+
+  const { data: pinResetRequests = [] } = useQuery<PinResetRequestItem[]>({
+    queryKey: ["/api/offices", user?.officeId, "pin-reset-requests"],
     enabled: !!user?.officeId && canManageTeam,
   });
 
@@ -129,6 +144,51 @@ export default function TeamPage() {
     onError: (error: Error) => {
       toast({
         title: "Could not reject request",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const approvePinResetMutation = useMutation({
+    mutationFn: async (requestId: string) => {
+      const res = await apiRequest("POST", `/api/pin-reset-requests/${requestId}/approve`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/offices", user?.officeId, "pin-reset-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications", "recent"] });
+      toast({
+        title: "PIN reset approved",
+        description: "The user's PIN has been updated.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Could not approve PIN reset",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const rejectPinResetMutation = useMutation({
+    mutationFn: async (requestId: string) => {
+      await apiRequest("DELETE", `/api/pin-reset-requests/${requestId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/offices", user?.officeId, "pin-reset-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications", "recent"] });
+      toast({
+        title: "PIN reset rejected",
+        description: "The PIN reset request was rejected.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Could not reject PIN reset",
         description: error.message,
         variant: "destructive",
       });
@@ -274,6 +334,57 @@ export default function TeamPage() {
                 })}
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {canManageTeam && pinResetRequests.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              Pending PIN Resets
+              <Badge variant="destructive">{pinResetRequests.length}</Badge>
+            </CardTitle>
+            <CardDescription>Approve a request to update that user's PIN so they can sign in again.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {pinResetRequests.map((request) => (
+                <div key={request.id} className="rounded-lg border p-4" data-testid={`pin-reset-request-${request.id}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium">
+                        {request.firstName} {request.lastName}
+                      </p>
+                      <p className="text-sm text-muted-foreground">Login ID: {request.loginId || "Unknown"}</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{format(new Date(request.createdAt), "MMM d, h:mm a")}</p>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      onClick={() => approvePinResetMutation.mutate(request.id)}
+                      disabled={approvePinResetMutation.isPending}
+                      data-testid={`button-approve-pin-reset-${request.id}`}
+                    >
+                      <Check className="mr-2 h-4 w-4" />
+                      Approve
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      onClick={() => rejectPinResetMutation.mutate(request.id)}
+                      disabled={rejectPinResetMutation.isPending}
+                      data-testid={`button-reject-pin-reset-${request.id}`}
+                    >
+                      <X className="mr-2 h-4 w-4" />
+                      Reject
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}
