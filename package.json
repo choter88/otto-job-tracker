@@ -54,6 +54,7 @@
       "target": [
         "dmg"
       ],
+      "artifactName": "otto-tracker-mac-${arch}.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -62,7 +63,8 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "artifactName": "otto-tracker-win-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
