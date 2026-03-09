@@ -14,17 +14,6 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, KeyRound, Building2, UserPlus, ShieldAlert, ArrowLeft, CheckCircle2 } from "lucide-react";
 
-const passwordSchema = z
-  .string()
-  .min(12, "Password must be at least 12 characters")
-  .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-  .regex(/[a-z]/, "Password must contain at least one lowercase letter")
-  .regex(/[0-9]/, "Password must contain at least one number")
-  .regex(
-    /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/,
-    "Password must contain at least one special character",
-  );
-
 const ACTIVATION_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
 const SETUP_CODE_REGEX = /^[A-Z0-9][A-Z0-9_-]{5,95}$/i;
 const LOGIN_ID_REGEX = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i;
@@ -73,14 +62,8 @@ const setupSchema = z
       .min(3, "Login ID must be at least 3 characters")
       .max(32, "Login ID must be 32 characters or fewer")
       .regex(LOGIN_ID_REGEX, "Login ID can use letters, numbers, '.', '-', and '_'"),
-    adminPassword: passwordSchema,
-    adminPasswordConfirm: z.string().min(1, "Please confirm the password"),
     adminPin: z.string().regex(PIN_REGEX, "PIN must be exactly 6 digits"),
     adminPinConfirm: z.string().optional(),
-  })
-  .refine((data) => data.adminPassword === data.adminPasswordConfirm, {
-    message: "Passwords do not match",
-    path: ["adminPasswordConfirm"],
   })
   .refine((data) => {
     if (!data.adminPinConfirm) return true;
@@ -108,28 +91,6 @@ type ClaimData = {
     email?: string;
   };
 };
-
-function PasswordChecklist({ value }: { value: string }) {
-  const rules = [
-    { label: "12+ characters", met: value.length >= 12 },
-    { label: "Uppercase letter", met: /[A-Z]/.test(value) },
-    { label: "Lowercase letter", met: /[a-z]/.test(value) },
-    { label: "Number", met: /[0-9]/.test(value) },
-    { label: "Special character", met: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(value) },
-  ];
-
-  if (!value) return null;
-
-  return (
-    <ul className="mt-1.5 space-y-0.5 text-xs">
-      {rules.map((rule) => (
-        <li key={rule.label} className={rule.met ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
-          {rule.met ? "\u2713" : "\u2022"} {rule.label}
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 type SetupStatus = {
   initialized: boolean;
@@ -175,15 +136,12 @@ export default function SetupPage() {
       adminFirstName: "",
       adminLastName: "",
       adminLoginId: "",
-      adminPassword: "",
-      adminPasswordConfirm: "",
       adminPin: "",
       adminPinConfirm: "",
     },
   });
 
   const setupCodeValue = form.watch("activationCode");
-  const adminPasswordValue = form.watch("adminPassword");
 
   const hasPortalUser = Boolean(claimData?.portalUser);
 
@@ -294,7 +252,6 @@ export default function SetupPage() {
             firstName: data.adminFirstName,
             lastName: data.adminLastName,
             loginId: data.adminLoginId,
-            password: data.adminPassword,
             pin: data.adminPin,
           },
         }),
@@ -371,7 +328,6 @@ export default function SetupPage() {
             firstName: data.adminFirstName,
             lastName: data.adminLastName,
             loginId: data.adminLoginId,
-            password: data.adminPassword,
             pin: data.adminPin,
           },
         }),
@@ -528,11 +484,11 @@ export default function SetupPage() {
   const isVerifying = verifyClaimMutation.isPending;
   const importMissingFile = setupMode === "import" && !snapshot;
 
-  // --- Step 1: Claim code entry ---
+  // --- Step 1: Claim code entry (side-by-side: instructions | actions) ---
   if (setupStep === "claim") {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
-        <div className="w-full max-w-2xl space-y-6">
+        <div className="w-full max-w-5xl space-y-6">
           <div className="text-center">
             <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
             <p className="text-muted-foreground">
@@ -540,135 +496,141 @@ export default function SetupPage() {
             </p>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Before you start</CardTitle>
-              <CardDescription>What this setup does and why.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-muted-foreground">
-              <ol className="list-decimal pl-5 space-y-1">
-                <li>Enter your Host Claim Code to verify your office setup (no patient data is sent).</li>
-                <li>Create your office record and first owner login (local to this office).</li>
-                <li>After setup, new users can request access from the sign-in screen and be approved in <b>Team</b>.</li>
-              </ol>
-              <Alert>
-                <AlertDescription>
-                  This Host setup step requires internet access to verify your Host Claim Code.
-                </AlertDescription>
-              </Alert>
-              <Alert>
-                <AlertDescription>
-                  Not the Host computer? Use <b>File → Change Connection…</b> to switch this computer to Client.
-                </AlertDescription>
-              </Alert>
-            </CardContent>
-          </Card>
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Left column: instructions */}
+            <Card className="h-fit">
+              <CardHeader>
+                <CardTitle>Before you start</CardTitle>
+                <CardDescription>What this setup does and why.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-muted-foreground">
+                <ol className="list-decimal pl-5 space-y-1">
+                  <li>Enter your Host Claim Code to verify your office setup (no patient data is sent).</li>
+                  <li>Create your office record and first owner login (local to this office).</li>
+                  <li>After setup, new users can request access from the sign-in screen and be approved in <b>Team</b>.</li>
+                </ol>
+                <Alert>
+                  <AlertDescription>
+                    This Host setup step requires internet access to verify your Host Claim Code.
+                  </AlertDescription>
+                </Alert>
+                <Alert>
+                  <AlertDescription>
+                    Not the Host computer? Use <b>File → Change Connection…</b> to switch this computer to Client.
+                  </AlertDescription>
+                </Alert>
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <KeyRound className="h-5 w-5 text-primary" />
-                Host claim
-              </CardTitle>
-              <CardDescription>
-                Paste the Host Claim Code from your portal handoff screen. Legacy Activation Codes are still accepted during
-                transition.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="activationCode">Host Claim Code *</Label>
-                <Input
-                  id="activationCode"
-                  placeholder="CLAIM-XXXX-XXXX or XXXX-XXXX-XXXX-XXXX"
-                  value={setupCodeValue}
-                  onChange={(event) => {
-                    form.setValue("activationCode", formatSetupCode(event.target.value), {
-                      shouldValidate: true,
-                    });
-                  }}
-                  disabled={isVerifying}
-                  data-testid="input-activation-code"
-                />
-                {form.formState.errors.activationCode && (
-                  <p className="text-sm text-destructive">{form.formState.errors.activationCode.message}</p>
-                )}
-              </div>
+            {/* Right column: claim code + migration */}
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <KeyRound className="h-5 w-5 text-primary" />
+                    Host claim
+                  </CardTitle>
+                  <CardDescription>
+                    Paste the Host Claim Code from your portal handoff screen. Legacy Activation Codes are still accepted during
+                    transition.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="activationCode">Host Claim Code *</Label>
+                    <Input
+                      id="activationCode"
+                      placeholder="CLAIM-XXXX-XXXX or XXXX-XXXX-XXXX-XXXX"
+                      value={setupCodeValue}
+                      onChange={(event) => {
+                        form.setValue("activationCode", formatSetupCode(event.target.value), {
+                          shouldValidate: true,
+                        });
+                      }}
+                      disabled={isVerifying}
+                      data-testid="input-activation-code"
+                    />
+                    {form.formState.errors.activationCode && (
+                      <p className="text-sm text-destructive">{form.formState.errors.activationCode.message}</p>
+                    )}
+                  </div>
 
-              <Button
-                type="button"
-                className="w-full"
-                disabled={isVerifying || !setupCodeValue}
-                onClick={handleVerifyClaim}
-              >
-                {isVerifying && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Verify & Continue
-              </Button>
-            </CardContent>
-          </Card>
+                  <Button
+                    type="button"
+                    className="w-full"
+                    disabled={isVerifying || !setupCodeValue}
+                    onClick={handleVerifyClaim}
+                  >
+                    {isVerifying && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Verify & Continue
+                  </Button>
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Office migration (optional)</CardTitle>
-              <CardDescription>
-                If you used the hosted Otto web app, import a snapshot to bring your office data to this Host.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Button
-                  type="button"
-                  variant={setupMode === "new" ? "default" : "secondary"}
-                  onClick={() => {
-                    setSetupMode("new");
-                    setSnapshotError(null);
-                  }}
-                >
-                  Start fresh
-                </Button>
-                <Button
-                  type="button"
-                  variant={setupMode === "import" ? "default" : "secondary"}
-                  onClick={() => setSetupMode("import")}
-                >
-                  Import snapshot
-                </Button>
-              </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Office migration (optional)</CardTitle>
+                  <CardDescription>
+                    If you used the hosted Otto web app, import a snapshot to bring your office data to this Host.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button
+                      type="button"
+                      variant={setupMode === "new" ? "default" : "secondary"}
+                      onClick={() => {
+                        setSetupMode("new");
+                        setSnapshotError(null);
+                      }}
+                    >
+                      Start fresh
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={setupMode === "import" ? "default" : "secondary"}
+                      onClick={() => setSetupMode("import")}
+                    >
+                      Import snapshot
+                    </Button>
+                  </div>
 
-              {setupMode === "import" && (
-                <div className="space-y-2">
-                  <Label htmlFor="snapshotFile">Snapshot file *</Label>
-                  <Input
-                    id="snapshotFile"
-                    type="file"
-                    accept=".otto-snapshot.json,application/json"
-                    onChange={(event) => handleSnapshotFile(event.target.files?.[0] || null)}
-                    disabled={isVerifying}
-                  />
-                  {snapshotError && <p className="text-sm text-destructive">{snapshotError}</p>}
+                  {setupMode === "import" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="snapshotFile">Snapshot file *</Label>
+                      <Input
+                        id="snapshotFile"
+                        type="file"
+                        accept=".otto-snapshot.json,application/json"
+                        onChange={(event) => handleSnapshotFile(event.target.files?.[0] || null)}
+                        disabled={isVerifying}
+                      />
+                      {snapshotError && <p className="text-sm text-destructive">{snapshotError}</p>}
 
-                  {snapshotPreview && (
-                    <div className="rounded-lg border bg-card p-3 text-sm text-muted-foreground">
-                      <div className="font-medium text-foreground mb-1">{snapshotPreview.officeName}</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>Users: {snapshotPreview.users}</div>
-                        <div>Active jobs: {snapshotPreview.jobs}</div>
-                        <div>Archived jobs: {snapshotPreview.archivedJobs}</div>
-                        <div>Comments: {snapshotPreview.comments}</div>
-                      </div>
+                      {snapshotPreview && (
+                        <div className="rounded-lg border bg-card p-3 text-sm text-muted-foreground">
+                          <div className="font-medium text-foreground mb-1">{snapshotPreview.officeName}</div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>Users: {snapshotPreview.users}</div>
+                            <div>Active jobs: {snapshotPreview.jobs}</div>
+                            <div>Archived jobs: {snapshotPreview.archivedJobs}</div>
+                            <div>Comments: {snapshotPreview.comments}</div>
+                          </div>
+                        </div>
+                      )}
+
+                      <Alert>
+                        <AlertDescription>
+                          In Otto Web, export a migration snapshot file. Import is only available on a fresh Host (no existing
+                          data).
+                        </AlertDescription>
+                      </Alert>
                     </div>
                   )}
-
-                  <Alert>
-                    <AlertDescription>
-                      In Otto Web, export a migration snapshot file. Import is only available on a fresh Host (no existing
-                      data).
-                    </AlertDescription>
-                  </Alert>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -679,7 +641,7 @@ export default function SetupPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
-      <div className="w-full max-w-4xl space-y-6">
+      <div className="w-full max-w-5xl space-y-6">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
           <p className="text-muted-foreground">
@@ -751,41 +713,6 @@ export default function SetupPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <KeyRound className="h-5 w-5 text-primary" />
-                Host claim
-              </CardTitle>
-              <CardDescription>
-                Your verified claim code. Go back to change it.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="activationCodeDisplay">Host Claim Code</Label>
-                <Input
-                  id="activationCodeDisplay"
-                  value={setupCodeValue}
-                  disabled
-                  className="bg-muted"
-                />
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setSetupStep("claim");
-                  setClaimData(null);
-                }}
-              >
-                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
-                Change code
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
                 <UserPlus className="h-5 w-5 text-primary" />
                 Create the owner login
               </CardTitle>
@@ -796,7 +723,7 @@ export default function SetupPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="adminFirstName">First name *</Label>
                   <Input id="adminFirstName" {...form.register("adminFirstName")} />
@@ -822,25 +749,7 @@ export default function SetupPage() {
                 )}
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="adminPassword">Password *</Label>
-                  <Input id="adminPassword" type="password" {...form.register("adminPassword")} />
-                  <PasswordChecklist value={adminPasswordValue || ""} />
-                  {form.formState.errors.adminPassword && (
-                    <p className="text-sm text-destructive">{form.formState.errors.adminPassword.message}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="adminPasswordConfirm">Confirm password *</Label>
-                  <Input id="adminPasswordConfirm" type="password" {...form.register("adminPasswordConfirm")} />
-                  {form.formState.errors.adminPasswordConfirm && (
-                    <p className="text-sm text-destructive">{form.formState.errors.adminPasswordConfirm.message}</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="adminPin">6-digit PIN *</Label>
                   <Input id="adminPin" type="password" inputMode="numeric" maxLength={6} {...form.register("adminPin")} />
@@ -864,21 +773,47 @@ export default function SetupPage() {
                   </div>
                 )}
               </div>
-
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={isSubmitting || importMissingFile}
-                data-testid="button-complete-setup"
-              >
-                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {setupMode === "import" ? "Import & complete setup" : "Complete setup"}
-              </Button>
-              {importMissingFile && (
-                <p className="text-xs text-muted-foreground">Choose a snapshot file above to enable import.</p>
-              )}
             </CardContent>
           </Card>
+
+          <div className="lg:col-span-2 space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="activationCodeDisplay" className="text-muted-foreground text-xs">Verified claim code</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="activationCodeDisplay"
+                  value={setupCodeValue}
+                  disabled
+                  className="bg-muted max-w-xs"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSetupStep("claim");
+                    setClaimData(null);
+                  }}
+                >
+                  <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                  Change
+                </Button>
+              </div>
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={isSubmitting || importMissingFile}
+              data-testid="button-complete-setup"
+            >
+              {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {setupMode === "import" ? "Import & complete setup" : "Complete setup"}
+            </Button>
+            {importMissingFile && (
+              <p className="text-xs text-muted-foreground">Choose a snapshot file above to enable import.</p>
+            )}
+          </div>
         </form>
       </div>
     </div>

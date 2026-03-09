@@ -659,12 +659,15 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(400).json({ error: "PIN must be exactly 6 digits." });
       }
 
-      const passwordValidation = validatePasswordComplexity(adminPassword);
-      if (!passwordValidation.valid) {
-        return res.status(400).json({
-          error: "Password does not meet complexity requirements",
-          details: passwordValidation.errors,
-        });
+      // Password is optional — if provided, validate complexity; otherwise a random placeholder is used.
+      if (adminPassword) {
+        const passwordValidation = validatePasswordComplexity(adminPassword);
+        if (!passwordValidation.valid) {
+          return res.status(400).json({
+            error: "Password does not meet complexity requirements",
+            details: passwordValidation.errors,
+          });
+        }
       }
 
       const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
@@ -725,12 +728,17 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         adminEmail = buildLocalAuthEmail(adminLoginId, updatedOffice.id);
       }
 
+      // If no password provided, generate a random unguessable placeholder hash.
+      const passwordHash = adminPassword
+        ? await hashSecret(adminPassword)
+        : await hashSecret(randomBytes(32).toString("hex"));
+
       const user = await storage.createUser({
         email: adminEmail,
         loginId: adminLoginId,
         firstName: adminFirstName,
         lastName: adminLastName,
-        password: await hashSecret(adminPassword),
+        password: passwordHash,
         pinHash: await hashSecret(adminPin),
         officeId: updatedOffice.id,
         role: "owner",
@@ -811,12 +819,15 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(400).json({ error: "PIN must be exactly 6 digits." });
       }
 
-      const passwordValidation = validatePasswordComplexity(adminPassword);
-      if (!passwordValidation.valid) {
-        return res.status(400).json({
-          error: "Password does not meet complexity requirements",
-          details: passwordValidation.errors,
-        });
+      // Password is optional — if provided, validate complexity; otherwise a random placeholder is used.
+      if (adminPassword) {
+        const passwordValidation = validatePasswordComplexity(adminPassword);
+        if (!passwordValidation.valid) {
+          return res.status(400).json({
+            error: "Password does not meet complexity requirements",
+            details: passwordValidation.errors,
+          });
+        }
       }
 
       const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
@@ -844,7 +855,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(failure.status).json({ error: failure.message, code: failure.code });
       }
 
-      const adminPasswordHash = await hashSecret(adminPassword);
+      const adminPasswordHash = adminPassword
+        ? await hashSecret(adminPassword)
+        : await hashSecret(randomBytes(32).toString("hex"));
       const adminPinHash = await hashSecret(adminPin);
 
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
@@ -1656,9 +1669,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const loginIdError = validateLoginId(loginId);
       if (loginIdError) return res.status(400).json({ error: loginIdError });
-      if (!password) {
-        return res.status(400).json({ error: "Password is required" });
-      }
       if (!isValidSixDigitPin(pin)) {
         return res.status(400).json({ error: "PIN must be exactly 6 digits." });
       }
@@ -1669,12 +1679,15 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(400).json({ error: "Last name is required" });
       }
 
-      const passwordValidation = validatePasswordComplexity(password);
-      if (!passwordValidation.valid) {
-        return res.status(400).json({
-          error: "Password does not meet complexity requirements",
-          details: passwordValidation.errors,
-        });
+      // Password is optional — if provided, validate complexity.
+      if (password) {
+        const passwordValidation = validatePasswordComplexity(password);
+        if (!passwordValidation.valid) {
+          return res.status(400).json({
+            error: "Password does not meet complexity requirements",
+            details: passwordValidation.errors,
+          });
+        }
       }
 
       const allOffices = await storage.getAllOffices();
@@ -1719,7 +1732,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         officeId: office.id,
         email: internalEmail,
         loginId,
-        passwordHash: await hashSecret(password),
+        passwordHash: password
+          ? await hashSecret(password)
+          : await hashSecret(randomBytes(32).toString("hex")),
         pinHash: await hashSecret(pin),
         firstName,
         lastName,
@@ -1805,6 +1820,134 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       try {
         await storage.rejectAccountSignupRequest(req.params.id, getOfficeUser(req).officeId, getOfficeUser(req).id);
         broadcastToOffice(getOfficeUser(req).officeId, { type: "office_updated", ts: Date.now(), source: "account_request" });
+        res.status(204).send();
+      } catch (error: any) {
+        if (String(error?.message || "").toLowerCase().includes("not found")) {
+          return res.status(404).json({ error: error.message });
+        }
+        res.status(400).json({ error: error.message });
+      }
+    },
+  );
+
+  // PIN reset request routes
+  app.get(
+    "/api/offices/:id/pin-reset-requests",
+    requireSameOfficeParam("id"),
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
+      try {
+        const requests = await storage.getPinResetRequestsByOffice(req.params.id);
+        res.json(requests);
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    },
+  );
+
+  app.post("/api/pin-reset-requests", async (req, res) => {
+    try {
+      const loginId = normalizeLoginId(typeof req.body?.loginId === "string" ? req.body.loginId : "");
+      const newPin = typeof req.body?.pin === "string" ? req.body.pin.trim() : "";
+
+      if (!loginId) {
+        return res.status(400).json({ error: "Login ID is required" });
+      }
+      if (!isValidSixDigitPin(newPin)) {
+        return res.status(400).json({ error: "PIN must be exactly 6 digits" });
+      }
+
+      // Always return the same response to prevent user enumeration.
+      const genericResponse = {
+        ok: true,
+        message: "If this Login ID exists, a PIN reset request has been submitted for review.",
+      };
+
+      const user = await storage.getUserByLoginId(loginId);
+      if (!user || !user.officeId) {
+        return res.status(202).json(genericResponse);
+      }
+
+      const alreadyPending = await storage.getPendingPinResetRequestByUserId(user.id);
+      if (alreadyPending) {
+        return res.status(202).json({
+          ok: true,
+          message: "A PIN reset request is already pending review. Please wait for an owner or manager to approve it.",
+        });
+      }
+
+      const newPinHash = await hashSecret(newPin);
+      const created = await storage.createPinResetRequest({
+        userId: user.id,
+        officeId: user.officeId,
+        newPinHash,
+      });
+
+      // Notify owners/managers
+      const officeUsers = await storage.getUsersInOffice(user.officeId);
+      const approvers = officeUsers.filter((u) => u.role === "owner" || u.role === "manager");
+      try {
+        await Promise.all(
+          approvers.map((approver) =>
+            storage.createNotification({
+              userId: approver.id,
+              actorId: null,
+              type: "pin_reset",
+              title: "PIN reset request",
+              message: `${user.firstName} ${user.lastName} (${loginId}) requested a PIN reset.`,
+              metadata: { pinResetRequestId: created.id, loginId },
+              linkTo: "/dashboard/team",
+            }),
+          ),
+        );
+      } catch (notifyError) {
+        console.error("Failed to notify approvers about PIN reset request:", notifyError);
+      }
+
+      broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "pin_reset_request" });
+
+      res.status(202).json(genericResponse);
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Could not submit PIN reset request" });
+    }
+  });
+
+  app.post(
+    "/api/pin-reset-requests/:id/approve",
+    requireOffice,
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
+      try {
+        await storage.approvePinResetRequest(
+          req.params.id,
+          getOfficeUser(req).officeId,
+          getAuthUser(req).id,
+        );
+
+        broadcastToOffice(getOfficeUser(req).officeId, { type: "office_updated", ts: Date.now(), source: "pin_reset_request" });
+        res.status(200).json({ ok: true });
+      } catch (error: any) {
+        if (String(error?.message || "").toLowerCase().includes("not found")) {
+          return res.status(404).json({ error: error.message });
+        }
+        res.status(400).json({ error: error.message });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/pin-reset-requests/:id",
+    requireOffice,
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
+      try {
+        await storage.rejectPinResetRequest(
+          req.params.id,
+          getOfficeUser(req).officeId,
+          getAuthUser(req).id,
+        );
+
+        broadcastToOffice(getOfficeUser(req).officeId, { type: "office_updated", ts: Date.now(), source: "pin_reset_request" });
         res.status(204).send();
       } catch (error: any) {
         if (String(error?.message || "").toLowerCase().includes("not found")) {

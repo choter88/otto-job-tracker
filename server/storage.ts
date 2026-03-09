@@ -16,6 +16,7 @@ import {
   jobStatusHistory,
   adminAuditLogs,
   phiAccessLogs,
+  pinResetRequests,
   type User,
   type InsertUser,
   type Office,
@@ -44,6 +45,7 @@ import {
   type InsertNotification,
   type PhiAccessLog,
   type InsertPhiAccessLog,
+  type PinResetRequestWithUser,
 } from "@shared/schema";
 import { db } from "./db";
 import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
@@ -123,6 +125,13 @@ export interface IStorage {
   createAccountSignupRequest(request: InsertAccountSignupRequest): Promise<AccountSignupRequest>;
   approveAccountSignupRequest(requestId: string, officeId: string, reviewerId: string, role: User["role"]): Promise<User>;
   rejectAccountSignupRequest(requestId: string, officeId: string, reviewerId: string): Promise<void>;
+
+  // PIN reset requests
+  getPinResetRequestsByOffice(officeId: string): Promise<PinResetRequestWithUser[]>;
+  getPendingPinResetRequestByUserId(userId: string): Promise<boolean>;
+  createPinResetRequest(request: { userId: string; officeId: string; newPinHash: string }): Promise<{ id: string }>;
+  approvePinResetRequest(requestId: string, officeId: string, reviewerId: string): Promise<void>;
+  rejectPinResetRequest(requestId: string, officeId: string, reviewerId: string): Promise<void>;
 
   // Invitations
   getInvitationsByOffice(officeId: string): Promise<Invitation[]>;
@@ -1031,8 +1040,10 @@ export class DatabaseStorage implements IStorage {
     reviewerId: string,
     role: User["role"],
   ): Promise<User> {
-    return db.transaction(async (tx) => {
-      const [request] = await tx
+    // better-sqlite3 transactions must be synchronous (no async/await).
+    // Use .all()/.get()/.run() for explicit synchronous execution.
+    return db.transaction((tx) => {
+      const requests = tx
         .select()
         .from(accountSignupRequests)
         .where(
@@ -1042,16 +1053,19 @@ export class DatabaseStorage implements IStorage {
             eq(accountSignupRequests.status, "pending"),
           ),
         )
-        .limit(1);
+        .limit(1)
+        .all();
+      const request = requests[0];
 
       if (!request) throw new Error("Account request not found");
 
-      const [existingUser] = await tx
+      const existingUsers = tx
         .select({ id: users.id })
         .from(users)
         .where(eq(users.email, request.email))
-        .limit(1);
-      if (existingUser) {
+        .limit(1)
+        .all();
+      if (existingUsers.length > 0) {
         throw new Error("An account with this email already exists.");
       }
 
@@ -1065,14 +1079,15 @@ export class DatabaseStorage implements IStorage {
           id: request.id,
         });
 
-        const existingRows = await tx
+        const existingRows = tx
           .select({ loginId: users.loginId })
           .from(users)
-          .where(eq(users.officeId, request.officeId));
+          .where(eq(users.officeId, request.officeId))
+          .all();
         const used = new Set(
           existingRows
-            .map((row) => normalizeLoginId(String(row.loginId || "")))
-            .filter((value) => Boolean(value)),
+            .map((row: { loginId: string | null }) => normalizeLoginId(String(row.loginId || "")))
+            .filter((value: string) => Boolean(value)),
         );
 
         for (const candidate of candidates) {
@@ -1087,16 +1102,17 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      const [existingLoginUser] = await tx
+      const existingLoginUsers = tx
         .select({ id: users.id })
         .from(users)
         .where(eq(users.loginId, loginIdToAssign))
-        .limit(1);
-      if (existingLoginUser) {
+        .limit(1)
+        .all();
+      if (existingLoginUsers.length > 0) {
         throw new Error("An account with this Login ID already exists.");
       }
 
-      const [user] = await tx
+      const createdUsers = tx
         .insert(users)
         .values({
           id: randomUUID(),
@@ -1109,9 +1125,11 @@ export class DatabaseStorage implements IStorage {
           role,
           officeId: request.officeId,
         })
-        .returning();
+        .returning()
+        .all();
+      const user = createdUsers[0];
 
-      await tx
+      tx
         .update(accountSignupRequests)
         .set({
           status: "approved",
@@ -1123,7 +1141,8 @@ export class DatabaseStorage implements IStorage {
           passwordHash: "",
           pinHash: "",
         })
-        .where(eq(accountSignupRequests.id, requestId));
+        .where(eq(accountSignupRequests.id, requestId))
+        .run();
 
       return user;
     });
@@ -1151,6 +1170,119 @@ export class DatabaseStorage implements IStorage {
 
     if (result.length === 0) {
       throw new Error("Account request not found");
+    }
+  }
+
+  async getPinResetRequestsByOffice(officeId: string): Promise<PinResetRequestWithUser[]> {
+    const rows = await db
+      .select({
+        id: pinResetRequests.id,
+        userId: pinResetRequests.userId,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        loginId: users.loginId,
+        status: pinResetRequests.status,
+        createdAt: pinResetRequests.createdAt,
+      })
+      .from(pinResetRequests)
+      .innerJoin(users, eq(pinResetRequests.userId, users.id))
+      .where(
+        and(
+          eq(pinResetRequests.officeId, officeId),
+          eq(pinResetRequests.status, "pending"),
+        ),
+      )
+      .orderBy(desc(pinResetRequests.createdAt));
+    return rows;
+  }
+
+  async getPendingPinResetRequestByUserId(userId: string): Promise<boolean> {
+    const rows = await db
+      .select({ id: pinResetRequests.id })
+      .from(pinResetRequests)
+      .where(
+        and(
+          eq(pinResetRequests.userId, userId),
+          eq(pinResetRequests.status, "pending"),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  async createPinResetRequest(request: { userId: string; officeId: string; newPinHash: string }): Promise<{ id: string }> {
+    const [row] = await db
+      .insert(pinResetRequests)
+      .values({
+        id: randomUUID(),
+        userId: request.userId,
+        officeId: request.officeId,
+        newPinHash: request.newPinHash,
+        status: "pending",
+      })
+      .returning({ id: pinResetRequests.id });
+    return row;
+  }
+
+  async approvePinResetRequest(requestId: string, officeId: string, reviewerId: string): Promise<void> {
+    // Synchronous transaction (better-sqlite3) — same pattern as approveAccountSignupRequest.
+    db.transaction((tx) => {
+      const requests = tx
+        .select()
+        .from(pinResetRequests)
+        .where(
+          and(
+            eq(pinResetRequests.id, requestId),
+            eq(pinResetRequests.officeId, officeId),
+            eq(pinResetRequests.status, "pending"),
+          ),
+        )
+        .limit(1)
+        .all();
+      const request = requests[0];
+      if (!request) throw new Error("PIN reset request not found");
+
+      // Update the user's PIN hash.
+      tx
+        .update(users)
+        .set({ pinHash: request.newPinHash, updatedAt: new Date() })
+        .where(eq(users.id, request.userId))
+        .run();
+
+      // Mark request as approved and scrub stored hash.
+      tx
+        .update(pinResetRequests)
+        .set({
+          status: "approved",
+          reviewedBy: reviewerId,
+          reviewedAt: new Date(),
+          newPinHash: "",
+        })
+        .where(eq(pinResetRequests.id, requestId))
+        .run();
+    });
+  }
+
+  async rejectPinResetRequest(requestId: string, officeId: string, reviewerId: string): Promise<void> {
+    const result = await db
+      .update(pinResetRequests)
+      .set({
+        status: "rejected",
+        reviewedBy: reviewerId,
+        reviewedAt: new Date(),
+        newPinHash: "",
+      })
+      .where(
+        and(
+          eq(pinResetRequests.id, requestId),
+          eq(pinResetRequests.officeId, officeId),
+          eq(pinResetRequests.status, "pending"),
+        ),
+      )
+      .returning({ id: pinResetRequests.id });
+
+    if (result.length === 0) {
+      throw new Error("PIN reset request not found");
     }
   }
 

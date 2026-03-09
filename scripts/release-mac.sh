@@ -5,6 +5,10 @@ PROFILE="${NOTARY_PROFILE:-otto-notary}"
 OUT_DIR="release-mac"
 VERSION="${npm_package_version:-$(node -p "require('./package.json').version")}"
 
+# Expected artifact names (set by electron-builder artifactName in package.json)
+ARM_DMG="${OUT_DIR}/otto-tracker-mac-arm64.dmg"
+X64_DMG="${OUT_DIR}/otto-tracker-mac-x64.dmg"
+
 echo "=== Building web + server bundle ==="
 npm run build
 
@@ -62,13 +66,11 @@ notarize_dmg() {
 echo ""
 echo "=== Building macOS ARM (apple silicon) ==="
 npx electron-builder --mac --arm64 -c.directories.output="${OUT_DIR}"
-ARM_DMG="$(ls -t "${OUT_DIR}"/*-arm64*.dmg 2>/dev/null | head -n 1 || true)"
 ARM_APP="$(find "${OUT_DIR}/mac-arm64" -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -n 1 || true)"
 
 echo ""
 echo "=== Building macOS x64 (intel) ==="
 npx electron-builder --mac --x64 -c.directories.output="${OUT_DIR}"
-X64_DMG="$(ls -t "${OUT_DIR}"/*-x64*.dmg 2>/dev/null | head -n 1 || true)"
 X64_APP="$(find "${OUT_DIR}/mac" -maxdepth 1 -type d -name "*.app" 2>/dev/null | head -n 1 || true)"
 
 notarize_dmg "arm64" "${ARM_DMG}" "${ARM_APP}"
@@ -80,4 +82,4 @@ echo "  ARM64: ${ARM_DMG}"
 echo "  x64:   ${X64_DMG}"
 echo ""
 echo "To publish as a GitHub Release:"
-echo "  gh release create v${VERSION} ${ARM_DMG} ${X64_DMG} --title \"Otto Tracker v${VERSION}\" --generate-notes"
+echo "  gh release create v${VERSION} \"${ARM_DMG}\" \"${X64_DMG}\" --title \"Otto Tracker v${VERSION}\" --generate-notes"

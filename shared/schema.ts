@@ -4,7 +4,7 @@ import { z } from "zod";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const userRoleValues = ["owner", "manager", "staff", "view_only", "super_admin"] as const;
-const notificationTypeValues = ["status_change", "comment", "overdue_alert", "team_update"] as const;
+const notificationTypeValues = ["status_change", "comment", "overdue_alert", "team_update", "pin_reset"] as const;
 
 function tsMsNowSql() {
   return sql`(unixepoch() * 1000)`;
@@ -148,6 +148,25 @@ export const accountSignupRequests = sqliteTable(
       table.loginId,
       table.status,
     ),
+  }),
+);
+
+// PIN reset requests table (user is locked out, request goes to owner/manager)
+export const pinResetRequests = sqliteTable(
+  "pin_reset_requests",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").references(() => users.id).notNull(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    newPinHash: text("new_pin_hash").notNull(),
+    status: text("status").default("pending").notNull(),
+    reviewedBy: text("reviewed_by").references(() => users.id),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    officeStatusIdx: index("pin_reset_requests_office_status_idx").on(table.officeId, table.status),
+    userStatusIdx: index("pin_reset_requests_user_status_idx").on(table.userId, table.status),
   }),
 );
 
@@ -509,6 +528,18 @@ export type AccountSignupRequest = typeof accountSignupRequests.$inferSelect;
 export type InsertAccountSignupRequest = z.infer<typeof insertAccountSignupRequestSchema>;
 export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
 export type InsertPhiAccessLog = z.infer<typeof insertPhiAccessLogSchema>;
+export type PinResetRequest = typeof pinResetRequests.$inferSelect;
+
+// Custom type for PIN reset request with user details (returned by API)
+export type PinResetRequestWithUser = {
+  id: string;
+  userId: string;
+  firstName: string;
+  lastName: string;
+  loginId: string | null;
+  status: string;
+  createdAt: Date;
+};
 
 // Custom type for join request with requester details (returned by API)
 export type JoinRequestWithRequester = {

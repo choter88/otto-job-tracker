@@ -6,22 +6,20 @@
  *
  * Builds the web/server bundle, then produces a Windows x64 NSIS installer
  * in the release-win/ directory.
+ *
+ * The artifact is named otto-tracker-win-x64.exe (set by electron-builder
+ * artifactName in package.json) to match the web app download proxy whitelist.
  */
 import { execSync } from "child_process";
-import { readdirSync, rmSync, existsSync } from "fs";
+import { existsSync, rmSync } from "fs";
 import { join } from "path";
 
 const OUT_DIR = "release-win";
+const EXPECTED_EXE = join(OUT_DIR, "otto-tracker-win-x64.exe");
 
 function run(cmd) {
   console.log(`> ${cmd}`);
   execSync(cmd, { stdio: "inherit" });
-}
-
-function findFile(dir, ext) {
-  if (!existsSync(dir)) return null;
-  const files = readdirSync(dir).filter((f) => f.endsWith(ext));
-  return files.length > 0 ? join(dir, files[0]) : null;
 }
 
 // Read version from package.json
@@ -42,16 +40,14 @@ console.log("");
 console.log("=== Building Windows x64 NSIS installer ===");
 run(`npx electron-builder --win --x64 -c.directories.output=${OUT_DIR}`);
 
-const installer = findFile(OUT_DIR, ".exe");
-
-if (!installer) {
-  console.error(`No installer found in ${OUT_DIR}/.`);
+if (!existsSync(EXPECTED_EXE)) {
+  console.error(`Expected installer not found: ${EXPECTED_EXE}`);
   process.exit(1);
 }
 
 console.log("");
 console.log("=== Release complete ===");
-console.log(`  Installer: ${installer}`);
+console.log(`  Installer: ${EXPECTED_EXE}`);
 console.log("");
 console.log(
   "Note: For production releases, sign the installer with signtool or",
@@ -60,5 +56,5 @@ console.log("an EV code-signing certificate before distribution.");
 console.log("");
 console.log("To publish as a GitHub Release:");
 console.log(
-  `  gh release create v${VERSION} "${installer}" --title "Otto Tracker v${VERSION} (Windows)" --generate-notes`,
+  `  gh release create v${VERSION} "${EXPECTED_EXE}" --title "Otto Tracker v${VERSION} (Windows)" --generate-notes`,
 );
