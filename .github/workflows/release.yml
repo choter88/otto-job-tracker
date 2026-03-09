@@ -29,7 +29,7 @@ jobs:
         run: npm run build
 
       - name: Build and notarize macOS ${{ matrix.arch }}
-        run: npx electron-builder --mac --${{ matrix.arch }} -c.directories.output=release-mac
+        run: npx electron-builder --mac --${{ matrix.arch }} --config.directories.output=release-mac
         env:
           CSC_LINK: ${{ secrets.MAC_CERT_P12 }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
@@ -61,7 +61,7 @@ jobs:
         run: npm run build
 
       - name: Build Windows x64 installer
-        run: npx electron-builder --win --x64 -c.directories.output=release-win
+        run: npx electron-builder --win --x64 --config.directories.output=release-win
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
