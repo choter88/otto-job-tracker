@@ -16,33 +16,33 @@ echo ""
 echo "  [1] major → ${NEXT_MAJOR}"
 echo "  [2] minor → ${NEXT_MINOR}"
 echo "  [3] patch → ${NEXT_PATCH}"
+echo "  [4] keep  → ${CURRENT}"
 echo ""
-read -rp "Choose [1/2/3]: " CHOICE
+read -rp "Choose [1/2/3/4]: " CHOICE
 
 case "$CHOICE" in
   1) BUMP="major"; NEW_VERSION="$NEXT_MAJOR" ;;
   2) BUMP="minor"; NEW_VERSION="$NEXT_MINOR" ;;
   3) BUMP="patch"; NEW_VERSION="$NEXT_PATCH" ;;
+  4) NEW_VERSION="$CURRENT" ;;
   *) echo "Invalid choice"; exit 1 ;;
 esac
 
-echo ""
-echo "Bumping to v${NEW_VERSION}..."
-
-npm version "$BUMP" --no-git-tag-version > /dev/null
-echo "  ✓ Updated package.json to ${NEW_VERSION}"
-
-git add package.json package-lock.json 2>/dev/null || git add package.json
-git commit -m "v${NEW_VERSION}" > /dev/null
-echo "  ✓ Committed: v${NEW_VERSION}"
-
-git tag -a "v${NEW_VERSION}" -m "v${NEW_VERSION}"
-echo "  ✓ Tagged: v${NEW_VERSION}"
-
-git push origin HEAD --follow-tags
-echo "  ✓ Pushed commit + tag to origin"
+if [[ "$CHOICE" != "4" ]]; then
+  echo ""
+  echo "Bumping to v${NEW_VERSION}..."
+  npm version "$BUMP" --no-git-tag-version > /dev/null
+  echo "  ✓ Updated package.json to ${NEW_VERSION}"
+  git add package.json package-lock.json 2>/dev/null || git add package.json
+  git commit -m "v${NEW_VERSION}" > /dev/null
+  echo "  ✓ Committed: v${NEW_VERSION}"
+else
+  echo ""
+  echo "Keeping v${CURRENT}"
+fi
 
 echo ""
-echo "GitHub Actions release triggered. Or build locally:"
-echo "  Mac:     ./scripts/release-mac.sh"
-echo "  Windows: git pull && node scripts/release-win.js"
+echo "Next steps:"
+echo "  1. Build Mac:     npm run release:mac"
+echo "  2. Build Windows: git pull && npm run release:win"
+echo "  3. Upload:        gh release create v${NEW_VERSION} release-mac/otto-tracker-mac-arm64.dmg release-mac/otto-tracker-mac-x64.dmg release-win/otto-tracker-win-x64.exe --generate-notes"
