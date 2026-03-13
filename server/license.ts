@@ -24,6 +24,10 @@ export function getLicenseSnapshot(): LicenseSnapshot {
   return computeLicenseSnapshot(getState());
 }
 
+export function getHostToken(): string {
+  return getState().hostToken || "";
+}
+
 const ACTIVATION_ALLOWED = /^[A-HJ-NP-Z2-9]+$/;
 const SETUP_CODE_ALLOWED = /^[A-Z0-9_-]+$/i;
 

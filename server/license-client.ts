@@ -350,3 +350,41 @@ export async function portalValidateInviteCode(payload: {
     officeId: String(json.officeId || ""),
   };
 }
+
+// --- Invite code management (Host-side, requires hostToken) ---
+
+export type InviteCodeInfo =
+  | { ok: true; inviteCode: string; expiresAt?: number }
+  | { ok: false; error: LicenseRequestError };
+
+export async function portalGetInviteCode(payload: {
+  hostToken: string;
+}): Promise<InviteCodeInfo> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/invite-codes", base);
+  const { status, json, networkError } = await fetchJson(url, { hostToken: payload.hostToken });
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+
+  return {
+    ok: true,
+    inviteCode: String(json?.inviteCode || ""),
+    expiresAt: typeof json?.expiresAt === "number" ? json.expiresAt : undefined,
+  };
+}
+
+export async function portalRegenerateInviteCode(payload: {
+  hostToken: string;
+}): Promise<InviteCodeInfo> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/invite-codes/regenerate", base);
+  const { status, json, networkError } = await fetchJson(url, { hostToken: payload.hostToken });
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+
+  return {
+    ok: true,
+    inviteCode: String(json?.inviteCode || ""),
+    expiresAt: typeof json?.expiresAt === "number" ? json.expiresAt : undefined,
+  };
+}

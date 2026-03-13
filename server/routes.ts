@@ -36,8 +36,8 @@ import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
-import { activateHostForSetup, activateHostWithPortalToken, activateLicense, forceCheckin, getLicenseSnapshot, validateClaimForSetup } from "./license";
-import { portalValidateInviteCode } from "./license-client";
+import { activateHostForSetup, activateHostWithPortalToken, activateLicense, forceCheckin, getHostToken, getLicenseSnapshot, validateClaimForSetup } from "./license";
+import { portalValidateInviteCode, portalGetInviteCode, portalRegenerateInviteCode } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
@@ -439,6 +439,41 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.json(snapshot);
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Check-in failed" });
+    }
+  });
+
+  // ── Invite code management (Host/owner only) ──────────────────────
+  app.get("/api/invite-code", requireAuth, requireRole(["owner"]), async (_req, res) => {
+    applyNoStoreHeaders(res);
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(404).json({ error: "Host is not activated" });
+    }
+    try {
+      const result = await portalGetInviteCode({ hostToken });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message });
+      }
+      res.json({ inviteCode: result.inviteCode, expiresAt: result.expiresAt });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to get invite code" });
+    }
+  });
+
+  app.post("/api/invite-code/regenerate", requireAuth, requireRole(["owner"]), async (_req, res) => {
+    applyNoStoreHeaders(res);
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(404).json({ error: "Host is not activated" });
+    }
+    try {
+      const result = await portalRegenerateInviteCode({ hostToken });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message });
+      }
+      res.json({ inviteCode: result.inviteCode, expiresAt: result.expiresAt });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to regenerate invite code" });
     }
   });
 
