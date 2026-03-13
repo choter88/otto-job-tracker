@@ -41,15 +41,6 @@ const MAIN_WINDOW_BASE_MIN_HEIGHT = 864;
 const HOST_DISCOVERY_TIMEOUT_MS = 1200;
 const HOST_DISCOVERY_CONCURRENCY = 36;
 const HOST_DISCOVERY_MAX_CANDIDATES = 1024;
-const SETUP_APPROVAL_REQUEST_TIMEOUT_MS = 90_000;
-const SETUP_APPROVAL_POLL_INTERVAL_MS = 2_000;
-const HOST_APPROVAL_POLL_INTERVAL_MS = 3_000;
-const HOST_APPROVAL_PROMPT_COOLDOWN_MS = 45_000;
-const HOST_APPROVAL_CENTER_HEARTBEAT_TTL_MS = 20_000;
-let hostApprovalPollInterval = null;
-let hostApprovalPromptActive = false;
-let hostApprovalCenterHeartbeatAt = 0;
-const hostApprovalPromptedAt = new Map();
 
 process.on("uncaughtException", (error) => {
   logStartup("Uncaught exception", error);
@@ -196,10 +187,6 @@ function getConfigPath() {
   return path.join(app.getPath("userData"), "otto-config.json");
 }
 
-function getPendingActivationCodePath() {
-  return path.join(app.getPath("userData"), "pending-activation-code.txt");
-}
-
 function getDataDir() {
   return path.join(app.getPath("userData"), "data");
 }
@@ -221,135 +208,12 @@ function normalizeHex(value) {
   return String(value).replace(/[^a-fA-F0-9]/g, "").toUpperCase();
 }
 
-const ACTIVATION_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
-const SETUP_CODE_REGEX = /^[A-Z0-9][A-Z0-9_-]{5,95}$/i;
-
-function normalizeActivationCode(value) {
-  const cleaned = String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .replace(/[IO01]/g, "");
-  const groups = cleaned.match(/.{1,4}/g) || [];
-  return groups.slice(0, 4).join("-").slice(0, 19);
+async function handleOpenUrl(_url) {
+  // Legacy activation code URL handling removed. Placeholder for future deep-link support.
 }
 
-function extractActivationCodeFromText(text) {
-  const normalized = normalizeActivationCode(text);
-  if (ACTIVATION_CODE_REGEX.test(normalized)) return normalized;
-
-  const match = String(text || "")
-    .toUpperCase()
-    .match(/[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}/);
-  return match ? match[0] : "";
-}
-
-function sanitizePendingSetupCode(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-
-  const activation = normalizeActivationCode(raw);
-  if (ACTIVATION_CODE_REGEX.test(activation)) {
-    return activation;
-  }
-
-  const compact = raw.replace(/\s+/g, "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 96);
-  if (!compact) return "";
-  if (!SETUP_CODE_REGEX.test(compact)) return "";
-  return compact.toUpperCase();
-}
-
-function extractSetupCodeFromText(text) {
-  const activation = extractActivationCodeFromText(text);
-  if (activation) return activation;
-
-  const match = String(text || "").match(/[A-Za-z0-9][A-Za-z0-9_-]{7,95}/);
-  if (!match) return "";
-  return sanitizePendingSetupCode(match[0]);
-}
-
-function writePendingActivationCode(value) {
-  const code = sanitizePendingSetupCode(value);
-  if (!code) return false;
-  fs.mkdirSync(path.dirname(getPendingActivationCodePath()), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(getPendingActivationCodePath(), code, { mode: 0o600 });
-  return true;
-}
-
-function readPendingActivationCode() {
-  try {
-    if (!fs.existsSync(getPendingActivationCodePath())) return "";
-    const raw = fs.readFileSync(getPendingActivationCodePath(), "utf-8");
-    const code = sanitizePendingSetupCode(raw);
-    return code || "";
-  } catch {
-    return "";
-  }
-}
-
-function clearPendingActivationCode() {
-  try {
-    if (fs.existsSync(getPendingActivationCodePath())) {
-      fs.unlinkSync(getPendingActivationCodePath());
-    }
-  } catch {
-    // ignore
-  }
-}
-
-async function handleOpenUrl(url) {
-  try {
-    const parsed = new URL(String(url));
-    if (parsed.protocol !== "otto:" && parsed.protocol !== "otto-desktop:") return;
-
-    const codeCandidate =
-      parsed.searchParams.get("claimCode") ||
-      parsed.searchParams.get("claim") ||
-      parsed.searchParams.get("hostClaimCode") ||
-      parsed.searchParams.get("activationCode") ||
-      parsed.searchParams.get("code") ||
-      parsed.searchParams.get("activation") ||
-      parsed.searchParams.get("token") ||
-      "";
-
-    const extracted = extractSetupCodeFromText(codeCandidate) || extractSetupCodeFromText(parsed.pathname);
-    if (extracted) {
-      writePendingActivationCode(extracted);
-    }
-  } catch (error) {
-    logStartup("Failed handling open-url", error);
-  }
-}
-
-async function handleOpenFile(filePath) {
-  try {
-    const resolved = path.resolve(String(filePath));
-    if (!fs.existsSync(resolved)) return;
-    const ext = path.extname(resolved).toLowerCase();
-    if (ext !== ".otto-license") return;
-
-    const raw = fs.readFileSync(resolved, "utf-8");
-    let extracted = "";
-    try {
-      const parsed = JSON.parse(raw);
-      extracted = extractSetupCodeFromText(
-        parsed?.claimCode ||
-          parsed?.hostClaimCode ||
-          parsed?.activationCode ||
-          parsed?.code ||
-          parsed?.token ||
-          "",
-      );
-    } catch {
-      extracted = extractSetupCodeFromText(raw);
-    }
-
-    if (extracted) {
-      writePendingActivationCode(extracted);
-    }
-  } catch (error) {
-    logStartup("Failed handling open-file", error);
-  }
+async function handleOpenFile(_filePath) {
+  // Legacy .otto-license file handling removed.
 }
 
 function formatFingerprint256(hex) {
@@ -792,284 +656,6 @@ function getLocalServerOrigin() {
 function getSetupClientName() {
   const hostname = String(os.hostname() || "").trim();
   return hostname || "Client computer";
-}
-
-async function requestHostSetupApproval(payload) {
-  const hostUrlInput = payload?.hostUrl;
-  const pairingCode = payload?.pairingCode;
-  const clientName =
-    typeof payload?.clientName === "string" && payload.clientName.trim()
-      ? payload.clientName.trim().slice(0, 120)
-      : getSetupClientName();
-  const clientHost = getSetupClientName();
-  const clientVersion = app.getVersion ? app.getVersion() : "";
-
-  const test = await testHostConnection(hostUrlInput, pairingCode);
-  if (!test?.ok) {
-    return {
-      ok: false,
-      approved: false,
-      message: test?.message || "Could not connect to the Host computer.",
-    };
-  }
-
-  let hostOrigin;
-  try {
-    hostOrigin = new URL(String(hostUrlInput || "").trim()).origin;
-  } catch {
-    return {
-      ok: false,
-      approved: false,
-      message: "Please enter a valid Host computer address.",
-    };
-  }
-
-  const requestResult = await requestJsonWithFingerprint(
-    new URL("/api/setup/handshake/request", hostOrigin).toString(),
-    {
-      method: "POST",
-      expectedPairingCode: pairingCode,
-      allowMissingFingerprint: true,
-      timeoutMs: 6000,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clientName,
-        clientHost,
-        clientVersion,
-      }),
-    },
-  );
-
-  if (!requestResult.ok) {
-    if (requestResult.status === 404) {
-      return {
-        ok: true,
-        approved: true,
-        unsupported: true,
-        message: "Connection successful. This Host does not require approval.",
-      };
-    }
-    return {
-      ok: false,
-      approved: false,
-      message:
-        requestResult?.json?.error ||
-        requestResult?.json?.message ||
-        requestResult?.error ||
-        `Host responded with ${requestResult.status || "an error"}.`,
-    };
-  }
-
-  const requestId = String(requestResult?.json?.requestId || "").trim();
-  const token = String(requestResult?.json?.token || "").trim();
-  const expiresAtRaw = Number(requestResult?.json?.expiresAt);
-  const hardDeadline =
-    Number.isFinite(expiresAtRaw) && expiresAtRaw > Date.now()
-      ? Math.min(expiresAtRaw, Date.now() + SETUP_APPROVAL_REQUEST_TIMEOUT_MS)
-      : Date.now() + SETUP_APPROVAL_REQUEST_TIMEOUT_MS;
-
-  if (!requestId || !token) {
-    return {
-      ok: false,
-      approved: false,
-      message: "Host computer did not return a valid approval request.",
-    };
-  }
-
-  while (Date.now() <= hardDeadline) {
-    const statusUrl = new URL(`/api/setup/handshake/request/${encodeURIComponent(requestId)}`, hostOrigin);
-    statusUrl.searchParams.set("token", token);
-
-    const statusResult = await requestJsonWithFingerprint(statusUrl.toString(), {
-      expectedPairingCode: pairingCode,
-      allowMissingFingerprint: true,
-      timeoutMs: 6000,
-    });
-
-    if (!statusResult.ok) {
-      if (statusResult.status === 404) {
-        return {
-          ok: false,
-          approved: false,
-          message: "Approval request expired. Ask someone at the Host computer to retry.",
-        };
-      }
-      return {
-        ok: false,
-        approved: false,
-        message:
-          statusResult?.json?.error ||
-          statusResult?.json?.message ||
-          statusResult?.error ||
-          "Could not read approval status from the Host computer.",
-      };
-    }
-
-    const status = String(statusResult?.json?.status || "").trim().toLowerCase();
-    const message =
-      String(statusResult?.json?.message || "").trim() ||
-      (status === "approved"
-        ? "Approved on the Host computer."
-        : status === "denied"
-          ? "Denied on the Host computer."
-          : status === "expired"
-            ? "Approval request timed out."
-            : "Waiting for approval on the Host computer.");
-
-    if (status === "approved") {
-      return { ok: true, approved: true, status, message };
-    }
-    if (status === "denied" || status === "expired") {
-      return { ok: false, approved: false, status, message };
-    }
-
-    await sleep(SETUP_APPROVAL_POLL_INTERVAL_MS);
-  }
-
-  return {
-    ok: false,
-    approved: false,
-    status: "timeout",
-    message: "Timed out waiting for Host computer approval.",
-  };
-}
-
-async function fetchPendingSetupApprovalsForHost() {
-  const localOrigin = getLocalServerOrigin();
-  const result = await requestJsonWithFingerprint(new URL("/api/setup/handshake/pending", localOrigin).toString(), {
-    timeoutMs: 3500,
-  });
-  if (!result.ok) return [];
-
-  const pending = Array.isArray(result?.json?.pending) ? result.json.pending : [];
-  return pending.filter((item) => item && typeof item === "object");
-}
-
-async function submitSetupApprovalDecisionFromHost(requestId, decision, note) {
-  const localOrigin = getLocalServerOrigin();
-  const result = await requestJsonWithFingerprint(
-    new URL(`/api/setup/handshake/request/${encodeURIComponent(requestId)}/decision`, localOrigin).toString(),
-    {
-      method: "POST",
-      timeoutMs: 4000,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision, note }),
-    },
-  );
-  return result.ok;
-}
-
-function markHostApprovalCenterHeartbeat() {
-  hostApprovalCenterHeartbeatAt = Date.now();
-}
-
-function isHostApprovalCenterActive() {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  if (mainWindow.isMinimized() || !mainWindow.isVisible()) return false;
-  return Date.now() - hostApprovalCenterHeartbeatAt <= HOST_APPROVAL_CENTER_HEARTBEAT_TTL_MS;
-}
-
-async function maybePromptForPendingHostApproval() {
-  if (hostApprovalPromptActive) return;
-  if (isHostApprovalCenterActive()) return;
-
-  const pending = await fetchPendingSetupApprovalsForHost();
-  if (!Array.isArray(pending) || pending.length === 0) return;
-
-  const now = Date.now();
-  const nextPrompt = pending.find((item) => {
-    const id = String(item?.id || "").trim();
-    if (!id) return false;
-    const lastPromptAt = Number(hostApprovalPromptedAt.get(id)) || 0;
-    return now - lastPromptAt >= HOST_APPROVAL_PROMPT_COOLDOWN_MS;
-  });
-  if (!nextPrompt) return;
-
-  const requestId = String(nextPrompt.id || "").trim();
-  if (!requestId) return;
-
-  hostApprovalPromptedAt.set(requestId, now);
-  hostApprovalPromptActive = true;
-
-  const clientName = String(nextPrompt.clientName || "Client computer").trim() || "Client computer";
-  const clientHost = String(nextPrompt.clientHost || "").trim();
-  const requestedByIp = String(nextPrompt.requestedByIp || "").trim();
-  const clientVersion = String(nextPrompt.clientVersion || "").trim();
-  const requestedAt = Number(nextPrompt.createdAt);
-  const requestedAtText =
-    Number.isFinite(requestedAt) && requestedAt > 0 ? new Date(requestedAt).toLocaleString() : "Unknown time";
-
-  const detailLines = [
-    `${clientName} is requesting approval to connect as a Client.`,
-    "",
-    `Hostname: ${clientHost || "Unknown"}`,
-    `LAN IP: ${requestedByIp || "Unknown"}`,
-    `Client version: ${clientVersion || "Unknown"}`,
-    `Requested: ${requestedAtText}`,
-    "",
-    "Allow this computer to connect?",
-  ];
-
-  try {
-    const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-    const result = parentWindow
-      ? await dialog.showMessageBox(parentWindow, {
-          type: "question",
-          buttons: ["Approve", "Deny", "Later"],
-          defaultId: 0,
-          cancelId: 2,
-          message: "Approve Client Connection",
-          detail: detailLines.join("\n"),
-        })
-      : await dialog.showMessageBox({
-          type: "question",
-          buttons: ["Approve", "Deny", "Later"],
-          defaultId: 0,
-          cancelId: 2,
-          message: "Approve Client Connection",
-          detail: detailLines.join("\n"),
-        });
-
-    if (result.response === 0) {
-      await submitSetupApprovalDecisionFromHost(requestId, "approved", "Approved on the Host computer.");
-      hostApprovalPromptedAt.delete(requestId);
-      return;
-    }
-
-    if (result.response === 1) {
-      await submitSetupApprovalDecisionFromHost(requestId, "denied", "Denied on the Host computer.");
-      hostApprovalPromptedAt.delete(requestId);
-      return;
-    }
-  } catch {
-    // ignore prompt failures; polling will retry.
-  } finally {
-    hostApprovalPromptActive = false;
-  }
-}
-
-function stopHostSetupApprovalPolling() {
-  if (hostApprovalPollInterval) {
-    clearInterval(hostApprovalPollInterval);
-    hostApprovalPollInterval = null;
-  }
-  hostApprovalPromptActive = false;
-  hostApprovalCenterHeartbeatAt = 0;
-  hostApprovalPromptedAt.clear();
-}
-
-function startHostSetupApprovalPolling(config) {
-  if (config?.mode !== "host") {
-    stopHostSetupApprovalPolling();
-    return;
-  }
-  if (hostApprovalPollInterval) return;
-
-  const poll = () => {
-    void maybePromptForPendingHostApproval();
-  };
-  poll();
-  hostApprovalPollInterval = setInterval(poll, HOST_APPROVAL_POLL_INTERVAL_MS);
 }
 
 function normalizeSmsRecipient(phone) {
@@ -2006,7 +1592,6 @@ async function launchMainWindowForConfig(config, options = {}) {
 
     const targetUrl = getTargetUrlForConfig(config);
     createWindow(targetUrl, config);
-    startHostSetupApprovalPolling(config);
 
     if (config.mode === "host") {
       await maybePromptForBackupFolder();
@@ -2546,9 +2131,6 @@ ipcMain.handle("otto:connection:test", async (_event, payload) => {
   return await testHostConnection(hostUrl, pairingCode);
 });
 
-ipcMain.handle("otto:setup:approval:request", async (_event, payload) => {
-  return await requestHostSetupApproval(payload || {});
-});
 
 ipcMain.handle("otto:hosts:discover", async (_event, payload) => {
   return await discoverHosts(payload);
@@ -2564,14 +2146,6 @@ ipcMain.handle("otto:window:set-min-width", async (event, requestedWidth) => {
   return setMainWindowMinWidth(targetWindow, requestedWidth);
 });
 
-ipcMain.handle("otto:activationCode:get", async () => {
-  return readPendingActivationCode();
-});
-
-ipcMain.handle("otto:activationCode:clear", async () => {
-  clearPendingActivationCode();
-  return { ok: true };
-});
 
 ipcMain.handle("otto:hostAddresses:show", async () => {
   await showHostAddresses();
@@ -2610,9 +2184,6 @@ ipcMain.handle("otto:sms:draft:open", async (_event, payload) => {
   return await openSmsDraft(payload || {});
 });
 
-ipcMain.on("otto:host-approval-center:heartbeat", () => {
-  markHostApprovalCenterHeartbeat();
-});
 
 ipcMain.handle("otto:portal:find-host", async (_event, payload) => {
   return await portalFindHost(payload);
@@ -3569,7 +3140,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  stopHostSetupApprovalPolling();
+  // cleanup on quit
 });
 
 app.on("second-instance", (_event, argv) => {
