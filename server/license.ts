@@ -2,7 +2,7 @@ import os from "os";
 import { OTTO_DEFAULT_PORT } from "@shared/constants";
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
-import { portalActivate, portalCheckin, portalConsumeHostClaim, portalValidateHostClaim } from "./license-client";
+import { portalActivate, portalCheckin, portalConsumeHostClaim, portalIssueAndConsume, portalValidateHostClaim } from "./license-client";
 import type { ClaimValidationResult } from "./license-client";
 
 let state: LicenseState | null = null;
@@ -136,6 +136,26 @@ export async function activateHostForSetup(setupCode: string): Promise<LicenseSn
   const current = getState();
   const result = await portalConsumeHostClaim({
     claimCode: trimmed,
+    installationId: current.installationId,
+    hostFingerprint256: current.hostFingerprint256,
+    appVersion: process.env.npm_package_version,
+  });
+
+  if (!result.ok) {
+    throwLicenseRequestError(result.error);
+  }
+
+  return applyActivationResult(result);
+}
+
+export async function activateHostWithPortalToken(portalToken: string, officeId: string): Promise<LicenseSnapshot> {
+  if (!portalToken) throw new Error("Portal token is required");
+  if (!officeId) throw new Error("Office ID is required");
+
+  const current = getState();
+  const result = await portalIssueAndConsume({
+    portalToken,
+    officeId,
     installationId: current.installationId,
     hostFingerprint256: current.hostFingerprint256,
     appVersion: process.env.npm_package_version,

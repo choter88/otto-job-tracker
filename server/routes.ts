@@ -36,7 +36,7 @@ import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
-import { activateHostForSetup, activateLicense, forceCheckin, getLicenseSnapshot, validateClaimForSetup } from "./license";
+import { activateHostForSetup, activateHostWithPortalToken, activateLicense, forceCheckin, getLicenseSnapshot, validateClaimForSetup } from "./license";
 import { portalValidateInviteCode } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
@@ -632,9 +632,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
     try {
       const setupCode = readSetupCodeFromBody(req.body);
+      const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
+      const selectedOfficeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
 
+      // Portal token flow provides office info from the portal response
       const officeName = typeof officeBody?.name === "string" ? officeBody.name.trim() : "";
       const officeAddress =
         typeof officeBody?.address === "string" ? officeBody.address.trim() : undefined;
@@ -649,8 +652,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
-      if (!setupCode) {
-        return res.status(400).json({ error: "Host Claim Code is required" });
+      // Support two activation paths:
+      // 1. portalToken + officeId (new: desktop portal sign-in flow)
+      // 2. setupCode (legacy: claim code flow)
+      const usePortalToken = Boolean(portalToken && selectedOfficeId);
+
+      if (!usePortalToken && !setupCode) {
+        return res.status(400).json({ error: "Host Claim Code or portal token is required" });
       }
       if (!officeName) {
         return res.status(400).json({ error: "Office name is required" });
@@ -683,7 +691,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Part 1.2: Portal call BEFORE any local DB writes — if this fails, nothing is written locally.
       let licenseSnapshot = getLicenseSnapshot();
       try {
-        licenseSnapshot = await activateHostForSetup(setupCode);
+        if (usePortalToken) {
+          licenseSnapshot = await activateHostWithPortalToken(portalToken, selectedOfficeId);
+        } else {
+          licenseSnapshot = await activateHostForSetup(setupCode);
+        }
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);
         return res.status(failure.status).json({ error: failure.message, code: failure.code });
@@ -731,7 +743,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
         const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
         const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
-        const setupCodeTail = setupCodeLast4(setupCode);
+        const setupCodeTail = usePortalToken ? "portal" : setupCodeLast4(setupCode);
         mergedSettings.licensing = {
           setupCodeLast4: setupCodeTail,
           activationCodeLast4: setupCodeTail,

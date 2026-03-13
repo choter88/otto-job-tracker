@@ -34,14 +34,16 @@ function getLicenseBaseUrl(): URL {
   }
 }
 
-async function fetchJson(url: URL, body: unknown): Promise<PostJsonResult> {
+async function fetchJson(url: URL, body: unknown, bearerToken?: string): Promise<PostJsonResult> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 8000);
   try {
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
@@ -296,6 +298,22 @@ export async function portalValidateHostClaim(payload: {
   }
 
   return result;
+}
+
+export async function portalIssueAndConsume(payload: {
+  portalToken: string;
+  officeId: string;
+  installationId: string;
+  hostFingerprint256: string;
+  appVersion?: string;
+}): Promise<LicenseActivateResult | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/desktop/claims/issue-and-consume", base);
+  const { portalToken, ...body } = payload;
+  const { status, json, networkError } = await fetchJson(url, body, portalToken);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return parseActivationPayload(json, "Issue-and-consume response was missing required fields.");
 }
 
 export type InviteCodeValidationResult =

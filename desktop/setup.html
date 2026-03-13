@@ -21,15 +21,8 @@
         --success: #16a34a;
       }
 
-      * {
-        box-sizing: border-box;
-      }
-
-      html,
-      body {
-        margin: 0;
-        min-height: 100%;
-      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
 
       body {
         font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -39,36 +32,38 @@
           radial-gradient(circle at 92% 18%, rgba(2, 132, 199, 0.12), transparent 38%),
           linear-gradient(140deg, #f8fafc, #eef4fb 45%, #f8fafc);
         padding: 26px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
       }
 
-      .shell {
-        max-width: 1120px;
-        margin: 0 auto;
-        display: grid;
-        grid-template-columns: 0.92fr 1.08fr;
-        gap: 22px;
+      .container {
+        max-width: 540px;
+        width: 100%;
       }
 
-      .intro-panel {
-        position: relative;
-        border: 1px solid rgba(37, 99, 235, 0.2);
+      .card {
+        border: 1px solid var(--border);
         border-radius: 20px;
-        background: rgba(255, 255, 255, 0.75);
-        backdrop-filter: blur(6px);
-        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
-        padding: 30px 28px;
-        overflow: hidden;
+        background: var(--card);
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+        padding: 28px;
       }
 
-      .intro-panel::after {
-        content: "";
-        position: absolute;
-        width: 200px;
-        height: 200px;
-        right: -82px;
-        bottom: -88px;
-        border-radius: 999px;
-        background: radial-gradient(circle, rgba(37, 99, 235, 0.18), rgba(37, 99, 235, 0.03));
+      .card-title {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 740;
+        letter-spacing: -0.015em;
+        line-height: 1.15;
+      }
+
+      .card-subtitle {
+        margin: 8px 0 22px;
+        color: var(--muted-foreground);
+        font-size: 14px;
+        line-height: 1.5;
       }
 
       .badge {
@@ -82,137 +77,54 @@
         justify-content: center;
         font-size: 20px;
         box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35);
+        margin-bottom: 14px;
       }
 
-      .intro-title {
-        font-size: 30px;
-        line-height: 1.1;
-        font-weight: 760;
-        margin: 14px 0 8px;
-        letter-spacing: -0.015em;
-      }
-
-      .intro-copy {
-        color: var(--muted-foreground);
-        font-size: 14px;
-        line-height: 1.55;
-        margin: 0 0 18px;
-      }
-
-      .callouts {
+      /* --- Choice cards (Part 2a) --- */
+      .choice-grid {
         display: grid;
-        gap: 10px;
+        gap: 12px;
       }
 
-      .callout {
+      .choice-card {
         border: 1px solid var(--border);
-        border-radius: 12px;
-        background: rgba(255, 255, 255, 0.82);
-        padding: 12px 14px;
+        border-radius: 14px;
+        background: #fff;
+        padding: 18px 20px;
+        cursor: pointer;
+        transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
       }
 
-      .callout strong {
-        display: block;
+      .choice-card:hover {
+        border-color: rgba(37, 99, 235, 0.46);
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+      }
+
+      .choice-card .choice-title {
+        font-size: 15px;
+        font-weight: 700;
+        margin: 0 0 4px;
+      }
+
+      .choice-card .choice-desc {
         font-size: 13px;
-        margin-bottom: 3px;
-      }
-
-      .callout span {
-        display: block;
-        font-size: 12px;
+        color: var(--muted-foreground);
         line-height: 1.45;
-        color: var(--muted-foreground);
-      }
-
-      .setup-card {
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        background: var(--card);
-        color: var(--card-foreground);
-        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
-        padding: 24px;
-      }
-
-      .setup-title {
         margin: 0;
-        font-size: 26px;
-        line-height: 1.15;
-        font-weight: 740;
-        letter-spacing: -0.015em;
       }
 
-      .setup-subtitle {
-        margin: 8px 0 18px;
-        color: var(--muted-foreground);
-        font-size: 14px;
-        line-height: 1.5;
-      }
-
-      .step {
-        margin: 0 0 12px;
+      /* --- Form elements --- */
+      .step-label {
         font-size: 11px;
         color: #5577b7;
         text-transform: uppercase;
         font-weight: 700;
         letter-spacing: 0.08em;
+        margin: 0 0 12px;
       }
 
-      .mode-grid {
-        display: grid;
-        gap: 10px;
-      }
-
-      .mode-option {
-        border: 1px solid var(--border);
-        border-radius: 13px;
-        background: #fff;
-        padding: 14px 14px 14px 40px;
-        cursor: pointer;
-        position: relative;
-        transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
-        display: block;
-      }
-
-      .mode-option:hover {
-        border-color: rgba(37, 99, 235, 0.46);
-        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
-      }
-
-      .mode-option.selected {
-        border-color: rgba(37, 99, 235, 0.6);
-        box-shadow: 0 8px 20px rgba(37, 99, 235, 0.16);
-        background: #eff6ff;
-      }
-
-      .mode-option input[type="radio"] {
-        position: absolute;
-        left: 14px;
-        top: 16px;
-      }
-
-      .mode-title {
-        display: block;
-        margin-bottom: 5px;
-        font-size: 14px;
-        font-weight: 700;
-      }
-
-      .mode-desc {
-        display: block;
-        font-size: 12px;
-        line-height: 1.5;
-        color: var(--muted-foreground);
-      }
-
-      .client-panel {
-        margin-top: 16px;
-        border-top: 1px solid var(--border);
-        padding-top: 16px;
-      }
-
-      .field {
-        margin-top: 12px;
-      }
+      .field { margin-top: 14px; }
+      .field:first-child { margin-top: 0; }
 
       label {
         display: block;
@@ -222,6 +134,7 @@
       }
 
       input[type="text"],
+      input[type="password"],
       select {
         width: 100%;
         border: 1px solid var(--input);
@@ -234,8 +147,7 @@
         transition: border-color 150ms ease, box-shadow 150ms ease;
       }
 
-      input[type="text"]:focus,
-      select:focus {
+      input:focus, select:focus {
         outline: none;
         border-color: rgba(37, 99, 235, 0.7);
         box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
@@ -248,28 +160,20 @@
         margin-top: 6px;
       }
 
-      .danger {
-        color: var(--destructive);
-        font-weight: 560;
+      .link {
+        color: var(--primary);
+        cursor: pointer;
+        text-decoration: underline;
+        font-size: 13px;
       }
 
+      .link:hover { color: var(--primary-hover); }
+
       .actions {
-        margin-top: 14px;
+        margin-top: 18px;
         display: flex;
         gap: 10px;
         flex-wrap: wrap;
-      }
-
-      .manual-toggle {
-        margin-top: 12px;
-      }
-
-      .manual-entry {
-        margin-top: 12px;
-        border: 1px dashed var(--border);
-        border-radius: 12px;
-        padding: 12px;
-        background: rgba(248, 251, 255, 0.65);
       }
 
       button {
@@ -296,28 +200,30 @@
         box-shadow: none;
       }
 
-      #save {
+      .btn-primary {
         background: var(--primary);
         border-color: var(--primary);
         color: var(--primary-foreground);
-        min-width: 160px;
+        min-width: 140px;
       }
 
-      #save:hover:not(:disabled) {
+      .btn-primary:hover:not(:disabled) {
         background: var(--primary-hover);
         border-color: var(--primary-hover);
       }
 
-      .box {
-        margin-top: 10px;
-        border: 1px solid var(--border);
-        background: #f8fbff;
-        border-radius: 12px;
-        padding: 12px;
+      .btn-back {
+        background: transparent;
+        border-color: transparent;
+        color: var(--muted-foreground);
+        padding: 10px 8px;
+        min-width: auto;
       }
 
+      .btn-back:hover { color: var(--foreground); background: transparent; border-color: transparent; }
+
       .status {
-        margin-top: 8px;
+        margin-top: 10px;
         border-radius: 10px;
         padding: 9px 10px;
         border: 1px solid transparent;
@@ -328,138 +234,264 @@
         min-height: 18px;
       }
 
-      .status.ok {
-        border-color: rgba(22, 163, 74, 0.25);
-        background: rgba(22, 163, 74, 0.09);
-        color: #166534;
+      .status:empty { display: none; }
+      .status.ok { border-color: rgba(22, 163, 74, 0.25); background: rgba(22, 163, 74, 0.09); color: #166534; }
+      .status.err { border-color: rgba(220, 38, 38, 0.25); background: rgba(220, 38, 38, 0.09); color: #991b1b; }
+
+      /* --- Spinner --- */
+      .spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 2.5px solid var(--border);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        vertical-align: middle;
+        margin-right: 8px;
       }
 
-      .status.err {
-        border-color: rgba(220, 38, 38, 0.25);
-        background: rgba(220, 38, 38, 0.09);
-        color: #991b1b;
-      }
+      @keyframes spin { to { transform: rotate(360deg); } }
 
-      .tabs {
-        display: flex;
-        gap: 0;
-        border-bottom: 2px solid var(--border);
-        margin-bottom: 14px;
-      }
-
-      .tab-btn {
-        border: none;
-        border-bottom: 2px solid transparent;
-        background: none;
+      .activating-text {
+        font-size: 14px;
         color: var(--muted-foreground);
-        padding: 8px 14px;
-        margin-bottom: -2px;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        border-radius: 0;
+        margin-top: 14px;
+        line-height: 1.5;
+      }
+
+      /* --- Ready screen --- */
+      .ready-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: rgba(22, 163, 74, 0.12);
+        color: var(--success);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        margin: 0 auto 16px;
+      }
+
+      .ready-title {
+        text-align: center;
+        font-size: 22px;
+        font-weight: 700;
+        margin: 0 0 8px;
+      }
+
+      .ready-subtitle {
+        text-align: center;
+        font-size: 14px;
+        color: var(--muted-foreground);
+        margin: 0 0 20px;
+        line-height: 1.5;
+      }
+
+      .invite-code-box {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #f8fbff;
+        padding: 14px;
+        text-align: center;
+        margin-bottom: 18px;
+      }
+
+      .invite-code-label {
+        font-size: 12px;
+        color: var(--muted-foreground);
+        margin: 0 0 6px;
+      }
+
+      .invite-code-value {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--foreground);
+        margin: 0;
+      }
+
+      .invite-code-hint {
+        font-size: 12px;
+        color: var(--muted-foreground);
+        margin: 8px 0 0;
+      }
+
+      /* --- Panels --- */
+      .panel { display: none; }
+      .panel.active { display: block; }
+
+      /* --- Row layout --- */
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+      /* ---- Legacy client flow styles ---- */
+      .client-panel { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px; }
+      .tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 14px; }
+      .tab-btn {
+        border: none; border-bottom: 2px solid transparent; background: none;
+        color: var(--muted-foreground); padding: 8px 14px; margin-bottom: -2px;
+        font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 0;
         transition: color 150ms ease, border-color 150ms ease;
       }
-
-      .tab-btn:hover {
-        color: var(--foreground);
-        background: none;
-        border-color: transparent;
-        border-bottom-color: rgba(37, 99, 235, 0.3);
-        box-shadow: none;
-      }
-
-      .tab-btn.active {
-        color: var(--primary);
-        border-bottom-color: var(--primary);
-      }
-
-      .tab-panel {
-        display: none;
-      }
-
-      .tab-panel.active {
-        display: block;
-      }
-
-      .stale-warning {
-        margin-top: 6px;
-        font-size: 12px;
-        color: #b45309;
-        font-weight: 560;
-      }
-
-      .footer {
-        margin-top: 18px;
-        padding-top: 14px;
-        border-top: 1px solid var(--border);
-      }
-
-      @media (max-width: 980px) {
-        .shell {
-          grid-template-columns: 1fr;
-        }
-      }
+      .tab-btn:hover { color: var(--foreground); background: none; border-color: transparent; border-bottom-color: rgba(37, 99, 235, 0.3); box-shadow: none; }
+      .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+      .tab-panel { display: none; }
+      .tab-panel.active { display: block; }
+      .box { margin-top: 10px; border: 1px solid var(--border); background: #f8fbff; border-radius: 12px; padding: 12px; }
+      .stale-warning { margin-top: 6px; font-size: 12px; color: #b45309; font-weight: 560; }
+      .danger { color: var(--destructive); font-weight: 560; }
     </style>
   </head>
   <body>
-    <main class="shell">
-      <section class="intro-panel">
-        <div class="badge" aria-hidden="true">◉</div>
-        <h1 class="intro-title">Welcome to Otto Desktop</h1>
-        <p class="intro-copy">
-          Choose how this workstation should run in your office. Otto keeps patient workflow data local to your office network.
-          The Host only needs occasional internet access for licensing check-ins.
-        </p>
-        <div class="callouts">
-          <div class="callout">
-            <strong>Host Computer</strong>
-            <span>
-              Stores office data, runs sync services, and approves Client connection requests. Keep it on during business hours.
-            </span>
-          </div>
-          <div class="callout">
-            <strong>Client Computer</strong>
-            <span>
-              Connects to the Host for day-to-day work. If network drops briefly, Otto can queue encrypted changes and sync later.
-            </span>
-          </div>
-          <div class="callout">
-            <strong>Security First</strong>
-            <span>
-              Pairing code is required for first trust. In-app path: <b>File → Show Host Address…</b>.
-            </span>
+    <div class="container">
+
+      <!-- ============== PANEL: Choose mode (Part 2a) ============== -->
+      <div id="panelChoice" class="panel active">
+        <div class="card">
+          <div class="badge" aria-hidden="true">&#9673;</div>
+          <h1 class="card-title">Welcome to Otto Tracker</h1>
+          <p class="card-subtitle">How would you like to set up this computer?</p>
+
+          <div class="choice-grid">
+            <div class="choice-card" id="choiceHost">
+              <p class="choice-title">Set up a new practice</p>
+              <p class="choice-desc">This computer will be the main hub for your office.</p>
+            </div>
+            <div class="choice-card" id="choiceClient">
+              <p class="choice-title">Join an existing practice</p>
+              <p class="choice-desc">Your practice is already set up on another computer.</p>
+            </div>
           </div>
         </div>
-      </section>
+      </div>
 
-      <section class="setup-card">
-        <h2 class="setup-title">Otto Tracker Setup</h2>
-        <p class="setup-subtitle">
-          Configure this computer as Host or Client, then finish setup and sign in.
-        </p>
+      <!-- ============== PANEL: Host Step 1 — Sign in ============== -->
+      <div id="panelHostSignIn" class="panel">
+        <div class="card">
+          <div class="step-label">Step 1 of 3 &middot; Sign in to your Otto account</div>
+          <h2 class="card-title" style="font-size:22px">Sign in to Otto</h2>
+          <p class="card-subtitle">Use the email and password from your ottojobtracker.com account.</p>
 
-        <div class="step">Step 1 · Choose Host or Client</div>
-        <div class="mode-grid">
-          <label class="mode-option selected">
-            <input type="radio" name="mode" value="host" checked />
-            <span class="mode-title">This is the Host computer</span>
-            <span class="mode-desc">
-              Stores office data on this machine. After saving, complete one-time office setup here.
-            </span>
-          </label>
+          <div class="field">
+            <label for="portalEmail">Email</label>
+            <input id="portalEmail" type="text" placeholder="you@example.com" autocomplete="email" />
+          </div>
+          <div class="field">
+            <label for="portalPassword">Password</label>
+            <input id="portalPassword" type="password" placeholder="Password" autocomplete="current-password" />
+          </div>
+          <div class="hint" style="margin-top:10px">
+            <span class="link" id="forgotPasswordLink">Forgot password?</span>
+          </div>
 
-          <label class="mode-option">
-            <input type="radio" name="mode" value="client" />
-            <span class="mode-title">This is a Client computer</span>
-            <span class="mode-desc">
-              Connects to the Host computer on your office network and does not store the office database permanently.
-            </span>
-          </label>
+          <div id="signInStatus" class="status"></div>
+
+          <div class="actions">
+            <button class="btn-back" id="hostSignInBack">&larr; Back</button>
+            <button class="btn-primary" id="hostSignInNext">Sign In</button>
+          </div>
         </div>
+      </div>
 
-        <div id="clientSettings" class="client-panel" style="display:none">
-          <div class="step">Step 2 · Find Host computer</div>
+      <!-- ============== PANEL: Host Step 2 — Select office ============== -->
+      <div id="panelHostOffice" class="panel">
+        <div class="card">
+          <div class="step-label">Step 2 of 3 &middot; Select your practice</div>
+          <h2 class="card-title" style="font-size:22px">Which practice?</h2>
+          <p class="card-subtitle">Choose the practice you want to set up on this computer.</p>
+
+          <div class="field">
+            <label for="officeSelect">Your practices</label>
+            <select id="officeSelect"></select>
+          </div>
+
+          <div class="actions">
+            <button class="btn-back" id="hostOfficeBack">&larr; Back</button>
+            <button class="btn-primary" id="hostOfficeNext">Continue</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== PANEL: Host Step 3 — Create admin account ============== -->
+      <div id="panelHostAdmin" class="panel">
+        <div class="card">
+          <div class="step-label">Step 3 of 3 &middot; Create your admin account</div>
+          <h2 class="card-title" style="font-size:22px">Your Admin Account</h2>
+          <p class="card-subtitle">This will be the owner account for your practice.</p>
+
+          <div class="row">
+            <div class="field">
+              <label for="adminFirstName">First name</label>
+              <input id="adminFirstName" type="text" placeholder="First name" autocomplete="given-name" />
+            </div>
+            <div class="field">
+              <label for="adminLastName">Last name</label>
+              <input id="adminLastName" type="text" placeholder="Last name" autocomplete="family-name" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="adminLoginId">Login ID</label>
+            <input id="adminLoginId" type="text" placeholder="e.g. drsmith" autocomplete="username" />
+            <div class="hint">Short username for daily sign-in. Letters, numbers, periods, hyphens.</div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="adminPin">6-digit PIN</label>
+              <input id="adminPin" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label for="adminPinConfirm">Confirm PIN</label>
+              <input id="adminPinConfirm" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+            </div>
+          </div>
+
+          <div id="adminStatus" class="status"></div>
+
+          <div class="actions">
+            <button class="btn-back" id="hostAdminBack">&larr; Back</button>
+            <button class="btn-primary" id="hostAdminNext">Complete Setup</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== PANEL: Host Step 4 — Activating ============== -->
+      <div id="panelHostActivating" class="panel">
+        <div class="card" style="text-align:center; padding: 40px 28px;">
+          <div class="spinner"></div>
+          <h2 class="card-title" style="font-size:20px; display:inline-block; vertical-align:middle;">Setting up Otto...</h2>
+          <p id="activatingText" class="activating-text">Saving configuration...</p>
+        </div>
+      </div>
+
+      <!-- ============== PANEL: Host Step 5 — Ready ============== -->
+      <div id="panelHostReady" class="panel">
+        <div class="card">
+          <div class="ready-icon">&#10003;</div>
+          <h2 class="ready-title" id="readyTitle">Otto is ready!</h2>
+          <p class="ready-subtitle" id="readySubtitle">Your practice is set up and ready to use.</p>
+
+          <div id="inviteCodeSection" class="invite-code-box" style="display:none">
+            <p class="invite-code-label">Your invite code ends in</p>
+            <p class="invite-code-value" id="inviteCodeDisplay">----</p>
+            <p class="invite-code-hint">Find the full code in Settings &gt; Invite Code</p>
+          </div>
+
+          <div class="actions" style="justify-content:center">
+            <button class="btn-primary" id="openOttoBtn" style="min-width:180px">Open Otto</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== PANEL: Client flow (legacy, to be replaced in Part 2c) ============== -->
+      <div id="panelClient" class="panel">
+        <div class="card">
+          <h2 class="card-title" style="font-size:22px">Join an Existing Practice</h2>
+          <p class="card-subtitle">Connect this computer to your practice's Host computer.</p>
+
+          <div class="step-label">Find Host computer</div>
 
           <div class="tabs">
             <button class="tab-btn active" data-tab="portal" type="button">Sign in to find Host</button>
@@ -473,13 +505,12 @@
               Sign in with your portal account to find the Host computer registered to your office.
             </div>
             <div class="field">
-              <label for="portalEmail">Portal email</label>
-              <input id="portalEmail" type="text" placeholder="you@example.com" />
+              <label for="clientPortalEmail">Portal email</label>
+              <input id="clientPortalEmail" type="text" placeholder="you@example.com" />
             </div>
             <div class="field">
-              <label for="portalPassword">Portal password</label>
-              <input id="portalPassword" type="text" placeholder="Password"
-                     style="-webkit-text-security: disc;" />
+              <label for="clientPortalPassword">Portal password</label>
+              <input id="clientPortalPassword" type="password" placeholder="Password" />
             </div>
             <div class="actions">
               <button id="portalFindHostBtn" type="button">Find my Host</button>
@@ -516,14 +547,13 @@
           <!-- Tab: Manual entry -->
           <div id="tabManual" class="tab-panel">
             <div class="hint">
-              Enter the Host address and Pairing code. On the Host computer, open <b>File → Show Host Address…</b> to find these values.
+              Enter the Host address and Pairing code. On the Host computer, open <b>File &rarr; Show Host Address&hellip;</b> to find these values.
             </div>
             <div class="field">
               <label for="hostUrl">Host computer address</label>
               <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
-              <div class="hint">Copy from the Host computer: <b>File → Show Host Address…</b></div>
+              <div class="hint">Copy from the Host computer: <b>File &rarr; Show Host Address&hellip;</b></div>
             </div>
-
             <div class="field">
               <label for="pairingCode">Pairing code</label>
               <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
@@ -534,21 +564,320 @@
           <div id="connectStatus" class="status"></div>
           <div id="manualLookupNote" class="hint danger" style="display:none; margin-top: 8px;"></div>
 
-          <div class="step" style="margin-top: 14px;">Step 3 · Sign in</div>
-          <div class="hint">After setup, sign in with Login ID + password or PIN, or request account access.</div>
+          <div class="actions" style="margin-top:18px">
+            <button class="btn-back" id="clientBack">&larr; Back</button>
+            <button class="btn-primary" id="clientSave">Connect &amp; Finish</button>
+          </div>
         </div>
+      </div>
 
-        <div class="actions footer">
-          <button id="save">Save & Continue</button>
-        </div>
-      </section>
-    </main>
+    </div>
 
     <script>
-      const clientSettings = document.getElementById("clientSettings");
+      // ===== State =====
+      let portalToken = "";
+      let portalOffices = [];
+      let selectedOffice = null;
+      let existingConfig = null;
+      let connectionBusy = false;
+
+      // ===== Panel navigation =====
+      function showPanel(id) {
+        document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+        const panel = document.getElementById(id);
+        if (panel) panel.classList.add("active");
+      }
+
+      // ===== Part 2a: Choice cards =====
+      document.getElementById("choiceHost").addEventListener("click", () => {
+        showPanel("panelHostSignIn");
+      });
+
+      document.getElementById("choiceClient").addEventListener("click", () => {
+        showPanel("panelClient");
+      });
+
+      // ===== Host Step 1: Sign in =====
+      const portalEmailInput = document.getElementById("portalEmail");
+      const portalPasswordInput = document.getElementById("portalPassword");
+      const signInStatus = document.getElementById("signInStatus");
+      const hostSignInNext = document.getElementById("hostSignInNext");
+
+      document.getElementById("hostSignInBack").addEventListener("click", () => {
+        showPanel("panelChoice");
+      });
+
+      document.getElementById("forgotPasswordLink").addEventListener("click", () => {
+        if (window.otto && window.otto.openExternal) {
+          window.otto.openExternal("https://ottojobtracker.com/portal/reset");
+        } else {
+          window.open("https://ottojobtracker.com/portal/reset", "_blank");
+        }
+      });
+
+      hostSignInNext.addEventListener("click", async () => {
+        const email = portalEmailInput.value.trim();
+        const password = portalPasswordInput.value;
+
+        if (!email || !password) {
+          setStatus(signInStatus, "Please enter your email and password.", "err");
+          return;
+        }
+
+        hostSignInNext.disabled = true;
+        setStatus(signInStatus, "Signing in...");
+
+        try {
+          if (!window.otto || typeof window.otto.portalDesktopAuth !== "function") {
+            setStatus(signInStatus, "Portal sign-in is not available in this build.", "err");
+            return;
+          }
+
+          const result = await window.otto.portalDesktopAuth({ email, password });
+
+          // Clear password from memory
+          portalPasswordInput.value = "";
+
+          if (!result?.ok) {
+            setStatus(signInStatus, result?.message || "Sign in failed. Check your credentials and try again.", "err");
+            return;
+          }
+
+          portalToken = result.token;
+          portalOffices = result.offices || [];
+
+          if (portalOffices.length === 0) {
+            setStatus(signInStatus, "No practices found for this account. Sign up at ottojobtracker.com first.", "err");
+            return;
+          }
+
+          setStatus(signInStatus, "");
+
+          if (portalOffices.length === 1) {
+            // Skip office selection
+            selectedOffice = portalOffices[0];
+            showPanel("panelHostAdmin");
+          } else {
+            // Show office selection
+            renderOfficeSelect();
+            showPanel("panelHostOffice");
+          }
+        } catch {
+          setStatus(signInStatus, "Connection failed. Check internet access and try again.", "err");
+        } finally {
+          hostSignInNext.disabled = false;
+        }
+      });
+
+      // ===== Host Step 2: Select office =====
+      const officeSelect = document.getElementById("officeSelect");
+
+      function renderOfficeSelect() {
+        officeSelect.innerHTML = "";
+        portalOffices.forEach((office, i) => {
+          const opt = document.createElement("option");
+          opt.value = String(i);
+          opt.textContent = office.officeName || `Practice ${i + 1}`;
+          officeSelect.appendChild(opt);
+        });
+      }
+
+      document.getElementById("hostOfficeBack").addEventListener("click", () => {
+        showPanel("panelHostSignIn");
+      });
+
+      document.getElementById("hostOfficeNext").addEventListener("click", () => {
+        const idx = Number(officeSelect.value);
+        selectedOffice = portalOffices[Number.isFinite(idx) ? idx : 0] || portalOffices[0];
+        showPanel("panelHostAdmin");
+      });
+
+      // ===== Host Step 3: Admin account =====
+      const adminFirstName = document.getElementById("adminFirstName");
+      const adminLastName = document.getElementById("adminLastName");
+      const adminLoginId = document.getElementById("adminLoginId");
+      const adminPin = document.getElementById("adminPin");
+      const adminPinConfirm = document.getElementById("adminPinConfirm");
+      const adminStatus = document.getElementById("adminStatus");
+      const hostAdminNext = document.getElementById("hostAdminNext");
+
+      document.getElementById("hostAdminBack").addEventListener("click", () => {
+        if (portalOffices.length > 1) {
+          showPanel("panelHostOffice");
+        } else {
+          showPanel("panelHostSignIn");
+        }
+      });
+
+      function validateAdminForm() {
+        if (!adminFirstName.value.trim()) return "First name is required.";
+        if (!adminLastName.value.trim()) return "Last name is required.";
+        const loginId = adminLoginId.value.trim();
+        if (!loginId) return "Login ID is required.";
+        if (loginId.length < 3) return "Login ID must be at least 3 characters.";
+        if (!/^[a-zA-Z0-9._-]+$/.test(loginId)) return "Login ID can only use letters, numbers, '.', '-', or '_'.";
+        const pin = adminPin.value.trim();
+        if (!/^\d{6}$/.test(pin)) return "PIN must be exactly 6 digits.";
+        if (pin !== adminPinConfirm.value.trim()) return "PINs do not match.";
+        return null;
+      }
+
+      hostAdminNext.addEventListener("click", async () => {
+        const error = validateAdminForm();
+        if (error) {
+          setStatus(adminStatus, error, "err");
+          return;
+        }
+
+        setStatus(adminStatus, "");
+        showPanel("panelHostActivating");
+        await runHostActivation();
+      });
+
+      // ===== Host Step 4: Activating =====
+      const activatingText = document.getElementById("activatingText");
+
+      async function runHostActivation() {
+        try {
+          // Step 1: Save config as host mode (this will start the server)
+          setActivatingText("Saving configuration...");
+          const config = {
+            mode: "host",
+            hostUrl: "https://127.0.0.1:5150",
+            pairingCode: "",
+          };
+
+          if (!window.otto || typeof window.otto.saveConfig !== "function") {
+            showActivationError("Setup is not ready. Please close Otto Tracker and open it again.");
+            return;
+          }
+
+          const saveResult = await window.otto.saveConfig(config);
+
+          // If the config was saved and the app relaunched, the page will reload.
+          // If it's a first-time setup, the server starts and we continue here.
+          if (saveResult?.relaunched) {
+            // App is relaunching — we'll be back
+            return;
+          }
+
+          // Step 2: Wait for the local server to be ready
+          setActivatingText("Starting server...");
+          const serverReady = await waitForServer(30000);
+          if (!serverReady) {
+            showActivationError("Server did not start in time. Please close and reopen Otto Tracker.");
+            return;
+          }
+
+          // Step 3: Call the bootstrap endpoint with portal token + admin data
+          setActivatingText("Activating your practice...");
+
+          const bootstrapBody = {
+            portalToken: portalToken,
+            officeId: selectedOffice?.officeId || "",
+            office: {
+              name: selectedOffice?.officeName || "My Practice",
+            },
+            admin: {
+              firstName: adminFirstName.value.trim(),
+              lastName: adminLastName.value.trim(),
+              loginId: adminLoginId.value.trim(),
+              pin: adminPin.value.trim(),
+            },
+          };
+
+          const bootstrapRes = await fetch("/api/setup/bootstrap", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(bootstrapBody),
+          });
+
+          const bootstrapData = await bootstrapRes.json().catch(() => null);
+
+          if (!bootstrapRes.ok) {
+            const errorMsg = bootstrapData?.error || `Setup failed (${bootstrapRes.status})`;
+            const errorCode = bootstrapData?.code || "";
+
+            if (bootstrapRes.status === 402 || errorCode === "SUBSCRIPTION_REQUIRED" || errorCode === "subscription_required") {
+              showActivationError("Your Otto account needs a subscription to get started. Visit ottojobtracker.com/portal/billing.", true);
+              return;
+            }
+            if (bootstrapRes.status === 409 && (errorCode === "HOST_ALREADY_ACTIVATED" || errorCode === "host_already_active")) {
+              showActivationError("This practice already has Otto set up on another computer. If you're replacing that computer, visit ottojobtracker.com/portal to use the Replace Host option.", true);
+              return;
+            }
+            showActivationError(errorMsg);
+            return;
+          }
+
+          // Success!
+          setActivatingText("Setup complete!");
+          const officeName = bootstrapData?.office?.name || selectedOffice?.officeName || "your practice";
+
+          showReady(officeName, bootstrapData?.license);
+        } catch (err) {
+          showActivationError("Setup failed. Please close Otto Tracker and try again.");
+        }
+      }
+
+      async function waitForServer(timeoutMs) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          try {
+            const res = await fetch("/api/health", { signal: AbortSignal.timeout(2000) });
+            if (res.ok) return true;
+          } catch {
+            // Server not ready yet
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        return false;
+      }
+
+      function setActivatingText(text) {
+        if (activatingText) activatingText.textContent = text;
+      }
+
+      function showActivationError(message, showPortalLink) {
+        showPanel("panelHostAdmin");
+        let displayMsg = message;
+        if (showPortalLink) {
+          displayMsg += " You can open the portal from your browser.";
+        }
+        setStatus(adminStatus, displayMsg, "err");
+      }
+
+      // ===== Host Step 5: Ready =====
+      function showReady(officeName, license) {
+        document.getElementById("readyTitle").textContent = `Otto is ready for ${officeName}`;
+
+        // Show invite code if available
+        const inviteSection = document.getElementById("inviteCodeSection");
+        const inviteDisplay = document.getElementById("inviteCodeDisplay");
+        if (license && license.currentInviteCodeLast4) {
+          inviteDisplay.textContent = license.currentInviteCodeLast4;
+          inviteSection.style.display = "block";
+        }
+
+        showPanel("panelHostReady");
+      }
+
+      document.getElementById("openOttoBtn").addEventListener("click", async () => {
+        // Reload the page — the server is running, so it will load the main app
+        window.location.href = "/";
+      });
+
+      // ===== Utility =====
+      function setStatus(el, message, kind) {
+        if (!el) return;
+        el.textContent = message || "";
+        el.className = `status${kind ? ` ${kind}` : ""}`;
+      }
+
+      // ===== Client flow (legacy, preserved from original setup.html) =====
       const hostUrl = document.getElementById("hostUrl");
       const pairingCode = document.getElementById("pairingCode");
-      const saveBtn = document.getElementById("save");
+      const clientSaveBtn = document.getElementById("clientSave");
       const discoverBtn = document.getElementById("discoverHosts");
       const discoverStatus = document.getElementById("discoverStatus");
       const discoverResults = document.getElementById("discoverResults");
@@ -557,32 +886,22 @@
       const connectStatus = document.getElementById("connectStatus");
       const manualLookupNote = document.getElementById("manualLookupNote");
 
-      // Portal sign-in elements
-      const portalEmail = document.getElementById("portalEmail");
-      const portalPassword = document.getElementById("portalPassword");
+      const clientPortalEmail = document.getElementById("clientPortalEmail");
+      const clientPortalPassword = document.getElementById("clientPortalPassword");
       const portalFindHostBtn = document.getElementById("portalFindHostBtn");
-      const portalStatus = document.getElementById("portalStatus");
+      const clientPortalStatus = document.getElementById("portalStatus");
       const portalResults = document.getElementById("portalResults");
       const portalHostSelect = document.getElementById("portalHostSelect");
       const portalStaleWarning = document.getElementById("portalStaleWarning");
       const usePortalHostBtn = document.getElementById("usePortalHost");
 
-      let existingConfig = null;
-      let connectionBusy = false;
       let discoveredHosts = [];
       let portalHosts = [];
       let activeTab = "portal";
 
-      function selectedMode() {
-        return document.querySelector('input[name="mode"]:checked')?.value || "host";
-      }
-
-      function syncModeCards() {
-        document.querySelectorAll(".mode-option").forEach((option) => {
-          const radio = option.querySelector('input[name="mode"]');
-          option.classList.toggle("selected", Boolean(radio?.checked));
-        });
-      }
+      document.getElementById("clientBack").addEventListener("click", () => {
+        showPanel("panelChoice");
+      });
 
       // --- Tab switching ---
       function switchTab(tabName) {
@@ -603,39 +922,13 @@
         btn.addEventListener("click", () => switchTab(btn.dataset.tab));
       });
 
-      function render() {
-        clientSettings.style.display = selectedMode() === "client" ? "block" : "none";
-        if (selectedMode() === "client") {
-          saveBtn.disabled = connectionBusy;
-          saveBtn.textContent = "Connect & Finish";
-        } else {
-          saveBtn.disabled = connectionBusy;
-          saveBtn.textContent = "Save & Continue";
-          setDiscoverStatus("");
-          clearDiscoveredHosts();
-        }
-        syncModeCards();
-        updateManualLookupNote();
-      }
-
-      document.querySelectorAll('input[name="mode"]').forEach((el) => {
-        el.addEventListener("change", render);
-      });
-      render();
-
       function formatPairingCode(value) {
-        const cleaned = String(value || "")
-          .toUpperCase()
-          .replace(/[^A-F0-9]/g, "")
-          .slice(0, 12);
-        const groups = cleaned.match(/.{1,4}/g) || [];
-        return groups.join("-");
+        const cleaned = String(value || "").toUpperCase().replace(/[^A-F0-9]/g, "").slice(0, 12);
+        return (cleaned.match(/.{1,4}/g) || []).join("-");
       }
 
-      function setDiscoverStatus(message, kind = "") {
-        if (!discoverStatus) return;
-        discoverStatus.textContent = message || "";
-        discoverStatus.className = `status${kind ? ` ${kind}` : ""}`;
+      function setDiscoverStatus(message, kind) {
+        setStatus(discoverStatus, message, kind);
       }
 
       function clearDiscoveredHosts() {
@@ -644,34 +937,26 @@
         if (discoveredHostSelect) discoveredHostSelect.innerHTML = "";
       }
 
-      function switchToManualTab() {
-        switchTab("manual");
-      }
+      function switchToManualTab() { switchTab("manual"); }
 
       function updateManualLookupNote() {
-        if (!manualLookupNote) return;
-        if (selectedMode() !== "client" || activeTab !== "manual") {
-          manualLookupNote.style.display = "none";
-          manualLookupNote.textContent = "";
+        if (!manualLookupNote || activeTab !== "manual") {
+          if (manualLookupNote) { manualLookupNote.style.display = "none"; manualLookupNote.textContent = ""; }
           return;
         }
-
         const hasHost = Boolean(hostUrl?.value?.trim());
         const hasPairing = Boolean(pairingCode?.value?.trim());
-        if (hasHost && hasPairing) {
-          manualLookupNote.style.display = "none";
-          manualLookupNote.textContent = "";
-          return;
-        }
-
+        if (hasHost && hasPairing) { manualLookupNote.style.display = "none"; return; }
         let missing = "Host address or Pairing code";
         if (!hasHost && !hasPairing) missing = "Host address and Pairing code";
         else if (!hasHost) missing = "Host address";
         else if (!hasPairing) missing = "Pairing code";
-
         manualLookupNote.style.display = "block";
-        manualLookupNote.textContent = `${missing} not found yet. On the Host computer, open File → Show Host Address… and copy both values manually.`;
+        manualLookupNote.textContent = `${missing} not found yet. On the Host computer, open File \u2192 Show Host Address\u2026 and copy both values manually.`;
       }
+
+      function setConnectStatus(message, kind) { setStatus(connectStatus, message, kind); }
+      function resetConnectStatus() { setConnectStatus(""); }
 
       function describeDiscoveredHost(host) {
         const officeLabel = host.officeName ? `${host.officeName} - ` : "";
@@ -682,21 +967,14 @@
       function applyDiscoveredHostByIndex(index) {
         const host = discoveredHosts[index];
         if (!host) return;
-
         hostUrl.value = host.url || "";
-        if (host.pairingCode) {
-          pairingCode.value = formatPairingCode(host.pairingCode);
-        }
+        if (host.pairingCode) pairingCode.value = formatPairingCode(host.pairingCode);
         setConnectStatus("Host selected. Click Connect & Finish to finish setup.", "ok");
       }
 
       function renderDiscoveredHosts() {
         if (!discoverResults || !discoveredHostSelect) return;
-        if (discoveredHosts.length < 2) {
-          discoverResults.style.display = "none";
-          return;
-        }
-
+        if (discoveredHosts.length < 2) { discoverResults.style.display = "none"; return; }
         discoveredHostSelect.innerHTML = "";
         discoveredHosts.forEach((host, index) => {
           const option = document.createElement("option");
@@ -707,133 +985,81 @@
         discoverResults.style.display = "block";
       }
 
-      (async () => {
-        const config = await window.otto.getConfig();
-        existingConfig = config;
-        const modeInput = document.querySelector(`input[name="mode"][value="${config.mode}"]`);
-        if (modeInput) modeInput.checked = true;
-        hostUrl.value = config.hostUrl || "";
-        pairingCode.value = formatPairingCode(config.pairingCode || "");
-        if (config.hostUrl || config.pairingCode) {
-          switchTab("manual");
-        }
-        render();
-      })();
-
-      function setConnectionBusy(isBusy) {
-        connectionBusy = !!isBusy;
-        if (discoverBtn) discoverBtn.disabled = !!isBusy;
-        if (portalFindHostBtn) portalFindHostBtn.disabled = !!isBusy;
-        render();
-      }
-
-      function setConnectStatus(message, kind = "") {
-        if (!connectStatus) return;
-        connectStatus.textContent = message || "";
-        connectStatus.className = `status${kind ? ` ${kind}` : ""}`;
-      }
-
-      function resetConnectStatus() {
-        setConnectStatus("");
-      }
-
-      function formatSeconds(ms) {
-        const seconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
-        return `${seconds}s`;
-      }
+      function formatSeconds(ms) { return `${Math.max(0, Math.round((Number(ms) || 0) / 1000))}s`; }
 
       function getDiscoveryProgressMessage(elapsedMs) {
         const elapsed = Number(elapsedMs) || 0;
-        if (elapsed < 1200) return "Preparing auto-detect…";
-        if (elapsed < 5000) return "Checking the Host address you entered…";
-        if (elapsed < 12000) return "Scanning nearby office-network addresses…";
-        if (elapsed < 25000) return "Validating possible Host computers…";
-        return "Still scanning the office network…";
+        if (elapsed < 1200) return "Preparing auto-detect\u2026";
+        if (elapsed < 5000) return "Checking the Host address you entered\u2026";
+        if (elapsed < 12000) return "Scanning nearby office-network addresses\u2026";
+        if (elapsed < 25000) return "Validating possible Host computers\u2026";
+        return "Still scanning the office network\u2026";
       }
 
-      hostUrl.addEventListener("input", () => {
-        resetConnectStatus();
-        updateManualLookupNote();
-      });
+      hostUrl.addEventListener("input", () => { resetConnectStatus(); updateManualLookupNote(); });
       pairingCode.addEventListener("input", () => {
         const formatted = formatPairingCode(pairingCode.value);
-        if (pairingCode.value !== formatted) {
-          pairingCode.value = formatted;
-        }
+        if (pairingCode.value !== formatted) pairingCode.value = formatted;
         resetConnectStatus();
         updateManualLookupNote();
       });
 
       async function runHostDiscovery() {
-        if (selectedMode() !== "client") return;
         if (!window.otto || typeof window.otto.discoverHosts !== "function") {
           setDiscoverStatus("Auto-detect is not available in this build.", "err");
           return;
         }
-
-        setConnectionBusy(true);
+        connectionBusy = true;
+        clientSaveBtn.disabled = true;
+        discoverBtn.disabled = true;
         clearDiscoveredHosts();
         resetConnectStatus();
         const startedAt = Date.now();
-        const updateDiscoveryProgress = () => {
-          const elapsedMs = Date.now() - startedAt;
-          const message = getDiscoveryProgressMessage(elapsedMs);
-          setDiscoverStatus(`${message} (${formatSeconds(elapsedMs)})`);
+        const updateProgress = () => {
+          const ms = Date.now() - startedAt;
+          setDiscoverStatus(`${getDiscoveryProgressMessage(ms)} (${formatSeconds(ms)})`);
         };
-        updateDiscoveryProgress();
-        const progressTimer = window.setInterval(updateDiscoveryProgress, 1000);
+        updateProgress();
+        const timer = setInterval(updateProgress, 1000);
 
         try {
           const result = await window.otto.discoverHosts({
             hostUrl: hostUrl.value?.trim() || "",
             pairingCode: pairingCode.value?.trim() || "",
           });
-
           const hosts = Array.isArray(result?.hosts) ? result.hosts : [];
           discoveredHosts = hosts;
           const scanMs = Number(result?.scanMs) || Date.now() - startedAt;
           const scanText = `(${formatSeconds(scanMs)})`;
 
           if (hosts.length === 0) {
-            setDiscoverStatus(
-              `No Host computer found ${scanText}. Make sure the Host computer has Otto running and try again. If that fails, manually enter the Host address and Pairing code from File → Show Host Address….`,
-              "err",
-            );
+            setDiscoverStatus(`No Host computer found ${scanText}. Make sure the Host computer has Otto running and try again.`, "err");
             switchToManualTab();
-            setConnectStatus("Auto-detect did not find a Host computer. Enter details manually, then click Connect & Finish.", "err");
+            setConnectStatus("Auto-detect did not find a Host computer. Enter details manually.", "err");
             return;
           }
-
           if (hosts.length === 1) {
             setDiscoverStatus(`Found Host computer at ${hosts[0].url} ${scanText}.`, "ok");
             applyDiscoveredHostByIndex(0);
             return;
           }
-
           setDiscoverStatus(`Found ${hosts.length} possible Host computers ${scanText}. Select one below.`, "ok");
           renderDiscoveredHosts();
           applyDiscoveredHostByIndex(0);
         } catch {
           clearDiscoveredHosts();
-          const elapsedMs = Date.now() - startedAt;
-          setDiscoverStatus(
-            `Auto-detect failed after ${formatSeconds(elapsedMs)}. Make sure the Host computer has Otto running and try again. If that fails, manually enter the Host address and Pairing code from File → Show Host Address….`,
-            "err",
-          );
+          setDiscoverStatus("Auto-detect failed. Make sure the Host computer has Otto running.", "err");
           switchToManualTab();
-          setConnectStatus("Auto-detect failed. Enter Host details manually, then click Connect & Finish.", "err");
         } finally {
-          window.clearInterval(progressTimer);
-          setConnectionBusy(false);
+          clearInterval(timer);
+          connectionBusy = false;
+          clientSaveBtn.disabled = false;
+          discoverBtn.disabled = false;
         }
       }
 
       function validateClientConfig(config) {
-        const normalizedConfig = {
-          hostUrl: config.hostUrl?.trim() || "",
-          pairingCode: config.pairingCode?.trim() || "",
-        };
-
+        const normalizedConfig = { hostUrl: config.hostUrl?.trim() || "", pairingCode: config.pairingCode?.trim() || "" };
         try {
           const url = new URL(normalizedConfig.hostUrl);
           const hostname = url.hostname;
@@ -843,127 +1069,76 @@
             const parts = h.split(".").map((p) => Number(p));
             if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
             const [a, b] = parts;
-            if (a === 10) return true;
-            if (a === 127) return true;
-            if (a === 169 && b === 254) return true;
-            if (a === 172 && b >= 16 && b <= 31) return true;
-            if (a === 192 && b === 168) return true;
-            return false;
+            return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
           };
-
-          const isLocalHostname = (h) => {
-            if (!h) return false;
-            if (h === "localhost") return true;
-            if (h === "::1") return true;
-            if (!h.includes(".")) return true;
-            if (h.endsWith(".local")) return true;
-            return false;
-          };
+          const isLocalHostname = (h) => !h ? false : (h === "localhost" || h === "::1" || !h.includes(".") || h.endsWith(".local"));
 
           if (!isLocalHostname(hostname) && !isPrivateIpv4(hostname)) {
             return { ok: false, message: "Please enter an office-network Host address (example: https://192.168.1.10:5150)." };
           }
 
-          const previousOrigin = (() => {
-            try {
-              return existingConfig?.hostUrl ? new URL(existingConfig.hostUrl).origin : null;
-            } catch {
-              return null;
-            }
-          })();
-
+          const previousOrigin = (() => { try { return existingConfig?.hostUrl ? new URL(existingConfig.hostUrl).origin : null; } catch { return null; } })();
           const nextOrigin = url.origin;
           const hasTrustedForSameHost = Boolean(existingConfig?.trustedFingerprint256) && previousOrigin === nextOrigin;
           const pairingHex = normalizedConfig.pairingCode.replace(/[^a-fA-F0-9]/g, "").toUpperCase();
 
           if (protocol === "https:" && !hasTrustedForSameHost && pairingHex.length < 12) {
-            return { ok: false, message: "Enter the Pairing code shown on the Host (File → Show Host Address…)." };
+            return { ok: false, message: "Enter the Pairing code shown on the Host (File \u2192 Show Host Address\u2026)." };
           }
         } catch {
           return { ok: false, message: "Please enter a valid Host URL (example: https://192.168.1.10:5150)." };
         }
-
         return { ok: true };
       }
 
       async function runClientConnectAndSave() {
-        const config = {
-          mode: "client",
-          hostUrl: hostUrl.value?.trim() || "",
-          pairingCode: pairingCode.value?.trim() || "",
-        };
-
+        const config = { mode: "client", hostUrl: hostUrl.value?.trim() || "", pairingCode: pairingCode.value?.trim() || "" };
         const validation = validateClientConfig(config);
-        if (!validation.ok) {
-          switchToManualTab();
-          setConnectStatus(validation.message || "Please review the Host details and try again.", "err");
-          return;
-        }
+        if (!validation.ok) { switchToManualTab(); setConnectStatus(validation.message, "err"); return; }
 
-        setConnectionBusy(true);
-        setConnectStatus("Step 1 of 3: Checking Host connection…");
+        connectionBusy = true;
+        clientSaveBtn.disabled = true;
+        setConnectStatus("Step 1 of 3: Checking Host connection\u2026");
         try {
           const result = await window.otto.testConnection(config);
-          if (!result?.ok) {
-            setConnectStatus(result?.message || "Connection failed. Check the Host address and Pairing code.", "err");
-            return;
-          }
+          if (!result?.ok) { setConnectStatus(result?.message || "Connection failed.", "err"); return; }
 
           if (window.otto && typeof window.otto.requestHostApproval === "function") {
-            setConnectStatus("Step 2 of 3: Waiting for Host computer approval…");
+            setConnectStatus("Step 2 of 3: Waiting for Host computer approval\u2026");
             const approval = await window.otto.requestHostApproval(config);
-            if (!approval?.approved && !approval?.ok) {
-              setConnectStatus(approval?.message || "Connection was not approved by the Host computer.", "err");
-              return;
-            }
+            if (!approval?.approved && !approval?.ok) { setConnectStatus(approval?.message || "Connection was not approved.", "err"); return; }
             setConnectStatus(approval?.message || "Host approval received.", "ok");
           } else {
-            setConnectStatus("Step 2 of 3: Host approval not required in this build.", "ok");
+            setConnectStatus("Step 2 of 3: Host approval not required.", "ok");
           }
 
-          setConnectStatus("Step 3 of 3: Saving setup…", "ok");
+          setConnectStatus("Step 3 of 3: Saving setup\u2026", "ok");
           const saveResult = await window.otto.saveConfig(config);
-          if (saveResult?.ok === false) {
-            setConnectStatus(saveResult?.message || "Could not finish setup. Please review Host details and try again.", "err");
-            return;
-          }
-          setConnectStatus("Setup complete. Opening workspace…", "ok");
+          if (saveResult?.ok === false) { setConnectStatus(saveResult?.message || "Could not finish setup.", "err"); return; }
+          setConnectStatus("Setup complete. Opening workspace\u2026", "ok");
         } catch {
           setConnectStatus("Connection failed. Please verify the Host address and Pairing code.", "err");
         } finally {
-          setConnectionBusy(false);
+          connectionBusy = false;
+          clientSaveBtn.disabled = false;
         }
       }
 
-      // --- Portal sign-in flow ---
-      function setPortalStatus(message, kind = "") {
-        if (!portalStatus) return;
-        portalStatus.textContent = message || "";
-        portalStatus.className = `status${kind ? ` ${kind}` : ""}`;
-      }
-
+      // --- Portal sign-in flow (Client) ---
+      function setPortalStatus(message, kind) { setStatus(clientPortalStatus, message, kind); }
       function clearPortalResults() {
         portalHosts = [];
         if (portalResults) portalResults.style.display = "none";
         if (portalHostSelect) portalHostSelect.innerHTML = "";
-        if (portalStaleWarning) {
-          portalStaleWarning.style.display = "none";
-          portalStaleWarning.textContent = "";
-        }
+        if (portalStaleWarning) { portalStaleWarning.style.display = "none"; portalStaleWarning.textContent = ""; }
       }
 
       function applyPortalHostByIndex(index) {
         const host = portalHosts[index];
         if (!host) return;
-
-        // Pick the first local address
-        const addr = Array.isArray(host.localAddresses) && host.localAddresses.length > 0
-          ? host.localAddresses[0]
-          : "";
+        const addr = Array.isArray(host.localAddresses) && host.localAddresses.length > 0 ? host.localAddresses[0] : "";
         if (addr) hostUrl.value = addr;
         if (host.pairingCode) pairingCode.value = formatPairingCode(host.pairingCode);
-
-        // Show stale warning if lastCheckinAt is >24h ago
         if (portalStaleWarning && host.lastCheckinAt) {
           const ageMs = Date.now() - host.lastCheckinAt;
           if (ageMs > 24 * 60 * 60 * 1000) {
@@ -973,7 +1148,6 @@
             portalStaleWarning.style.display = "none";
           }
         }
-
         setConnectStatus("Host selected. Click Connect & Finish to finish setup.", "ok");
       }
 
@@ -984,9 +1158,7 @@
           const option = document.createElement("option");
           option.value = String(index);
           const label = host.officeName || `Office ${index + 1}`;
-          const addr = Array.isArray(host.localAddresses) && host.localAddresses[0]
-            ? ` - ${host.localAddresses[0]}`
-            : "";
+          const addr = Array.isArray(host.localAddresses) && host.localAddresses[0] ? ` - ${host.localAddresses[0]}` : "";
           option.textContent = `${label}${addr}`;
           portalHostSelect.appendChild(option);
         });
@@ -995,117 +1167,70 @@
 
       async function runPortalFindHost() {
         if (!window.otto || typeof window.otto.portalFindHost !== "function") {
-          setPortalStatus("Portal sign-in is not available in this build. Use Auto-detect or Manual entry.", "err");
+          setPortalStatus("Portal sign-in is not available. Use Auto-detect or Manual entry.", "err");
           return;
         }
+        const email = clientPortalEmail?.value?.trim() || "";
+        const password = clientPortalPassword?.value || "";
+        if (!email || !password) { setPortalStatus("Please enter your portal email and password.", "err"); return; }
 
-        const email = portalEmail?.value?.trim() || "";
-        const password = portalPassword?.value || "";
-        if (!email || !password) {
-          setPortalStatus("Please enter your portal email and password.", "err");
-          return;
-        }
-
-        setConnectionBusy(true);
+        connectionBusy = true;
+        clientSaveBtn.disabled = true;
+        portalFindHostBtn.disabled = true;
         clearPortalResults();
-        setPortalStatus("Signing in to portal…");
+        setPortalStatus("Signing in to portal\u2026");
 
         try {
           const result = await window.otto.portalFindHost({ email, password });
-
-          // Clear password from memory
-          if (portalPassword) portalPassword.value = "";
-
-          if (!result?.ok) {
-            setPortalStatus(result?.message || "Could not find Host. Try Auto-detect or Manual entry.", "err");
-            return;
-          }
-
+          if (clientPortalPassword) clientPortalPassword.value = "";
+          if (!result?.ok) { setPortalStatus(result?.message || "Could not find Host.", "err"); return; }
           const hosts = Array.isArray(result.hosts) ? result.hosts : [];
           portalHosts = hosts;
-
-          if (hosts.length === 0) {
-            setPortalStatus("No Host found for your account. Try Auto-detect or Manual entry.", "err");
-            return;
-          }
-
+          if (hosts.length === 0) { setPortalStatus("No Host found for your account.", "err"); return; }
           if (hosts.length === 1) {
             setPortalStatus(`Found Host: ${hosts[0].officeName || hosts[0].localAddresses?.[0] || "1 office"}`, "ok");
             renderPortalHosts();
             applyPortalHostByIndex(0);
             return;
           }
-
           setPortalStatus(`Found ${hosts.length} offices. Select one below.`, "ok");
           renderPortalHosts();
           applyPortalHostByIndex(0);
         } catch {
-          setPortalStatus("Portal sign-in failed. Try Auto-detect or Manual entry.", "err");
+          setPortalStatus("Portal sign-in failed.", "err");
         } finally {
-          setConnectionBusy(false);
+          connectionBusy = false;
+          clientSaveBtn.disabled = false;
+          portalFindHostBtn.disabled = false;
         }
       }
 
-      if (portalFindHostBtn) {
-        portalFindHostBtn.addEventListener("click", runPortalFindHost);
-      }
-      if (usePortalHostBtn && portalHostSelect) {
-        usePortalHostBtn.addEventListener("click", () => {
-          const index = Number(portalHostSelect.value);
-          applyPortalHostByIndex(Number.isFinite(index) ? index : 0);
-        });
-      }
-      if (portalHostSelect) {
-        portalHostSelect.addEventListener("change", () => {
-          const index = Number(portalHostSelect.value);
-          applyPortalHostByIndex(Number.isFinite(index) ? index : 0);
-        });
-      }
-
-      if (discoverBtn) {
-        discoverBtn.addEventListener("click", runHostDiscovery);
-      }
-      if (useDiscoveredHostBtn && discoveredHostSelect) {
-        useDiscoveredHostBtn.addEventListener("click", () => {
-          const index = Number(discoveredHostSelect.value);
-          const safeIndex = Number.isFinite(index) ? index : 0;
-          applyDiscoveredHostByIndex(safeIndex);
-        });
-      }
-      if (discoveredHostSelect) {
-        discoveredHostSelect.addEventListener("change", () => {
-          const index = Number(discoveredHostSelect.value);
-          const safeIndex = Number.isFinite(index) ? index : 0;
-          applyDiscoveredHostByIndex(safeIndex);
-        });
-      }
-
-      saveBtn.addEventListener("click", async () => {
-        const mode = selectedMode();
-        if (mode === "client") {
-          await runClientConnectAndSave();
-          return;
-        }
-
-        const config = {
-          mode,
-          hostUrl: hostUrl.value?.trim() || "https://127.0.0.1:5150",
-          pairingCode: pairingCode.value?.trim() || "",
-        };
-
-        try {
-          if (!window.otto || typeof window.otto.saveConfig !== "function") {
-            alert("Setup is not ready. Please close Otto Tracker and open it again.");
-            return;
-          }
-          const saveResult = await window.otto.saveConfig(config);
-          if (saveResult?.ok === false) {
-            alert(saveResult?.message || "Could not save setup. Please review your details and try again.");
-          }
-        } catch (e) {
-          alert("Could not save settings. Please close Otto Tracker and open it again.");
-        }
+      portalFindHostBtn.addEventListener("click", runPortalFindHost);
+      usePortalHostBtn.addEventListener("click", () => {
+        applyPortalHostByIndex(Number(portalHostSelect.value) || 0);
       });
+      portalHostSelect.addEventListener("change", () => {
+        applyPortalHostByIndex(Number(portalHostSelect.value) || 0);
+      });
+
+      discoverBtn.addEventListener("click", runHostDiscovery);
+      useDiscoveredHostBtn.addEventListener("click", () => {
+        applyDiscoveredHostByIndex(Number(discoveredHostSelect.value) || 0);
+      });
+      discoveredHostSelect.addEventListener("change", () => {
+        applyDiscoveredHostByIndex(Number(discoveredHostSelect.value) || 0);
+      });
+
+      clientSaveBtn.addEventListener("click", async () => {
+        await runClientConnectAndSave();
+      });
+
+      // ===== Init =====
+      (async () => {
+        if (window.otto && typeof window.otto.getConfig === "function") {
+          existingConfig = await window.otto.getConfig();
+        }
+      })();
     </script>
   </body>
 </html>
