@@ -33,7 +33,7 @@ import {
   isAiSummaryEnabled,
 } from "./ai-summary-service";
 import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
-import { db } from "./db";
+import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateHostForSetup, activateLicense, forceCheckin, getLicenseSnapshot, validateClaimForSetup } from "./license";
@@ -166,6 +166,9 @@ const SETUP_HANDSHAKE_PENDING_LIMIT = 64;
 const SETUP_HANDSHAKE_TTL_MS = 2 * 60 * 1000;
 const SETUP_HANDSHAKE_RETENTION_MS = 10 * 60 * 1000;
 const setupHandshakeRequests = new Map<string, SetupHandshakeRequest>();
+
+// Mutex to prevent concurrent bootstrap requests (Part 1.3 fix)
+let setupBootstrapInProgress = false;
 
 // --- Handshake persistence to survive Host restarts ---
 let _handshakeFilePath: string | null = null;
@@ -620,6 +623,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
     }
 
+    // Part 1.3: Mutex — prevent concurrent bootstrap requests
+    if (setupBootstrapInProgress) {
+      return res.status(409).json({ error: "Setup already in progress" });
+    }
+    setupBootstrapInProgress = true;
+
     try {
       const setupCode = readSetupCodeFromBody(req.body);
       const officeBody = req.body?.office || {};
@@ -670,23 +679,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
 
-      const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
-      const [userStats] = await db.select({ count: sql`count(*)` }).from(users);
-      const officeCount = Number(officeStats?.count) || 0;
-      const userCount = Number(userStats?.count) || 0;
-
-      if (userCount > 0) {
-        return res.status(409).json({ error: "This office is already set up." });
-      }
-      if (officeCount > 1) {
-        return res.status(409).json({ error: "Multiple offices exist. Please contact support." });
-      }
-
-      const existingUser = await storage.getUserByLoginId(adminLoginId);
-      if (existingUser) {
-        return res.status(409).json({ error: "A user with this Login ID already exists." });
-      }
-
+      // Part 1.2: Portal call BEFORE any local DB writes — if this fails, nothing is written locally.
       let licenseSnapshot = getLicenseSnapshot();
       try {
         licenseSnapshot = await activateHostForSetup(setupCode);
@@ -695,66 +688,104 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(failure.status).json({ error: failure.message, code: failure.code });
       }
 
-      const office =
-        officeCount === 1
-          ? (await storage.getAllOffices())[0]
-          : await storage.createOffice({
-              name: officeName,
-              address: officeAddress,
-              phone: officePhone,
-              email: officeEmail,
-            });
-
-      const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
-      const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
-      const setupCodeTail = setupCodeLast4(setupCode);
-      mergedSettings.licensing = {
-        setupCodeLast4: setupCodeTail,
-        activationCodeLast4: setupCodeTail,
-        activationAttemptedAt: Date.now(),
-        activationVerifiedAt: activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null,
-      };
-
-      const updatedOffice = await storage.updateOffice(office.id, {
-        name: officeName,
-        address: officeAddress,
-        phone: officePhone,
-        email: officeEmail,
-        settings: mergedSettings,
-      });
-
-      let adminEmail = buildLocalAuthEmail(adminLoginId, updatedOffice.id);
-      while (await storage.getUserByEmail(adminEmail)) {
-        adminEmail = buildLocalAuthEmail(adminLoginId, updatedOffice.id);
-      }
-
-      // If no password provided, generate a random unguessable placeholder hash.
+      // Pre-compute hashes before the synchronous transaction
       const passwordHash = adminPassword
         ? await hashSecret(adminPassword)
         : await hashSecret(randomBytes(32).toString("hex"));
+      const pinHash = await hashSecret(adminPin);
 
-      const user = await storage.createUser({
-        email: adminEmail,
-        loginId: adminLoginId,
-        firstName: adminFirstName,
-        lastName: adminLastName,
-        password: passwordHash,
-        pinHash: await hashSecret(adminPin),
-        officeId: updatedOffice.id,
-        role: "owner",
-      });
+      // Part 1.2: Atomic DB transaction — office + user created together or not at all.
+      const { createdOffice, createdUser } = sqlite.transaction(() => {
+        const [officeStats] = db.select({ count: sql`count(*)` }).from(offices).all();
+        const [userStats] = db.select({ count: sql`count(*)` }).from(users).all();
+        const officeCount = Number(officeStats?.count) || 0;
+        const userCount = Number(userStats?.count) || 0;
 
-      req.login(user, (err) => {
+        if (userCount > 0) {
+          throw Object.assign(new Error("This office is already set up."), { status: 409 });
+        }
+        if (officeCount > 1) {
+          throw Object.assign(new Error("Multiple offices exist. Please contact support."), { status: 409 });
+        }
+
+        const existingUser = db.select().from(users).where(eq(users.loginId, adminLoginId)).limit(1).all()[0];
+        if (existingUser) {
+          throw Object.assign(new Error("A user with this Login ID already exists."), { status: 409 });
+        }
+
+        // Create or update office
+        let office;
+        if (officeCount === 1) {
+          office = db.select().from(offices).limit(1).all()[0];
+        } else {
+          const { randomUUID } = require("crypto");
+          [office] = db.insert(offices).values({
+            id: randomUUID(),
+            name: officeName,
+            address: officeAddress,
+            phone: officePhone,
+            email: officeEmail,
+          }).returning().all();
+        }
+
+        const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
+        const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
+        const setupCodeTail = setupCodeLast4(setupCode);
+        mergedSettings.licensing = {
+          setupCodeLast4: setupCodeTail,
+          activationCodeLast4: setupCodeTail,
+          activationAttemptedAt: Date.now(),
+          activationVerifiedAt: activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null,
+        };
+
+        [office] = db.update(offices).set({
+          name: officeName,
+          address: officeAddress,
+          phone: officePhone,
+          email: officeEmail,
+          settings: mergedSettings,
+          updatedAt: new Date(),
+        }).where(eq(offices.id, office.id)).returning().all();
+
+        // Part 1.4: Email generation with max 10 retries
+        let adminEmail = buildLocalAuthEmail(adminLoginId, office.id);
+        for (let i = 0; i < 10; i++) {
+          const existing = db.select().from(users).where(eq(users.email, adminEmail)).limit(1).all()[0];
+          if (!existing) break;
+          adminEmail = buildLocalAuthEmail(adminLoginId, office.id);
+          if (i === 9) throw new Error("Failed to generate unique admin email after 10 attempts");
+        }
+
+        const { randomUUID: uuid } = require("crypto");
+        const [user] = db.insert(users).values({
+          id: uuid(),
+          email: adminEmail,
+          loginId: adminLoginId,
+          firstName: adminFirstName,
+          lastName: adminLastName,
+          password: passwordHash,
+          pinHash,
+          officeId: office.id,
+          role: "owner",
+        }).returning().all();
+
+        return { createdOffice: office, createdUser: user };
+      })();
+
+      req.login(createdUser, (err) => {
         if (err) return next(err);
         res.status(201).json({
           ok: true,
-          office: updatedOffice,
-          user: withoutPassword(user),
+          office: createdOffice,
+          user: withoutPassword(createdUser),
           license: licenseSnapshot,
         });
       });
     } catch (error: any) {
-      res.status(500).json({ error: error?.message || "Setup failed" });
+      const status = error?.status || 500;
+      res.status(status).json({ error: error?.message || "Setup failed" });
+    } finally {
+      setupBootstrapInProgress = false;
     }
   });
 
@@ -1716,8 +1747,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       // Keep email storage populated for legacy compatibility, but generate a local-only internal address.
       let internalEmail = buildLocalAuthEmail(loginId, office.id);
-      while (await storage.getUserByEmail(internalEmail)) {
+      for (let i = 0; i < 10; i++) {
+        if (!(await storage.getUserByEmail(internalEmail))) break;
         internalEmail = buildLocalAuthEmail(loginId, office.id);
+        if (i === 9) throw new Error("Failed to generate unique email after 10 attempts");
       }
 
       const trustProxy = process.env.OTTO_TRUST_PROXY === "true";

@@ -432,8 +432,10 @@ export function importSnapshotV1(params: {
   } else {
     const usedEmails = new Set(userRows.map((u) => String(u.email || "").toLowerCase()).filter(Boolean));
     let adminEmail = buildLocalAuthEmail(adminLoginId, officeId);
-    while (usedEmails.has(adminEmail.toLowerCase())) {
+    for (let i = 0; i < 10; i++) {
+      if (!usedEmails.has(adminEmail.toLowerCase())) break;
       adminEmail = buildLocalAuthEmail(adminLoginId, officeId);
+      if (i === 9) throw new Error("Failed to generate unique admin email after 10 attempts");
     }
     adminUserId = randomUUID();
     userRows.push({

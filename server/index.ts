@@ -7,6 +7,7 @@ import { broadcastToOffice, setupSyncWebSocket } from "./sync-websocket";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
+import { OTTO_DEFAULT_PORT } from "@shared/constants";
 
 const app = express();
 
@@ -237,10 +238,10 @@ app.use((req, res, next) => {
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Default to 5150 if not specified.
+  // Default to OTTO_DEFAULT_PORT if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5150', 10);
+  const port = parseInt(process.env.PORT || String(OTTO_DEFAULT_PORT), 10);
   const host = process.env.OTTO_LISTEN_HOST || "0.0.0.0";
 
   server.on("error", (err: any) => {

@@ -1,4 +1,5 @@
 import os from "os";
+import { OTTO_DEFAULT_PORT } from "@shared/constants";
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
 import { portalActivate, portalCheckin, portalConsumeHostClaim, portalValidateHostClaim } from "./license-client";
@@ -189,7 +190,7 @@ export async function validateClaimForSetup(setupCode: string): Promise<ClaimVal
 }
 
 function getLocalAddresses(): string[] {
-  const port = process.env.PORT || "5150";
+  const port = process.env.PORT || String(OTTO_DEFAULT_PORT);
   const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
   const nets = os.networkInterfaces();
   return Object.values(nets)
