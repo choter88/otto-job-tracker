@@ -37,6 +37,7 @@ import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateHostForSetup, activateLicense, forceCheckin, getLicenseSnapshot, validateClaimForSetup } from "./license";
+import { portalValidateInviteCode } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
@@ -786,6 +787,91 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.status(status).json({ error: error?.message || "Setup failed" });
     } finally {
       setupBootstrapInProgress = false;
+    }
+  });
+
+  // ── Client registration via invite code (unauthenticated) ──────────
+  app.post("/api/setup/client-register", async (req, res) => {
+    try {
+      const inviteCode = typeof req.body?.inviteCode === "string" ? req.body.inviteCode.trim() : "";
+      const installationId = typeof req.body?.installationId === "string" ? req.body.installationId.trim() : "";
+      const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
+      const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
+      const loginId = typeof req.body?.loginId === "string" ? req.body.loginId.trim() : "";
+      const pin = typeof req.body?.pin === "string" ? req.body.pin.trim() : "";
+
+      // Validate required fields
+      if (!/^\d{6}$/.test(inviteCode)) {
+        return res.status(400).json({ error: "Invite code must be 6 digits" });
+      }
+      if (!installationId) {
+        return res.status(400).json({ error: "Installation ID is required" });
+      }
+      if (!firstName) {
+        return res.status(400).json({ error: "First name is required" });
+      }
+      if (!lastName) {
+        return res.status(400).json({ error: "Last name is required" });
+      }
+      const loginIdError = validateLoginId(loginId);
+      if (loginIdError) {
+        return res.status(400).json({ error: loginIdError });
+      }
+      if (!isValidSixDigitPin(pin)) {
+        return res.status(400).json({ error: "PIN must be exactly 6 digits" });
+      }
+
+      // Validate invite code with portal
+      const validation = await portalValidateInviteCode({ inviteCode, installationId });
+      if (!validation.ok) {
+        return res.status(403).json({ error: "invalid_invite_code" });
+      }
+
+      // Check loginId not already taken
+      const normalizedLoginId = normalizeLoginId(loginId);
+      const existingUser = await storage.getUserByLoginId(normalizedLoginId);
+      if (existingUser) {
+        return res.status(409).json({ error: "login_id_taken" });
+      }
+
+      // Get the local office
+      const allOffices = await storage.getAllOffices();
+      if (allOffices.length === 0) {
+        return res.status(500).json({ error: "No office configured on this Host" });
+      }
+      const office = allOffices[0];
+
+      // Pre-compute hashes
+      const pinHash = await hashSecret(pin);
+      const email = buildLocalAuthEmail(normalizedLoginId, office.id);
+      // Clients registered via invite code use PIN-only auth; generate a random
+      // unusable password so the NOT NULL column is satisfied.
+      const passwordHash = await hashSecret(randomBytes(32).toString("hex"));
+
+      // Create user in transaction
+      const createdUser = await storage.createUser({
+        firstName,
+        lastName,
+        loginId: normalizedLoginId,
+        email,
+        password: passwordHash,
+        pinHash,
+        role: "staff",
+        officeId: office.id,
+      });
+
+      res.status(201).json({
+        ok: true,
+        user: {
+          id: createdUser.id,
+          loginId: createdUser.loginId,
+          firstName: createdUser.firstName,
+          lastName: createdUser.lastName,
+        },
+      });
+    } catch (error: any) {
+      console.error("Client registration failed:", error);
+      res.status(500).json({ error: error?.message || "Registration failed" });
     }
   });
 

@@ -297,3 +297,38 @@ export async function portalValidateHostClaim(payload: {
 
   return result;
 }
+
+export type InviteCodeValidationResult =
+  | { ok: true; officeName: string; officeId: string }
+  | { ok: false; error: LicenseRequestError };
+
+export async function portalValidateInviteCode(payload: {
+  inviteCode: string;
+  installationId: string;
+}): Promise<InviteCodeValidationResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/invite-codes/validate", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+
+  if (status < 200 || status >= 300) {
+    return { ok: false, error: errorFromResponse(status, json) };
+  }
+
+  if (!json?.valid) {
+    return {
+      ok: false,
+      error: {
+        statusCode: 403,
+        code: "INVALID_INVITE_CODE",
+        message: json?.message || "Invalid or expired invite code",
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    officeName: String(json.officeName || ""),
+    officeId: String(json.officeId || ""),
+  };
+}
