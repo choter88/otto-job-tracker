@@ -485,88 +485,124 @@
         </div>
       </div>
 
-      <!-- ============== PANEL: Client flow (legacy, to be replaced in Part 2c) ============== -->
-      <div id="panelClient" class="panel">
+      <!-- ============== PANEL: Client Step 1 — Enter invite code ============== -->
+      <div id="panelClientInvite" class="panel">
         <div class="card">
+          <div class="step-label">Step 1 of 3 &middot; Enter invite code</div>
           <h2 class="card-title" style="font-size:22px">Join an Existing Practice</h2>
-          <p class="card-subtitle">Connect this computer to your practice's Host computer.</p>
+          <p class="card-subtitle">Ask your practice manager for the 6-digit invite code.</p>
 
-          <div class="step-label">Find Host computer</div>
-
-          <div class="tabs">
-            <button class="tab-btn active" data-tab="portal" type="button">Sign in to find Host</button>
-            <button class="tab-btn" data-tab="autodetect" type="button">Auto-detect</button>
-            <button class="tab-btn" data-tab="manual" type="button">Manual entry</button>
+          <div class="field">
+            <label for="clientInviteCode">Invite code</label>
+            <input id="clientInviteCode" type="text" placeholder="123 456" maxlength="7" inputmode="numeric" autocomplete="off" style="font-size:24px; letter-spacing:4px; text-align:center;" />
+            <div class="hint">Your manager can find this in Settings &gt; Invite Code.</div>
           </div>
 
-          <!-- Tab: Portal sign-in -->
-          <div id="tabPortal" class="tab-panel active">
-            <div class="hint">
-              Sign in with your portal account to find the Host computer registered to your office.
-            </div>
-            <div class="field">
-              <label for="clientPortalEmail">Portal email</label>
-              <input id="clientPortalEmail" type="text" placeholder="you@example.com" />
-            </div>
-            <div class="field">
-              <label for="clientPortalPassword">Portal password</label>
-              <input id="clientPortalPassword" type="password" placeholder="Password" />
-            </div>
-            <div class="actions">
-              <button id="portalFindHostBtn" type="button">Find my Host</button>
-            </div>
-            <div id="portalStatus" class="status"></div>
-            <div id="portalResults" class="box" style="display:none">
-              <label for="portalHostSelect">Your offices</label>
-              <select id="portalHostSelect"></select>
-              <div id="portalStaleWarning" class="stale-warning" style="display:none"></div>
-              <div class="actions">
-                <button id="usePortalHost" type="button">Connect</button>
+          <div id="inviteStatus" class="status"></div>
+
+          <div class="actions">
+            <button class="btn-back" id="clientInviteBack">&larr; Back</button>
+            <button class="btn-primary" id="clientInviteNext">Verify Code</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== PANEL: Client Step 2 — Find Host computer ============== -->
+      <div id="panelClientDiscover" class="panel">
+        <div class="card">
+          <div class="step-label">Step 2 of 3 &middot; Find your practice's computer</div>
+          <h2 class="card-title" style="font-size:22px">Connecting to <span id="discoverOfficeName">your practice</span></h2>
+          <p class="card-subtitle">Looking for the Host computer on your office network&hellip;</p>
+
+          <div id="discoverProgress" style="text-align:center; padding:16px 0;">
+            <div class="spinner" style="margin:0 auto 12px;"></div>
+            <p id="discoverProgressText" class="activating-text">Searching&hellip;</p>
+          </div>
+
+          <div id="discoverDone" style="display:none;">
+            <div id="discoverFoundMsg" class="status ok" style="margin-bottom:12px;"></div>
+            <div id="discoverMultiple" style="display:none;">
+              <div class="field">
+                <label for="discoveredHostSelect2">Select Host computer</label>
+                <select id="discoveredHostSelect2"></select>
               </div>
             </div>
           </div>
 
-          <!-- Tab: Auto-detect -->
-          <div id="tabAutodetect" class="tab-panel">
-            <div class="hint">
-              Recommended: auto-detect the Host computer on your office network.
+          <div id="discoverFailed" style="display:none;">
+            <div id="discoverFailedMsg" class="status err" style="margin-bottom:12px;"></div>
+            <div class="field">
+              <label for="manualHostUrl">Host computer address</label>
+              <input id="manualHostUrl" type="text" placeholder="https://192.168.1.10:5150" />
+              <div class="hint">On the Host computer, open <b>File &rarr; Show Host Address&hellip;</b></div>
             </div>
-            <div class="actions">
-              <button id="discoverHosts" type="button">Auto-detect Host Computer</button>
-            </div>
-            <div id="discoverStatus" class="status"></div>
-            <div id="discoverResults" class="box" style="display:none">
-              <label for="discoveredHostSelect">Detected Host computers</label>
-              <select id="discoveredHostSelect"></select>
-              <div class="actions">
-                <button id="useDiscoveredHost" type="button">Use Selected</button>
-              </div>
+            <div class="field">
+              <label for="manualPairingCode">Pairing code</label>
+              <input id="manualPairingCode" type="text" placeholder="ABCD-EF12-3456" />
             </div>
           </div>
 
-          <!-- Tab: Manual entry -->
-          <div id="tabManual" class="tab-panel">
-            <div class="hint">
-              Enter the Host address and Pairing code. On the Host computer, open <b>File &rarr; Show Host Address&hellip;</b> to find these values.
+          <div id="discoverStatus2" class="status"></div>
+
+          <div class="actions">
+            <button class="btn-back" id="clientDiscoverBack">&larr; Back</button>
+            <button class="btn-primary" id="clientDiscoverNext" disabled>Continue</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== PANEL: Client Step 3 — Create account ============== -->
+      <div id="panelClientAccount" class="panel">
+        <div class="card">
+          <div class="step-label">Step 3 of 3 &middot; Create your account</div>
+          <h2 class="card-title" style="font-size:22px">Your Account</h2>
+          <p class="card-subtitle">Create your login for <span id="accountOfficeName">your practice</span>.</p>
+
+          <div class="row">
+            <div class="field">
+              <label for="clientFirstName">First name</label>
+              <input id="clientFirstName" type="text" placeholder="First name" autocomplete="given-name" />
             </div>
             <div class="field">
-              <label for="hostUrl">Host computer address</label>
-              <input id="hostUrl" type="text" placeholder="https://HOSTNAME-OR-IP:5150" />
-              <div class="hint">Copy from the Host computer: <b>File &rarr; Show Host Address&hellip;</b></div>
-            </div>
-            <div class="field">
-              <label for="pairingCode">Pairing code</label>
-              <input id="pairingCode" type="text" placeholder="ABCD-EF12-3456" />
-              <div class="hint danger">Required on first connection to trust the Host certificate.</div>
+              <label for="clientLastName">Last name</label>
+              <input id="clientLastName" type="text" placeholder="Last name" autocomplete="family-name" />
             </div>
           </div>
 
-          <div id="connectStatus" class="status"></div>
-          <div id="manualLookupNote" class="hint danger" style="display:none; margin-top: 8px;"></div>
+          <div class="field">
+            <label for="clientLoginId">Login ID</label>
+            <input id="clientLoginId" type="text" placeholder="e.g. drsmith" autocomplete="username" />
+            <div class="hint">Short username for daily sign-in. Letters, numbers, periods, hyphens.</div>
+          </div>
 
-          <div class="actions" style="margin-top:18px">
-            <button class="btn-back" id="clientBack">&larr; Back</button>
-            <button class="btn-primary" id="clientSave">Connect &amp; Finish</button>
+          <div class="row">
+            <div class="field">
+              <label for="clientPin">6-digit PIN</label>
+              <input id="clientPin" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label for="clientPinConfirm">Confirm PIN</label>
+              <input id="clientPinConfirm" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+            </div>
+          </div>
+
+          <div id="clientAccountStatus" class="status"></div>
+
+          <div class="actions">
+            <button class="btn-back" id="clientAccountBack">&larr; Back</button>
+            <button class="btn-primary" id="clientAccountNext">Create Account &amp; Finish</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== PANEL: Client Ready ============== -->
+      <div id="panelClientReady" class="panel">
+        <div class="card">
+          <div class="ready-icon">&#10003;</div>
+          <h2 class="ready-title" id="clientReadyTitle">You're all set!</h2>
+          <p class="ready-subtitle" id="clientReadySubtitle">Your account has been created. You can now sign in.</p>
+          <div class="actions" style="justify-content:center">
+            <button class="btn-primary" id="openOttoClientBtn" style="min-width:180px">Open Otto</button>
           </div>
         </div>
       </div>
@@ -579,7 +615,6 @@
       let portalOffices = [];
       let selectedOffice = null;
       let existingConfig = null;
-      let connectionBusy = false;
 
       // ===== Panel navigation =====
       function showPanel(id) {
@@ -594,7 +629,7 @@
       });
 
       document.getElementById("choiceClient").addEventListener("click", () => {
-        showPanel("panelClient");
+        showPanel("panelClientInvite");
       });
 
       // ===== Host Step 1: Sign in =====
@@ -874,52 +909,85 @@
         el.className = `status${kind ? ` ${kind}` : ""}`;
       }
 
-      // ===== Client flow (legacy, preserved from original setup.html) =====
-      const hostUrl = document.getElementById("hostUrl");
-      const pairingCode = document.getElementById("pairingCode");
-      const clientSaveBtn = document.getElementById("clientSave");
-      const discoverBtn = document.getElementById("discoverHosts");
-      const discoverStatus = document.getElementById("discoverStatus");
-      const discoverResults = document.getElementById("discoverResults");
-      const discoveredHostSelect = document.getElementById("discoveredHostSelect");
-      const useDiscoveredHostBtn = document.getElementById("useDiscoveredHost");
-      const connectStatus = document.getElementById("connectStatus");
-      const manualLookupNote = document.getElementById("manualLookupNote");
+      // ===== Client flow — 3-step invite code wizard =====
+      let clientInviteCode = "";
+      let clientOfficeName = "";
+      let clientOfficeId = "";
+      let clientInstallationId = "";
+      let clientHostUrl = "";
+      let clientPairingCode = "";
+      let clientTrustedFingerprint = "";
 
-      const clientPortalEmail = document.getElementById("clientPortalEmail");
-      const clientPortalPassword = document.getElementById("clientPortalPassword");
-      const portalFindHostBtn = document.getElementById("portalFindHostBtn");
-      const clientPortalStatus = document.getElementById("portalStatus");
-      const portalResults = document.getElementById("portalResults");
-      const portalHostSelect = document.getElementById("portalHostSelect");
-      const portalStaleWarning = document.getElementById("portalStaleWarning");
-      const usePortalHostBtn = document.getElementById("usePortalHost");
+      // --- Step 1: Invite code ---
+      const inviteCodeInput = document.getElementById("clientInviteCode");
+      const inviteStatus = document.getElementById("inviteStatus");
+      const clientInviteNext = document.getElementById("clientInviteNext");
 
-      let discoveredHosts = [];
-      let portalHosts = [];
-      let activeTab = "portal";
+      // Auto-format: "123456" → "123 456"
+      inviteCodeInput.addEventListener("input", () => {
+        const digits = inviteCodeInput.value.replace(/\D/g, "").slice(0, 6);
+        const formatted = digits.length > 3 ? digits.slice(0, 3) + " " + digits.slice(3) : digits;
+        if (inviteCodeInput.value !== formatted) inviteCodeInput.value = formatted;
+      });
 
-      document.getElementById("clientBack").addEventListener("click", () => {
+      document.getElementById("clientInviteBack").addEventListener("click", () => {
         showPanel("panelChoice");
       });
 
-      // --- Tab switching ---
-      function switchTab(tabName) {
-        activeTab = tabName;
-        document.querySelectorAll(".tab-btn").forEach((btn) => {
-          btn.classList.toggle("active", btn.dataset.tab === tabName);
-        });
-        document.querySelectorAll(".tab-panel").forEach((panel) => {
-          panel.classList.remove("active");
-        });
-        const panelId = "tab" + tabName.charAt(0).toUpperCase() + tabName.slice(1);
-        const panel = document.getElementById(panelId);
-        if (panel) panel.classList.add("active");
-        resetConnectStatus();
-      }
+      clientInviteNext.addEventListener("click", async () => {
+        const digits = inviteCodeInput.value.replace(/\D/g, "");
+        if (digits.length !== 6) {
+          setStatus(inviteStatus, "Please enter the full 6-digit invite code.", "err");
+          return;
+        }
 
-      document.querySelectorAll(".tab-btn").forEach((btn) => {
-        btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+        clientInviteNext.disabled = true;
+        setStatus(inviteStatus, "Verifying invite code\u2026");
+
+        try {
+          if (!window.otto || typeof window.otto.validateInviteCode !== "function") {
+            setStatus(inviteStatus, "Invite code validation is not available in this build.", "err");
+            return;
+          }
+
+          const result = await window.otto.validateInviteCode({ inviteCode: digits });
+
+          if (!result?.ok) {
+            setStatus(inviteStatus, result?.message || "Invalid or expired invite code.", "err");
+            return;
+          }
+
+          clientInviteCode = digits;
+          clientOfficeName = result.officeName || "";
+          clientOfficeId = result.officeId || "";
+          clientInstallationId = result.installationId || "";
+
+          setStatus(inviteStatus, "");
+          startHostDiscovery();
+        } catch {
+          setStatus(inviteStatus, "Could not reach the Otto portal. Check internet and try again.", "err");
+        } finally {
+          clientInviteNext.disabled = false;
+        }
+      });
+
+      // --- Step 2: Host discovery ---
+      const discoverProgressText = document.getElementById("discoverProgressText");
+      const discoverProgress = document.getElementById("discoverProgress");
+      const discoverDone = document.getElementById("discoverDone");
+      const discoverFailed = document.getElementById("discoverFailed");
+      const discoverFoundMsg = document.getElementById("discoverFoundMsg");
+      const discoverMultiple = document.getElementById("discoverMultiple");
+      const discoveredHostSelect2 = document.getElementById("discoveredHostSelect2");
+      const discoverStatus2 = document.getElementById("discoverStatus2");
+      const manualHostUrl = document.getElementById("manualHostUrl");
+      const manualPairingCode = document.getElementById("manualPairingCode");
+      const clientDiscoverNext = document.getElementById("clientDiscoverNext");
+
+      let discoveredHosts = [];
+
+      document.getElementById("clientDiscoverBack").addEventListener("click", () => {
+        showPanel("panelClientInvite");
       });
 
       function formatPairingCode(value) {
@@ -927,302 +995,273 @@
         return (cleaned.match(/.{1,4}/g) || []).join("-");
       }
 
-      function setDiscoverStatus(message, kind) {
-        setStatus(discoverStatus, message, kind);
-      }
-
-      function clearDiscoveredHosts() {
-        discoveredHosts = [];
-        if (discoverResults) discoverResults.style.display = "none";
-        if (discoveredHostSelect) discoveredHostSelect.innerHTML = "";
-      }
-
-      function switchToManualTab() { switchTab("manual"); }
-
-      function updateManualLookupNote() {
-        if (!manualLookupNote || activeTab !== "manual") {
-          if (manualLookupNote) { manualLookupNote.style.display = "none"; manualLookupNote.textContent = ""; }
-          return;
-        }
-        const hasHost = Boolean(hostUrl?.value?.trim());
-        const hasPairing = Boolean(pairingCode?.value?.trim());
-        if (hasHost && hasPairing) { manualLookupNote.style.display = "none"; return; }
-        let missing = "Host address or Pairing code";
-        if (!hasHost && !hasPairing) missing = "Host address and Pairing code";
-        else if (!hasHost) missing = "Host address";
-        else if (!hasPairing) missing = "Pairing code";
-        manualLookupNote.style.display = "block";
-        manualLookupNote.textContent = `${missing} not found yet. On the Host computer, open File \u2192 Show Host Address\u2026 and copy both values manually.`;
-      }
-
-      function setConnectStatus(message, kind) { setStatus(connectStatus, message, kind); }
-      function resetConnectStatus() { setConnectStatus(""); }
-
-      function describeDiscoveredHost(host) {
-        const officeLabel = host.officeName ? `${host.officeName} - ` : "";
-        const setupState = host.initialized ? "ready" : "needs setup";
-        return `${officeLabel}${host.url} (${setupState})`;
-      }
-
-      function applyDiscoveredHostByIndex(index) {
-        const host = discoveredHosts[index];
-        if (!host) return;
-        hostUrl.value = host.url || "";
-        if (host.pairingCode) pairingCode.value = formatPairingCode(host.pairingCode);
-        setConnectStatus("Host selected. Click Connect & Finish to finish setup.", "ok");
-      }
-
-      function renderDiscoveredHosts() {
-        if (!discoverResults || !discoveredHostSelect) return;
-        if (discoveredHosts.length < 2) { discoverResults.style.display = "none"; return; }
-        discoveredHostSelect.innerHTML = "";
-        discoveredHosts.forEach((host, index) => {
-          const option = document.createElement("option");
-          option.value = String(index);
-          option.textContent = describeDiscoveredHost(host);
-          discoveredHostSelect.appendChild(option);
-        });
-        discoverResults.style.display = "block";
-      }
-
       function formatSeconds(ms) { return `${Math.max(0, Math.round((Number(ms) || 0) / 1000))}s`; }
 
-      function getDiscoveryProgressMessage(elapsedMs) {
-        const elapsed = Number(elapsedMs) || 0;
-        if (elapsed < 1200) return "Preparing auto-detect\u2026";
-        if (elapsed < 5000) return "Checking the Host address you entered\u2026";
-        if (elapsed < 12000) return "Scanning nearby office-network addresses\u2026";
-        if (elapsed < 25000) return "Validating possible Host computers\u2026";
-        return "Still scanning the office network\u2026";
-      }
-
-      hostUrl.addEventListener("input", () => { resetConnectStatus(); updateManualLookupNote(); });
-      pairingCode.addEventListener("input", () => {
-        const formatted = formatPairingCode(pairingCode.value);
-        if (pairingCode.value !== formatted) pairingCode.value = formatted;
-        resetConnectStatus();
-        updateManualLookupNote();
+      manualPairingCode.addEventListener("input", () => {
+        const formatted = formatPairingCode(manualPairingCode.value);
+        if (manualPairingCode.value !== formatted) manualPairingCode.value = formatted;
       });
 
-      async function runHostDiscovery() {
-        if (!window.otto || typeof window.otto.discoverHosts !== "function") {
-          setDiscoverStatus("Auto-detect is not available in this build.", "err");
-          return;
+      // Enable Continue once manual fields have values
+      manualHostUrl.addEventListener("input", updateDiscoverNextState);
+      manualPairingCode.addEventListener("input", updateDiscoverNextState);
+
+      function updateDiscoverNextState() {
+        if (discoverFailed.style.display !== "none") {
+          clientDiscoverNext.disabled = !manualHostUrl.value.trim();
         }
-        connectionBusy = true;
-        clientSaveBtn.disabled = true;
-        discoverBtn.disabled = true;
-        clearDiscoveredHosts();
-        resetConnectStatus();
+      }
+
+      function startHostDiscovery() {
+        // Reset discovery UI
+        discoverProgress.style.display = "block";
+        discoverDone.style.display = "none";
+        discoverFailed.style.display = "none";
+        clientDiscoverNext.disabled = true;
+        discoveredHosts = [];
+        setStatus(discoverStatus2, "");
+
+        // Set office name
+        const officeNameEl = document.getElementById("discoverOfficeName");
+        if (officeNameEl) officeNameEl.textContent = clientOfficeName || "your practice";
+
+        showPanel("panelClientDiscover");
+
+        // Run discovery in parallel: LAN scan + portal lookup
+        runClientDiscovery();
+      }
+
+      async function runClientDiscovery() {
         const startedAt = Date.now();
         const updateProgress = () => {
           const ms = Date.now() - startedAt;
-          setDiscoverStatus(`${getDiscoveryProgressMessage(ms)} (${formatSeconds(ms)})`);
+          if (ms < 3000) discoverProgressText.textContent = "Searching your network\u2026";
+          else if (ms < 10000) discoverProgressText.textContent = "Scanning nearby addresses\u2026";
+          else if (ms < 25000) discoverProgressText.textContent = "Checking possible Host computers\u2026";
+          else discoverProgressText.textContent = "Still searching\u2026";
         };
         updateProgress();
-        const timer = setInterval(updateProgress, 1000);
+        const timer = setInterval(updateProgress, 1500);
 
         try {
-          const result = await window.otto.discoverHosts({
-            hostUrl: hostUrl.value?.trim() || "",
-            pairingCode: pairingCode.value?.trim() || "",
-          });
-          const hosts = Array.isArray(result?.hosts) ? result.hosts : [];
-          discoveredHosts = hosts;
-          const scanMs = Number(result?.scanMs) || Date.now() - startedAt;
-          const scanText = `(${formatSeconds(scanMs)})`;
+          // Run LAN discovery
+          const lanResult = window.otto && typeof window.otto.discoverHosts === "function"
+            ? await window.otto.discoverHosts({ hostUrl: "", pairingCode: "" })
+            : { hosts: [] };
 
-          if (hosts.length === 0) {
-            setDiscoverStatus(`No Host computer found ${scanText}. Make sure the Host computer has Otto running and try again.`, "err");
-            switchToManualTab();
-            setConnectStatus("Auto-detect did not find a Host computer. Enter details manually.", "err");
+          const lanHosts = Array.isArray(lanResult?.hosts) ? lanResult.hosts : [];
+          const allHosts = lanHosts.map((h) => ({
+            url: h.url || "",
+            pairingCode: h.pairingCode || "",
+            officeName: h.officeName || "",
+          })).filter((h) => h.url);
+
+          discoveredHosts = allHosts;
+
+          if (allHosts.length === 0) {
+            // Show manual entry fallback
+            discoverProgress.style.display = "none";
+            discoverFailed.style.display = "block";
+            const failedMsg = document.getElementById("discoverFailedMsg");
+            if (failedMsg) failedMsg.textContent = "Could not find the Host computer automatically. Enter the address manually.";
+            clientDiscoverNext.disabled = true;
             return;
           }
-          if (hosts.length === 1) {
-            setDiscoverStatus(`Found Host computer at ${hosts[0].url} ${scanText}.`, "ok");
-            applyDiscoveredHostByIndex(0);
+
+          if (allHosts.length === 1) {
+            discoverProgress.style.display = "none";
+            discoverDone.style.display = "block";
+            discoverFoundMsg.textContent = `Found Host at ${allHosts[0].url}`;
+            clientHostUrl = allHosts[0].url;
+            clientPairingCode = allHosts[0].pairingCode;
+            clientDiscoverNext.disabled = false;
             return;
           }
-          setDiscoverStatus(`Found ${hosts.length} possible Host computers ${scanText}. Select one below.`, "ok");
-          renderDiscoveredHosts();
-          applyDiscoveredHostByIndex(0);
+
+          // Multiple hosts found
+          discoverProgress.style.display = "none";
+          discoverDone.style.display = "block";
+          discoverFoundMsg.textContent = `Found ${allHosts.length} possible Host computers.`;
+          discoverMultiple.style.display = "block";
+          discoveredHostSelect2.innerHTML = "";
+          allHosts.forEach((host, i) => {
+            const opt = document.createElement("option");
+            opt.value = String(i);
+            opt.textContent = `${host.officeName || "Host"} - ${host.url}`;
+            discoveredHostSelect2.appendChild(opt);
+          });
+          applySelectedDiscoveredHost();
+          clientDiscoverNext.disabled = false;
         } catch {
-          clearDiscoveredHosts();
-          setDiscoverStatus("Auto-detect failed. Make sure the Host computer has Otto running.", "err");
-          switchToManualTab();
+          discoverProgress.style.display = "none";
+          discoverFailed.style.display = "block";
+          const failedMsg = document.getElementById("discoverFailedMsg");
+          if (failedMsg) failedMsg.textContent = "Discovery failed. Enter the Host address manually.";
+          clientDiscoverNext.disabled = true;
         } finally {
           clearInterval(timer);
-          connectionBusy = false;
-          clientSaveBtn.disabled = false;
-          discoverBtn.disabled = false;
         }
       }
 
-      function validateClientConfig(config) {
-        const normalizedConfig = { hostUrl: config.hostUrl?.trim() || "", pairingCode: config.pairingCode?.trim() || "" };
-        try {
-          const url = new URL(normalizedConfig.hostUrl);
-          const hostname = url.hostname;
-          const protocol = url.protocol;
-
-          const isPrivateIpv4 = (h) => {
-            const parts = h.split(".").map((p) => Number(p));
-            if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
-            const [a, b] = parts;
-            return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
-          };
-          const isLocalHostname = (h) => !h ? false : (h === "localhost" || h === "::1" || !h.includes(".") || h.endsWith(".local"));
-
-          if (!isLocalHostname(hostname) && !isPrivateIpv4(hostname)) {
-            return { ok: false, message: "Please enter an office-network Host address (example: https://192.168.1.10:5150)." };
-          }
-
-          const previousOrigin = (() => { try { return existingConfig?.hostUrl ? new URL(existingConfig.hostUrl).origin : null; } catch { return null; } })();
-          const nextOrigin = url.origin;
-          const hasTrustedForSameHost = Boolean(existingConfig?.trustedFingerprint256) && previousOrigin === nextOrigin;
-          const pairingHex = normalizedConfig.pairingCode.replace(/[^a-fA-F0-9]/g, "").toUpperCase();
-
-          if (protocol === "https:" && !hasTrustedForSameHost && pairingHex.length < 12) {
-            return { ok: false, message: "Enter the Pairing code shown on the Host (File \u2192 Show Host Address\u2026)." };
-          }
-        } catch {
-          return { ok: false, message: "Please enter a valid Host URL (example: https://192.168.1.10:5150)." };
-        }
-        return { ok: true };
-      }
-
-      async function runClientConnectAndSave() {
-        const config = { mode: "client", hostUrl: hostUrl.value?.trim() || "", pairingCode: pairingCode.value?.trim() || "" };
-        const validation = validateClientConfig(config);
-        if (!validation.ok) { switchToManualTab(); setConnectStatus(validation.message, "err"); return; }
-
-        connectionBusy = true;
-        clientSaveBtn.disabled = true;
-        setConnectStatus("Step 1 of 3: Checking Host connection\u2026");
-        try {
-          const result = await window.otto.testConnection(config);
-          if (!result?.ok) { setConnectStatus(result?.message || "Connection failed.", "err"); return; }
-
-          if (window.otto && typeof window.otto.requestHostApproval === "function") {
-            setConnectStatus("Step 2 of 3: Waiting for Host computer approval\u2026");
-            const approval = await window.otto.requestHostApproval(config);
-            if (!approval?.approved && !approval?.ok) { setConnectStatus(approval?.message || "Connection was not approved.", "err"); return; }
-            setConnectStatus(approval?.message || "Host approval received.", "ok");
-          } else {
-            setConnectStatus("Step 2 of 3: Host approval not required.", "ok");
-          }
-
-          setConnectStatus("Step 3 of 3: Saving setup\u2026", "ok");
-          const saveResult = await window.otto.saveConfig(config);
-          if (saveResult?.ok === false) { setConnectStatus(saveResult?.message || "Could not finish setup.", "err"); return; }
-          setConnectStatus("Setup complete. Opening workspace\u2026", "ok");
-        } catch {
-          setConnectStatus("Connection failed. Please verify the Host address and Pairing code.", "err");
-        } finally {
-          connectionBusy = false;
-          clientSaveBtn.disabled = false;
-        }
-      }
-
-      // --- Portal sign-in flow (Client) ---
-      function setPortalStatus(message, kind) { setStatus(clientPortalStatus, message, kind); }
-      function clearPortalResults() {
-        portalHosts = [];
-        if (portalResults) portalResults.style.display = "none";
-        if (portalHostSelect) portalHostSelect.innerHTML = "";
-        if (portalStaleWarning) { portalStaleWarning.style.display = "none"; portalStaleWarning.textContent = ""; }
-      }
-
-      function applyPortalHostByIndex(index) {
-        const host = portalHosts[index];
+      function applySelectedDiscoveredHost() {
+        const idx = Number(discoveredHostSelect2.value) || 0;
+        const host = discoveredHosts[idx];
         if (!host) return;
-        const addr = Array.isArray(host.localAddresses) && host.localAddresses.length > 0 ? host.localAddresses[0] : "";
-        if (addr) hostUrl.value = addr;
-        if (host.pairingCode) pairingCode.value = formatPairingCode(host.pairingCode);
-        if (portalStaleWarning && host.lastCheckinAt) {
-          const ageMs = Date.now() - host.lastCheckinAt;
-          if (ageMs > 24 * 60 * 60 * 1000) {
-            portalStaleWarning.style.display = "block";
-            portalStaleWarning.textContent = "Host hasn't checked in recently. Try Auto-detect if this doesn't work.";
-          } else {
-            portalStaleWarning.style.display = "none";
-          }
-        }
-        setConnectStatus("Host selected. Click Connect & Finish to finish setup.", "ok");
+        clientHostUrl = host.url;
+        clientPairingCode = host.pairingCode;
       }
 
-      function renderPortalHosts() {
-        if (!portalResults || !portalHostSelect) return;
-        portalHostSelect.innerHTML = "";
-        portalHosts.forEach((host, index) => {
-          const option = document.createElement("option");
-          option.value = String(index);
-          const label = host.officeName || `Office ${index + 1}`;
-          const addr = Array.isArray(host.localAddresses) && host.localAddresses[0] ? ` - ${host.localAddresses[0]}` : "";
-          option.textContent = `${label}${addr}`;
-          portalHostSelect.appendChild(option);
-        });
-        portalResults.style.display = "block";
-      }
+      discoveredHostSelect2.addEventListener("change", applySelectedDiscoveredHost);
 
-      async function runPortalFindHost() {
-        if (!window.otto || typeof window.otto.portalFindHost !== "function") {
-          setPortalStatus("Portal sign-in is not available. Use Auto-detect or Manual entry.", "err");
-          return;
-        }
-        const email = clientPortalEmail?.value?.trim() || "";
-        const password = clientPortalPassword?.value || "";
-        if (!email || !password) { setPortalStatus("Please enter your portal email and password.", "err"); return; }
-
-        connectionBusy = true;
-        clientSaveBtn.disabled = true;
-        portalFindHostBtn.disabled = true;
-        clearPortalResults();
-        setPortalStatus("Signing in to portal\u2026");
-
-        try {
-          const result = await window.otto.portalFindHost({ email, password });
-          if (clientPortalPassword) clientPortalPassword.value = "";
-          if (!result?.ok) { setPortalStatus(result?.message || "Could not find Host.", "err"); return; }
-          const hosts = Array.isArray(result.hosts) ? result.hosts : [];
-          portalHosts = hosts;
-          if (hosts.length === 0) { setPortalStatus("No Host found for your account.", "err"); return; }
-          if (hosts.length === 1) {
-            setPortalStatus(`Found Host: ${hosts[0].officeName || hosts[0].localAddresses?.[0] || "1 office"}`, "ok");
-            renderPortalHosts();
-            applyPortalHostByIndex(0);
+      clientDiscoverNext.addEventListener("click", async () => {
+        // If manual fallback is visible, use manual values
+        if (discoverFailed.style.display !== "none") {
+          clientHostUrl = manualHostUrl.value.trim();
+          clientPairingCode = manualPairingCode.value.trim();
+          if (!clientHostUrl) {
+            setStatus(discoverStatus2, "Please enter the Host address.", "err");
             return;
           }
-          setPortalStatus(`Found ${hosts.length} offices. Select one below.`, "ok");
-          renderPortalHosts();
-          applyPortalHostByIndex(0);
-        } catch {
-          setPortalStatus("Portal sign-in failed.", "err");
-        } finally {
-          connectionBusy = false;
-          clientSaveBtn.disabled = false;
-          portalFindHostBtn.disabled = false;
         }
+
+        if (!clientHostUrl) {
+          setStatus(discoverStatus2, "No Host selected.", "err");
+          return;
+        }
+
+        // Test connection before proceeding
+        clientDiscoverNext.disabled = true;
+        setStatus(discoverStatus2, "Testing connection\u2026");
+
+        try {
+          const testResult = await window.otto.testConnection({
+            hostUrl: clientHostUrl,
+            pairingCode: clientPairingCode,
+          });
+
+          if (!testResult?.ok) {
+            setStatus(discoverStatus2, testResult?.message || "Could not connect to Host. Check address and try again.", "err");
+            clientDiscoverNext.disabled = false;
+            return;
+          }
+
+          // Store trusted fingerprint if returned
+          if (testResult.trustedFingerprint256) {
+            clientTrustedFingerprint = testResult.trustedFingerprint256;
+          }
+
+          setStatus(discoverStatus2, "");
+
+          // Show account creation panel
+          const accountOfficeName = document.getElementById("accountOfficeName");
+          if (accountOfficeName) accountOfficeName.textContent = clientOfficeName || "your practice";
+          showPanel("panelClientAccount");
+        } catch {
+          setStatus(discoverStatus2, "Connection test failed.", "err");
+          clientDiscoverNext.disabled = false;
+        }
+      });
+
+      // --- Step 3: Create account ---
+      const clientFirstName = document.getElementById("clientFirstName");
+      const clientLastName = document.getElementById("clientLastName");
+      const clientLoginId = document.getElementById("clientLoginId");
+      const clientPin = document.getElementById("clientPin");
+      const clientPinConfirm = document.getElementById("clientPinConfirm");
+      const clientAccountStatus = document.getElementById("clientAccountStatus");
+      const clientAccountNext = document.getElementById("clientAccountNext");
+
+      document.getElementById("clientAccountBack").addEventListener("click", () => {
+        showPanel("panelClientDiscover");
+      });
+
+      function validateClientAccountForm() {
+        if (!clientFirstName.value.trim()) return "First name is required.";
+        if (!clientLastName.value.trim()) return "Last name is required.";
+        const loginId = clientLoginId.value.trim();
+        if (!loginId) return "Login ID is required.";
+        if (loginId.length < 3) return "Login ID must be at least 3 characters.";
+        if (!/^[a-zA-Z0-9._-]+$/.test(loginId)) return "Login ID can only use letters, numbers, '.', '-', or '_'.";
+        const pin = clientPin.value.trim();
+        if (!/^\d{6}$/.test(pin)) return "PIN must be exactly 6 digits.";
+        if (pin !== clientPinConfirm.value.trim()) return "PINs do not match.";
+        return null;
       }
 
-      portalFindHostBtn.addEventListener("click", runPortalFindHost);
-      usePortalHostBtn.addEventListener("click", () => {
-        applyPortalHostByIndex(Number(portalHostSelect.value) || 0);
-      });
-      portalHostSelect.addEventListener("change", () => {
-        applyPortalHostByIndex(Number(portalHostSelect.value) || 0);
+      clientAccountNext.addEventListener("click", async () => {
+        const error = validateClientAccountForm();
+        if (error) {
+          setStatus(clientAccountStatus, error, "err");
+          return;
+        }
+
+        clientAccountNext.disabled = true;
+        setStatus(clientAccountStatus, "Creating your account\u2026");
+
+        try {
+          // POST to Host's /api/setup/client-register
+          const registerUrl = new URL("/api/setup/client-register", clientHostUrl).href;
+          const registerBody = {
+            inviteCode: clientInviteCode,
+            installationId: clientInstallationId,
+            firstName: clientFirstName.value.trim(),
+            lastName: clientLastName.value.trim(),
+            loginId: clientLoginId.value.trim(),
+            pin: clientPin.value.trim(),
+          };
+
+          const registerRes = await fetch(registerUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(registerBody),
+          });
+
+          const registerData = await registerRes.json().catch(() => null);
+
+          if (!registerRes.ok) {
+            const errMsg = registerData?.error || `Registration failed (${registerRes.status})`;
+            if (errMsg === "login_id_taken") {
+              setStatus(clientAccountStatus, "That Login ID is already taken. Choose a different one.", "err");
+            } else if (errMsg === "invalid_invite_code") {
+              setStatus(clientAccountStatus, "Invite code is invalid or expired. Go back and re-enter it.", "err");
+            } else {
+              setStatus(clientAccountStatus, errMsg, "err");
+            }
+            return;
+          }
+
+          // Save client config
+          setStatus(clientAccountStatus, "Saving configuration\u2026");
+          const config = {
+            mode: "client",
+            hostUrl: clientHostUrl,
+            pairingCode: clientPairingCode,
+            trustedFingerprint256: clientTrustedFingerprint,
+          };
+
+          const saveResult = await window.otto.saveConfig(config);
+          if (saveResult?.ok === false) {
+            setStatus(clientAccountStatus, saveResult?.message || "Could not save configuration.", "err");
+            return;
+          }
+
+          // Show success
+          const loginId = registerData?.user?.loginId || clientLoginId.value.trim();
+          document.getElementById("clientReadyTitle").textContent = "You're all set!";
+          document.getElementById("clientReadySubtitle").textContent =
+            `Your account has been created. Sign in with login ID "${loginId}" and your PIN.`;
+
+          showPanel("panelClientReady");
+        } catch {
+          setStatus(clientAccountStatus, "Could not reach the Host computer. Make sure it's running.", "err");
+        } finally {
+          clientAccountNext.disabled = false;
+        }
       });
 
-      discoverBtn.addEventListener("click", runHostDiscovery);
-      useDiscoveredHostBtn.addEventListener("click", () => {
-        applyDiscoveredHostByIndex(Number(discoveredHostSelect.value) || 0);
-      });
-      discoveredHostSelect.addEventListener("change", () => {
-        applyDiscoveredHostByIndex(Number(discoveredHostSelect.value) || 0);
-      });
-
-      clientSaveBtn.addEventListener("click", async () => {
-        await runClientConnectAndSave();
+      // --- Client Ready ---
+      document.getElementById("openOttoClientBtn").addEventListener("click", () => {
+        window.location.href = clientHostUrl || "/";
       });
 
       // ===== Init =====

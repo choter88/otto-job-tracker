@@ -2622,6 +2622,10 @@ ipcMain.handle("otto:portal:desktop-auth", async (_event, payload) => {
   return await portalDesktopAuth(payload);
 });
 
+ipcMain.handle("otto:portal:validate-invite-code", async (_event, payload) => {
+  return await portalValidateInviteCodeDesktop(payload);
+});
+
 function getPortalBaseUrl() {
   const raw = String(process.env.OTTO_LICENSE_BASE_URL || "https://ottojobtracker.com").trim();
   try {
@@ -2788,6 +2792,96 @@ async function portalDesktopAuth(payload) {
     }
 
     return { ok: true, token, expiresAt, offices };
+  } catch (err) {
+    const isTimeout = err && err.message && err.message.includes("timed out");
+    return {
+      ok: false,
+      message: isTimeout
+        ? "Can't reach the Otto portal. Check internet access and try again."
+        : "Could not connect to portal. Check internet access and try again.",
+    };
+  }
+}
+
+/**
+ * Validate an invite code with the portal. Used by the Client setup flow.
+ * Generates an installationId for the client if one doesn't exist yet.
+ */
+async function portalValidateInviteCodeDesktop(payload) {
+  const { inviteCode } = payload || {};
+  if (!inviteCode || !/^\d{6}$/.test(String(inviteCode).trim())) {
+    return { ok: false, message: "Invite code must be 6 digits." };
+  }
+
+  // Generate a stable installationId for this client
+  const configDir = app.getPath("userData");
+  const installationIdPath = path.join(configDir, "installation-id.txt");
+  let installationId;
+  try {
+    installationId = fs.readFileSync(installationIdPath, "utf-8").trim();
+  } catch {
+    installationId = "";
+  }
+  if (!installationId) {
+    installationId = crypto.randomBytes(16).toString("hex");
+    try {
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(installationIdPath, installationId, { mode: 0o600 });
+    } catch {
+      // Non-fatal — use in-memory only
+    }
+  }
+
+  const base = getPortalBaseUrl();
+  const url = new URL("/portal/api/invite-codes/validate", base);
+
+  try {
+    const body = JSON.stringify({ inviteCode: String(inviteCode).trim(), installationId });
+    const result = await new Promise((resolve, reject) => {
+      const mod = url.protocol === "https:" ? https : http;
+      const req = mod.request(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 10000,
+      }, (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(data);
+            resolve({ status: res.statusCode, json });
+          } catch {
+            resolve({ status: res.statusCode, json: null });
+          }
+        });
+      });
+      req.on("error", (err) => reject(err));
+      req.on("timeout", () => {
+        req.destroy();
+        reject(new Error("Portal request timed out."));
+      });
+      req.write(body);
+      req.end();
+    });
+
+    if (result.status < 200 || result.status >= 300) {
+      const msg = result.json?.error || result.json?.message || "Invalid invite code.";
+      return { ok: false, message: String(msg) };
+    }
+
+    if (!result.json?.valid) {
+      return { ok: false, message: result.json?.message || "Invalid or expired invite code. Ask your manager to check the invite code in Settings." };
+    }
+
+    return {
+      ok: true,
+      officeName: String(result.json.officeName || ""),
+      officeId: String(result.json.officeId || ""),
+      installationId,
+    };
   } catch (err) {
     const isTimeout = err && err.message && err.message.includes("timed out");
     return {
