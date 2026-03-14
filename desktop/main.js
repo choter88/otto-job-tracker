@@ -1500,10 +1500,10 @@ function createSetupWindow() {
   const win = new BrowserWindow({
     title: `${APP_DISPLAY_NAME} Setup`,
     width: 720,
-    height: 520,
+    height: 600,
     minWidth: 720,
-    minHeight: 520,
-    resizable: false,
+    minHeight: 600,
+    resizable: true,
     webPreferences: {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
@@ -2107,18 +2107,19 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
     if (config.mode === "host") {
       // Host first-time setup: start the server but keep the setup window open.
       // setup.html will call bootstrap, then otto:setup:complete to open the main window.
+      const protocol = app.isPackaged ? "https" : "http";
+      const port = process.env.PORT || "5150";
       try {
         await maybeStartHostServer();
-        const protocol = app.isPackaged ? "https" : "http";
-        const port = process.env.PORT || "5150";
-        const readiness = await waitForHostReady({ protocol, host: "127.0.0.1", port, timeoutMs: 30000 });
+        const readiness = await waitForHostReady({ protocol, host: "127.0.0.1", port, timeoutMs: 45000 });
         if (!readiness.ok) {
           return { ok: false, relaunched: false, message: "Server did not start in time." };
         }
       } catch (err) {
         return { ok: false, relaunched: false, message: "Could not start the server." };
       }
-      return { ok: true, relaunched: false };
+      const serverBaseUrl = `${protocol}://127.0.0.1:${port}`;
+      return { ok: true, relaunched: false, serverBaseUrl };
     }
 
     // Client first-time setup: open main window immediately (no bootstrap needed).
