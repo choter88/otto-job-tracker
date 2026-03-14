@@ -37,7 +37,7 @@ import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateHostForSetup, activateHostWithPortalToken, activateLicense, forceCheckin, getHostToken, getLicenseSnapshot, validateClaimForSetup } from "./license";
-import { portalValidateInviteCode, portalGetInviteCode, portalRegenerateInviteCode } from "./license-client";
+import { portalValidateInviteCode, portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
@@ -372,6 +372,36 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Validate a claim code without consuming it — returns office + user details for pre-fill
+  app.post("/api/setup/portal-auth", async (req, res) => {
+    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
+    if (!isLoopbackIp(remote)) {
+      return res.status(403).json({ error: "Setup must be completed on the Host computer." });
+    }
+
+    const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required." });
+    }
+
+    const result = await portalDesktopAuth({ email, password });
+    if (!result.ok) {
+      return res.status(result.error.statusCode || 401).json({
+        error: result.error.message,
+        code: result.error.code,
+      });
+    }
+
+    res.json({
+      token: result.token,
+      expiresAt: result.expiresAt,
+      offices: result.offices,
+      firstName: result.firstName,
+      lastName: result.lastName,
+      email: result.email,
+    });
+  });
+
   app.post("/api/setup/verify-claim", async (req, res) => {
     const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
     if (!isLoopbackIp(remote)) {
@@ -675,6 +705,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
     try {
       const setupCode = readSetupCodeFromBody(req.body);
+      const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
+      const selectedOfficeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
       const snapshot = req.body?.snapshot;
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
@@ -692,8 +724,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
-      if (!setupCode) {
-        return res.status(400).json({ error: "Host Claim Code is required" });
+      const usePortalToken = Boolean(portalToken && selectedOfficeId);
+      if (!usePortalToken && !setupCode) {
+        return res.status(400).json({ error: "Portal sign-in or Host Claim Code is required" });
       }
       if (!snapshot || typeof snapshot !== "object") {
         return res.status(400).json({ error: "Snapshot file is required" });
@@ -755,7 +788,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       let licenseSnapshot = getLicenseSnapshot();
       try {
-        licenseSnapshot = await activateHostForSetup(setupCode);
+        if (usePortalToken) {
+          licenseSnapshot = await activateHostWithPortalToken(portalToken, selectedOfficeId);
+        } else {
+          licenseSnapshot = await activateHostForSetup(setupCode);
+        }
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);
         return res.status(failure.status).json({ error: failure.message, code: failure.code });
@@ -768,7 +805,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
       const activationVerifiedAt = activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null;
-      const setupCodeTail = setupCodeLast4(setupCode);
+      const setupCodeTail = usePortalToken ? "portal" : setupCodeLast4(setupCode);
 
       const result = importSnapshotV1({
         snapshot,

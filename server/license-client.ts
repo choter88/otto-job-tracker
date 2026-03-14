@@ -388,3 +388,64 @@ export async function portalRegenerateInviteCode(payload: {
     expiresAt: typeof json?.expiresAt === "number" ? json.expiresAt : undefined,
   };
 }
+
+// --- Portal desktop auth (email/password → token + offices) ---
+
+export type PortalDesktopAuthResult =
+  | {
+      ok: true;
+      token: string;
+      expiresAt: number;
+      offices: Array<{ officeId: string; officeName: string; role: string }>;
+      firstName?: string;
+      lastName?: string;
+      email?: string;
+    }
+  | { ok: false; error: LicenseRequestError };
+
+export async function portalDesktopAuth(payload: {
+  email: string;
+  password: string;
+}): Promise<PortalDesktopAuthResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/auth/desktop-token", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+
+  if (status === 401) {
+    return {
+      ok: false,
+      error: { statusCode: 401, code: "INVALID_CREDENTIALS", message: "Invalid email or password." },
+    };
+  }
+
+  if (status < 200 || status >= 300) {
+    return { ok: false, error: errorFromResponse(status, json) };
+  }
+
+  const token = typeof json?.token === "string" ? json.token : "";
+  if (!token) {
+    return {
+      ok: false,
+      error: { statusCode: 502, code: "BAD_PORTAL_RESPONSE", message: "Portal did not return an authentication token." },
+    };
+  }
+
+  const offices = Array.isArray(json?.offices)
+    ? json.offices.map((o: any) => ({
+        officeId: String(o?.officeId || o?.portalOfficeId || o?.id || ""),
+        officeName: String(o?.officeName || o?.name || ""),
+        role: String(o?.role || ""),
+      }))
+    : [];
+
+  return {
+    ok: true,
+    token,
+    expiresAt: typeof json?.expiresAt === "number" ? json.expiresAt : 0,
+    offices,
+    firstName: typeof json?.firstName === "string" ? json.firstName : undefined,
+    lastName: typeof json?.lastName === "string" ? json.lastName : undefined,
+    email: typeof json?.email === "string" ? json.email : undefined,
+  };
+}

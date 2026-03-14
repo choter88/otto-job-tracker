@@ -28,6 +28,7 @@ app.use((req, res, next) => {
     "/api/license/activate",
     "/api/license/checkin",
     "/api/invite-code/regenerate",
+    "/api/setup/portal-auth",
     "/api/setup/bootstrap",
     "/api/setup/client-register",
     "/api/setup/import-snapshot",

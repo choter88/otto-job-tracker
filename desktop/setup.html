@@ -790,9 +790,11 @@
           const saveResult = await window.otto.saveConfig(config);
 
           // If the config was saved and the app relaunched, the page will reload.
-          // If it's a first-time setup, the server starts and we continue here.
           if (saveResult?.relaunched) {
-            // App is relaunching — we'll be back
+            return;
+          }
+          if (saveResult?.ok === false) {
+            showActivationError(saveResult?.message || "Could not save configuration.");
             return;
           }
 
@@ -821,7 +823,7 @@
             },
           };
 
-          const bootstrapRes = await fetch("/api/setup/bootstrap", {
+          const bootstrapRes = await fetch(`${getServerBaseUrl()}/api/setup/bootstrap`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(bootstrapBody),
@@ -855,11 +857,18 @@
         }
       }
 
+      function getServerBaseUrl() {
+        // setup.html is loaded as file://, so relative URLs won't work.
+        // Use the same origin the server listens on.
+        return "https://127.0.0.1:5150";
+      }
+
       async function waitForServer(timeoutMs) {
+        const base = getServerBaseUrl();
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
           try {
-            const res = await fetch("/api/health", { signal: AbortSignal.timeout(2000) });
+            const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
             if (res.ok) return true;
           } catch {
             // Server not ready yet
@@ -898,8 +907,13 @@
       }
 
       document.getElementById("openOttoBtn").addEventListener("click", async () => {
-        // Reload the page — the server is running, so it will load the main app
-        window.location.href = "/";
+        // Open the main window and close this setup window
+        try {
+          await window.otto.setupComplete();
+        } catch {
+          // Fallback: navigate to the main app directly
+          window.location.href = "/";
+        }
       });
 
       // ===== Utility =====

@@ -2104,9 +2104,25 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
 
   writeConfig(config);
   if (!hadConfigFileBeforeWrite) {
-    const launched = await launchMainWindowForConfig(config, {
-      showBootWindow: config.mode === "host",
-    });
+    if (config.mode === "host") {
+      // Host first-time setup: start the server but keep the setup window open.
+      // setup.html will call bootstrap, then otto:setup:complete to open the main window.
+      try {
+        await maybeStartHostServer();
+        const protocol = app.isPackaged ? "https" : "http";
+        const port = process.env.PORT || "5150";
+        const readiness = await waitForHostReady({ protocol, host: "127.0.0.1", port, timeoutMs: 30000 });
+        if (!readiness.ok) {
+          return { ok: false, relaunched: false, message: "Server did not start in time." };
+        }
+      } catch (err) {
+        return { ok: false, relaunched: false, message: "Could not start the server." };
+      }
+      return { ok: true, relaunched: false };
+    }
+
+    // Client first-time setup: open main window immediately (no bootstrap needed).
+    const launched = await launchMainWindowForConfig(config, { showBootWindow: false });
     if (!launched) {
       return {
         ok: false,
@@ -2123,6 +2139,26 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
   app.relaunch();
   app.exit(0);
   return { ok: true, relaunched: true };
+});
+
+ipcMain.handle("otto:setup:complete", async () => {
+  // Called by setup.html after Host bootstrap succeeds.
+  // Opens the main window and closes the setup window.
+  const config = readConfig();
+  setAppMenu(config);
+  const targetUrl = getTargetUrlForConfig(config);
+  createWindow(targetUrl, config);
+
+  if (config.mode === "host") {
+    await maybePromptForBackupFolder();
+    await maybeWarnAboutBackups();
+    scheduleAutomaticBackups();
+  }
+
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    setupWindow.close();
+  }
+  return { ok: true };
 });
 
 ipcMain.handle("otto:connection:test", async (_event, payload) => {
