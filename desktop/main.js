@@ -1087,9 +1087,11 @@ function maybeRestoreDatabaseFromArgs() {
   }
 }
 
+let hostServerStarted = false;
 async function maybeStartHostServer() {
   const config = readConfig();
   if (config.mode !== "host") return;
+  if (hostServerStarted) return; // Already started (retry after bootstrap failure)
 
   // In development, assume you're running `npm run dev` separately.
   // (A packaged app starts its own local server automatically.)
@@ -1104,7 +1106,9 @@ async function maybeStartHostServer() {
     throw new Error(`Server build not found at ${serverEntry}. Run \`npm run build\` first.`);
   }
 
+  hostServerStarted = true;
   void import(pathToFileURL(serverEntry).href).catch(async (error) => {
+    hostServerStarted = false;
     logStartup("Host server failed to start", error);
     try {
       await dialog.showMessageBox({
@@ -1499,8 +1503,8 @@ function createSetupWindow() {
 
   const win = new BrowserWindow({
     title: `${APP_DISPLAY_NAME} Setup`,
-    width: 720,
-    height: 600,
+    width: 780,
+    height: 680,
     minWidth: 720,
     minHeight: 600,
     resizable: true,
@@ -2103,19 +2107,34 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
   }
 
   writeConfig(config);
-  if (!hadConfigFileBeforeWrite) {
+
+  // Treat as first-time setup if no config existed OR if the setup window is
+  // still open (meaning bootstrap hasn't completed yet — user is retrying).
+  const isFirstTimeSetup = !hadConfigFileBeforeWrite || (setupWindow && !setupWindow.isDestroyed());
+
+  if (isFirstTimeSetup) {
     if (config.mode === "host") {
       // Host first-time setup: start the server but keep the setup window open.
       // setup.html will call bootstrap, then otto:setup:complete to open the main window.
       const protocol = app.isPackaged ? "https" : "http";
       const port = process.env.PORT || "5150";
       try {
+        // Must set up TLS certs + egress allowlist BEFORE starting the server,
+        // matching what launchMainWindowForConfig() does for normal launches.
+        applyLicenseEgressAllowlist();
+        if (app.isPackaged) {
+          applyHostTlsEnv();
+        }
         await maybeStartHostServer();
         const readiness = await waitForHostReady({ protocol, host: "127.0.0.1", port, timeoutMs: 45000 });
         if (!readiness.ok) {
-          return { ok: false, relaunched: false, message: "Server did not start in time." };
+          // Clean up config so retry doesn't trigger app.relaunch()
+          try { fs.unlinkSync(getConfigPath()); } catch {}
+          return { ok: false, relaunched: false, message: "Server did not start in time. Please close Otto and try again." };
         }
       } catch (err) {
+        // Clean up config so retry doesn't trigger app.relaunch()
+        try { fs.unlinkSync(getConfigPath()); } catch {}
         return { ok: false, relaunched: false, message: "Could not start the server." };
       }
       const serverBaseUrl = `${protocol}://127.0.0.1:${port}`;
