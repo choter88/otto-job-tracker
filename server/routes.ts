@@ -495,7 +495,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
 
-      // Part 1.2: Portal call BEFORE any local DB writes — if this fails, nothing is written locally.
+      // Early check: reject if already bootstrapped, BEFORE calling the portal.
+      // This prevents consuming a portal activation when the local DB is already set up.
+      {
+        const [userStats] = db.select({ count: sql`count(*)` }).from(users).all();
+        if (Number(userStats?.count) > 0) {
+          return res.status(409).json({ error: "This office is already set up.", code: "ALREADY_INITIALIZED" });
+        }
+      }
+
+      // Portal activation call — if this fails, nothing is written locally.
       let licenseSnapshot = getLicenseSnapshot();
       try {
         if (usePortalToken) {

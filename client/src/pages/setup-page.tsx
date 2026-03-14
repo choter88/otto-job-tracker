@@ -88,6 +88,13 @@ export default function SetupPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
+  // Inside Electron, setup is handled by the native setup window — redirect to auth.
+  const isElectron = !!(window as any)?.otto?.getConfig;
+  if (isElectron) {
+    setLocation("/auth");
+    return null;
+  }
+
   // Flow state
   const [step, setStep] = useState<"signin" | "office" | "admin">("signin");
   const [portalAuth, setPortalAuth] = useState<PortalAuthResponse | null>(null);
@@ -227,7 +234,20 @@ export default function SetupPage() {
       setLocation("/");
     },
     onError: (error: Error) => {
-      toast({ title: "Setup failed", description: error.message, variant: "destructive" });
+      const msg = error.message.toLowerCase();
+      if (msg.includes("login id") || msg.includes("loginid")) {
+        adminForm.setError("adminLoginId", { type: "server", message: error.message });
+      } else if (msg.includes("pin")) {
+        adminForm.setError("adminPin", { type: "server", message: error.message });
+      } else if (msg.includes("first name")) {
+        adminForm.setError("adminFirstName", { type: "server", message: error.message });
+      } else if (msg.includes("last name")) {
+        adminForm.setError("adminLastName", { type: "server", message: error.message });
+      } else if (msg.includes("office name")) {
+        adminForm.setError("officeName", { type: "server", message: error.message });
+      } else {
+        toast({ title: "Setup failed", description: error.message, variant: "destructive" });
+      }
     },
   });
 
@@ -275,7 +295,12 @@ export default function SetupPage() {
       setLocation("/");
     },
     onError: (error: Error) => {
-      toast({ title: "Import failed", description: error.message, variant: "destructive" });
+      const msg = error.message.toLowerCase();
+      if (msg.includes("login id") || msg.includes("loginid")) {
+        adminForm.setError("adminLoginId", { type: "server", message: error.message });
+      } else {
+        toast({ title: "Import failed", description: error.message, variant: "destructive" });
+      }
     },
   });
 

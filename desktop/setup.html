@@ -123,8 +123,24 @@
         margin: 0 0 12px;
       }
 
-      .field { margin-top: 14px; }
+      .field { margin-top: 12px; }
       .field:first-child { margin-top: 0; }
+
+      .field-error {
+        font-size: 11px;
+        color: var(--destructive);
+        margin-top: 4px;
+        line-height: 1.3;
+      }
+      .field-error:empty { display: none; }
+
+      input.input-error {
+        border-color: var(--destructive);
+      }
+      input.input-error:focus {
+        border-color: var(--destructive);
+        box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18);
+      }
 
       label {
         display: block;
@@ -418,22 +434,25 @@
         <div class="card">
           <div class="step-label">Step 3 of 3 &middot; Create your admin account</div>
           <h2 class="card-title" style="font-size:22px">Your Admin Account</h2>
-          <p class="card-subtitle">This will be the owner account for your practice.</p>
+          <p class="card-subtitle" style="margin-bottom:16px;">This will be the owner account for your practice.</p>
 
           <div class="row">
             <div class="field">
               <label for="adminFirstName">First name</label>
               <input id="adminFirstName" type="text" placeholder="First name" autocomplete="given-name" />
+              <div class="field-error" id="adminFirstNameError"></div>
             </div>
             <div class="field">
               <label for="adminLastName">Last name</label>
               <input id="adminLastName" type="text" placeholder="Last name" autocomplete="family-name" />
+              <div class="field-error" id="adminLastNameError"></div>
             </div>
           </div>
 
           <div class="field">
             <label for="adminLoginId">Login ID</label>
             <input id="adminLoginId" type="text" placeholder="e.g. drsmith" autocomplete="username" />
+            <div class="field-error" id="adminLoginIdError"></div>
             <div class="hint">Short username for daily sign-in. Letters, numbers, periods, hyphens.</div>
           </div>
 
@@ -441,10 +460,12 @@
             <div class="field">
               <label for="adminPin">6-digit PIN</label>
               <input id="adminPin" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+              <div class="field-error" id="adminPinError"></div>
             </div>
             <div class="field">
               <label for="adminPinConfirm">Confirm PIN</label>
               <input id="adminPinConfirm" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+              <div class="field-error" id="adminPinConfirmError"></div>
             </div>
           </div>
 
@@ -744,25 +765,63 @@
         }
       });
 
+      function clearFieldErrors() {
+        for (const id of ["adminFirstNameError", "adminLastNameError", "adminLoginIdError", "adminPinError", "adminPinConfirmError"]) {
+          const el = document.getElementById(id);
+          if (el) el.textContent = "";
+        }
+        for (const input of [adminFirstName, adminLastName, adminLoginId, adminPin, adminPinConfirm]) {
+          input.classList.remove("input-error");
+        }
+      }
+
+      function setFieldError(inputEl, errorId, message) {
+        const el = document.getElementById(errorId);
+        if (el) el.textContent = message;
+        inputEl.classList.add("input-error");
+      }
+
       function validateAdminForm() {
-        if (!adminFirstName.value.trim()) return "First name is required.";
-        if (!adminLastName.value.trim()) return "Last name is required.";
+        clearFieldErrors();
+        let valid = true;
+
+        if (!adminFirstName.value.trim()) {
+          setFieldError(adminFirstName, "adminFirstNameError", "First name is required.");
+          valid = false;
+        }
+        if (!adminLastName.value.trim()) {
+          setFieldError(adminLastName, "adminLastNameError", "Last name is required.");
+          valid = false;
+        }
         const loginId = adminLoginId.value.trim();
-        if (!loginId) return "Login ID is required.";
-        if (loginId.length < 3) return "Login ID must be at least 3 characters.";
-        if (!/^[a-zA-Z0-9._-]+$/.test(loginId)) return "Login ID can only use letters, numbers, '.', '-', or '_'.";
+        if (!loginId) {
+          setFieldError(adminLoginId, "adminLoginIdError", "Login ID is required.");
+          valid = false;
+        } else if (loginId.length < 3) {
+          setFieldError(adminLoginId, "adminLoginIdError", "Login ID must be at least 3 characters.");
+          valid = false;
+        } else if (!/^[a-zA-Z0-9._-]+$/.test(loginId)) {
+          setFieldError(adminLoginId, "adminLoginIdError", "Only letters, numbers, '.', '-', or '_'.");
+          valid = false;
+        }
         const pin = adminPin.value.trim();
-        if (!/^\d{6}$/.test(pin)) return "PIN must be exactly 6 digits.";
-        if (pin !== adminPinConfirm.value.trim()) return "PINs do not match.";
-        return null;
+        if (!/^\d{6}$/.test(pin)) {
+          setFieldError(adminPin, "adminPinError", "PIN must be exactly 6 digits.");
+          valid = false;
+        }
+        if (pin && pin !== adminPinConfirm.value.trim()) {
+          setFieldError(adminPinConfirm, "adminPinConfirmError", "PINs do not match.");
+          valid = false;
+        } else if (!adminPinConfirm.value.trim()) {
+          setFieldError(adminPinConfirm, "adminPinConfirmError", "Please confirm your PIN.");
+          valid = false;
+        }
+
+        return valid;
       }
 
       hostAdminNext.addEventListener("click", async () => {
-        const error = validateAdminForm();
-        if (error) {
-          setStatus(adminStatus, error, "err");
-          return;
-        }
+        if (!validateAdminForm()) return;
 
         setStatus(adminStatus, "");
         showPanel("panelHostActivating");
@@ -772,10 +831,13 @@
       // ===== Host Step 4: Activating =====
       const activatingText = document.getElementById("activatingText");
 
+      // Server base URL set by saveConfig IPC response
+      let serverBaseUrl = "https://127.0.0.1:5150";
+
       async function runHostActivation() {
         try {
-          // Step 1: Save config as host mode (this will start the server)
-          setActivatingText("Saving configuration...");
+          // Step 1: Save config — this starts the server and waits for it to be ready
+          setActivatingText("Starting server...");
           const config = {
             mode: "host",
             hostUrl: "https://127.0.0.1:5150",
@@ -789,7 +851,6 @@
 
           const saveResult = await window.otto.saveConfig(config);
 
-          // If the config was saved and the app relaunched, the page will reload.
           if (saveResult?.relaunched) {
             return;
           }
@@ -798,15 +859,12 @@
             return;
           }
 
-          // Step 2: Wait for the local server to be ready
-          setActivatingText("Starting server...");
-          const serverReady = await waitForServer(30000);
-          if (!serverReady) {
-            showActivationError("Server did not start in time. Please close and reopen Otto Tracker.");
-            return;
+          // Use the server URL returned by main process (handles http vs https)
+          if (saveResult?.serverBaseUrl) {
+            serverBaseUrl = saveResult.serverBaseUrl;
           }
 
-          // Step 3: Call the bootstrap endpoint with portal token + admin data
+          // Step 2: Call the bootstrap endpoint with portal token + admin data
           setActivatingText("Activating your practice...");
 
           const bootstrapBody = {
@@ -823,7 +881,7 @@
             },
           };
 
-          const bootstrapRes = await fetch(`${getServerBaseUrl()}/api/setup/bootstrap`, {
+          const bootstrapRes = await fetch(`${serverBaseUrl}/api/setup/bootstrap`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(bootstrapBody),
@@ -857,26 +915,8 @@
         }
       }
 
-      function getServerBaseUrl() {
-        // setup.html is loaded as file://, so relative URLs won't work.
-        // Use the same origin the server listens on.
-        return "https://127.0.0.1:5150";
-      }
-
-      async function waitForServer(timeoutMs) {
-        const base = getServerBaseUrl();
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          try {
-            const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
-            if (res.ok) return true;
-          } catch {
-            // Server not ready yet
-          }
-          await new Promise((r) => setTimeout(r, 500));
-        }
-        return false;
-      }
+      // waitForServer removed — the otto:config:set IPC handler now starts the server
+      // and waits for readiness before returning. serverBaseUrl is set from saveResult.
 
       function setActivatingText(text) {
         if (activatingText) activatingText.textContent = text;
@@ -884,6 +924,19 @@
 
       function showActivationError(message, showPortalLink) {
         showPanel("panelHostAdmin");
+        clearFieldErrors();
+
+        // Route specific server errors to inline fields
+        const msgLower = (message || "").toLowerCase();
+        if (msgLower.includes("login id") || msgLower.includes("loginid")) {
+          setFieldError(adminLoginId, "adminLoginIdError", message);
+          return;
+        }
+        if (msgLower.includes("pin")) {
+          setFieldError(adminPin, "adminPinError", message);
+          return;
+        }
+
         let displayMsg = message;
         if (showPortalLink) {
           displayMsg += " You can open the portal from your browser.";
