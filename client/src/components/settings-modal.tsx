@@ -12,18 +12,22 @@ import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  Settings, 
-  ListTodo, 
-  Tag, 
-  Bell, 
-  MessageSquare, 
-  Building, 
+import {
+  Settings,
+  ListTodo,
+  Tag,
+  Bell,
+  MessageSquare,
+  Building,
   Save,
   Plus,
   Trash2,
   GripVertical,
-  Columns
+  Columns,
+  KeyRound,
+  RefreshCw,
+  Copy,
+  Check
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
 import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, chooseHighContrastColor, getColorForBadge, hexToHSL } from "@/lib/default-colors";
@@ -130,6 +134,111 @@ function SortableItem({ id, item, type, isDraggable, updateCustomItem, deleteCus
       >
         <Trash2 className="h-4 w-4" />
       </Button>
+    </div>
+  );
+}
+
+function InviteCodeSection() {
+  const [copied, setCopied] = useState(false);
+
+  const { data: inviteData, isLoading: inviteLoading, error: inviteError } = useQuery<{ inviteCode: string; expiresAt?: number }>({
+    queryKey: ["/api/invite-code"],
+  });
+
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const regenerateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/invite-code/regenerate");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["/api/invite-code"], data);
+      toast({ title: "Invite code regenerated", description: "The old code is no longer valid." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to regenerate", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const inviteCode = inviteData?.inviteCode || "";
+  const displayCode = inviteCode.length === 6
+    ? `${inviteCode.slice(0, 3)} ${inviteCode.slice(3)}`
+    : inviteCode;
+
+  const handleCopy = async () => {
+    if (!inviteCode) return;
+    try {
+      await navigator.clipboard.writeText(inviteCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ title: "Copy failed", description: "Could not copy to clipboard.", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold mb-2">Invite Code</h3>
+        <p className="text-sm text-muted-foreground">
+          Share this code with team members so they can join your practice from their own computer.
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-6">
+        {inviteLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted-foreground border-t-primary" />
+            <span className="ml-3 text-sm text-muted-foreground">Loading invite code...</span>
+          </div>
+        ) : inviteError ? (
+          <div className="text-center py-8">
+            <p className="text-sm text-muted-foreground">
+              Could not load the invite code. Make sure this computer is connected to the internet.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground mb-3">Your practice's invite code</p>
+              <div className="flex items-center justify-center gap-3">
+                <span className="text-4xl font-mono font-bold tracking-[0.3em] select-all">
+                  {displayCode || "------"}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleCopy}
+                  disabled={!inviteCode}
+                  title="Copy invite code"
+                >
+                  {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-center">
+              <Button
+                variant="outline"
+                onClick={() => regenerateMutation.mutate()}
+                disabled={regenerateMutation.isPending}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${regenerateMutation.isPending ? "animate-spin" : ""}`} />
+                {regenerateMutation.isPending ? "Regenerating..." : "Generate New Code"}
+              </Button>
+            </div>
+
+            <div className="p-4 bg-muted rounded-lg">
+              <p className="text-sm text-muted-foreground">
+                Team members enter this code on their computer when setting up Otto for the first time.
+                Regenerating creates a new code and invalidates the old one.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -520,6 +629,16 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                   <MessageSquare className="h-4 w-4" />
                   <span className="truncate">Messages</span>
                 </TabsTrigger>
+                {user?.role === "owner" && (
+                  <TabsTrigger
+                    value="inviteCode"
+                    className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                    data-testid="tab-invite-code"
+                  >
+                    <KeyRound className="h-4 w-4" />
+                    <span className="truncate">Invite Code</span>
+                  </TabsTrigger>
+                )}
               </TabsList>
             </div>
 
@@ -695,6 +814,12 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
             <TabsContent value="notifications" className="mt-0">
               <NotificationRules />
             </TabsContent>
+
+            {user?.role === "owner" && (
+              <TabsContent value="inviteCode" className="mt-0">
+                <InviteCodeSection />
+              </TabsContent>
+            )}
 
             <TabsContent value="messages" className="mt-0">
               <div className="space-y-6">

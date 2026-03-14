@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "otto-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5150
+    },
+    {
+      "name": "otto-desktop",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "desktop"],
+      "port": 5150
+    }
+  ]
+}

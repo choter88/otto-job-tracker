@@ -33,10 +33,11 @@ import {
   isAiSummaryEnabled,
 } from "./ai-summary-service";
 import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
-import { db } from "./db";
+import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
-import { activateHostForSetup, activateLicense, forceCheckin, getLicenseSnapshot, validateClaimForSetup } from "./license";
+import { activateHostForSetup, activateHostWithPortalToken, activateLicense, forceCheckin, getHostToken, getLicenseSnapshot, validateClaimForSetup } from "./license";
+import { portalValidateInviteCode, portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
@@ -146,134 +147,8 @@ function hashSnapshotPayload(payload: unknown): string {
   }
 }
 
-type SetupHandshakeStatus = "pending" | "approved" | "denied" | "expired";
-
-type SetupHandshakeRequest = {
-  id: string;
-  token: string;
-  status: SetupHandshakeStatus;
-  createdAt: number;
-  expiresAt: number;
-  decidedAt: number | null;
-  decisionNote: string | null;
-  clientName: string;
-  clientHost: string;
-  clientVersion: string;
-  requestedByIp: string;
-};
-
-const SETUP_HANDSHAKE_PENDING_LIMIT = 64;
-const SETUP_HANDSHAKE_TTL_MS = 2 * 60 * 1000;
-const SETUP_HANDSHAKE_RETENTION_MS = 10 * 60 * 1000;
-const setupHandshakeRequests = new Map<string, SetupHandshakeRequest>();
-
-// --- Handshake persistence to survive Host restarts ---
-let _handshakeFilePath: string | null = null;
-function handshakeFilePath(): string {
-  if (_handshakeFilePath) return _handshakeFilePath;
-  const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
-  _handshakeFilePath = path.join(dataDir, "handshake-requests.json");
-  return _handshakeFilePath;
-}
-
-function persistHandshakeRequests() {
-  try {
-    const entries = Array.from(setupHandshakeRequests.entries());
-    fs.writeFileSync(handshakeFilePath(), JSON.stringify(entries), "utf-8");
-  } catch {
-    // Non-critical — ignore write failures
-  }
-}
-
-function loadHandshakeRequests() {
-  try {
-    const filePath = handshakeFilePath();
-    if (!fs.existsSync(filePath)) return;
-    const raw = fs.readFileSync(filePath, "utf-8");
-    const entries: [string, SetupHandshakeRequest][] = JSON.parse(raw);
-    if (!Array.isArray(entries)) return;
-    for (const [id, req] of entries) {
-      if (id && req && typeof req.status === "string") {
-        setupHandshakeRequests.set(id, req);
-      }
-    }
-    // Immediately clean up expired entries
-    cleanupSetupHandshakeRequests();
-  } catch {
-    // Non-critical — ignore load failures
-  }
-}
-
-// Load persisted handshake state on module init
-loadHandshakeRequests();
-
-function generateSetupHandshakeId() {
-  return randomBytes(16).toString("hex");
-}
-
-function sanitizeSetupHandshakeText(value: unknown, fallback: string, max = 120): string {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  if (!trimmed) return fallback;
-  return trimmed.slice(0, max);
-}
-
-function cleanupSetupHandshakeRequests(now = Date.now()) {
-  const idsToDelete: string[] = [];
-  setupHandshakeRequests.forEach((req, id) => {
-    if (req.status === "pending" && req.expiresAt <= now) {
-      req.status = "expired";
-      req.decidedAt = req.expiresAt;
-      req.decisionNote = req.decisionNote || "Approval timed out on the Host.";
-      setupHandshakeRequests.set(id, req);
-      return;
-    }
-
-    if (req.status !== "pending") {
-      const finalizedAt = req.decidedAt || req.expiresAt || req.createdAt;
-      if (now - finalizedAt > SETUP_HANDSHAKE_RETENTION_MS) {
-        idsToDelete.push(id);
-      }
-    }
-  });
-  for (const id of idsToDelete) {
-    setupHandshakeRequests.delete(id);
-  }
-}
-
-function buildSetupHandshakeClientResponse(req: SetupHandshakeRequest) {
-  const status = req.status;
-  const message =
-    status === "approved"
-      ? req.decisionNote || "Approved on the Host computer."
-      : status === "denied"
-        ? req.decisionNote || "Request denied on the Host computer."
-        : status === "expired"
-          ? req.decisionNote || "Approval request timed out."
-          : "Waiting for approval on the Host computer.";
-
-  return {
-    ok: status === "approved",
-    status,
-    message,
-    createdAt: req.createdAt,
-    expiresAt: req.expiresAt,
-    decidedAt: req.decidedAt,
-  };
-}
-
-function buildSetupHandshakePromptPayload(req: SetupHandshakeRequest) {
-  return {
-    id: req.id,
-    status: req.status,
-    createdAt: req.createdAt,
-    expiresAt: req.expiresAt,
-    clientName: req.clientName,
-    clientHost: req.clientHost,
-    clientVersion: req.clientVersion,
-    requestedByIp: req.requestedByIp,
-  };
-}
+// Mutex to prevent concurrent bootstrap requests (Part 1.3 fix)
+let setupBootstrapInProgress = false;
 
 function withDefaultMessageTemplates(settingsInput: unknown): Record<string, any> {
   const settings =
@@ -438,6 +313,41 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  // ── Invite code management (Host/owner only) ──────────────────────
+  app.get("/api/invite-code", requireAuth, requireRole(["owner"]), async (_req, res) => {
+    applyNoStoreHeaders(res);
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(404).json({ error: "Host is not activated" });
+    }
+    try {
+      const result = await portalGetInviteCode({ hostToken });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message });
+      }
+      res.json({ inviteCode: result.inviteCode, expiresAt: result.expiresAt });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to get invite code" });
+    }
+  });
+
+  app.post("/api/invite-code/regenerate", requireAuth, requireRole(["owner"]), async (_req, res) => {
+    applyNoStoreHeaders(res);
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(404).json({ error: "Host is not activated" });
+    }
+    try {
+      const result = await portalRegenerateInviteCode({ hostToken });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message });
+      }
+      res.json({ inviteCode: result.inviteCode, expiresAt: result.expiresAt });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to regenerate invite code" });
+    }
+  });
+
   // Setup / onboarding routes (desktop-first)
   app.get("/api/setup/status", async (_req, res) => {
     try {
@@ -462,6 +372,36 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Validate a claim code without consuming it — returns office + user details for pre-fill
+  app.post("/api/setup/portal-auth", async (req, res) => {
+    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
+    if (!isLoopbackIp(remote)) {
+      return res.status(403).json({ error: "Setup must be completed on the Host computer." });
+    }
+
+    const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required." });
+    }
+
+    const result = await portalDesktopAuth({ email, password });
+    if (!result.ok) {
+      return res.status(result.error.statusCode || 401).json({
+        error: result.error.message,
+        code: result.error.code,
+      });
+    }
+
+    res.json({
+      token: result.token,
+      expiresAt: result.expiresAt,
+      offices: result.offices,
+      firstName: result.firstName,
+      lastName: result.lastName,
+      email: result.email,
+    });
+  });
+
   app.post("/api/setup/verify-claim", async (req, res) => {
     const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
     if (!isLoopbackIp(remote)) {
@@ -482,135 +422,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/setup/handshake/request", async (req, res) => {
-    try {
-      cleanupSetupHandshakeRequests();
-
-      const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
-      const [userStats] = await db.select({ count: sql`count(*)` }).from(users);
-      const officeCount = Number(officeStats?.count) || 0;
-      const userCount = Number(userStats?.count) || 0;
-      if (officeCount < 1 || userCount < 1) {
-        return res.status(409).json({ error: "Host setup is not complete yet." });
-      }
-
-      const pendingCount = Array.from(setupHandshakeRequests.values()).filter((item) => item.status === "pending").length;
-      if (pendingCount >= SETUP_HANDSHAKE_PENDING_LIMIT) {
-        return res.status(429).json({ error: "Too many pending approval requests. Please try again in a minute." });
-      }
-
-      const requestedByIp = normalizeRemoteIp(req.socket.remoteAddress || "") || "unknown";
-      const clientName = sanitizeSetupHandshakeText(req.body?.clientName, "Client computer");
-      const clientHost = sanitizeSetupHandshakeText(req.body?.clientHost, "", 160);
-      const clientVersion = sanitizeSetupHandshakeText(req.body?.clientVersion, "", 60);
-
-      const id = generateSetupHandshakeId();
-      const token = generateSetupHandshakeId();
-      const createdAt = Date.now();
-      const expiresAt = createdAt + SETUP_HANDSHAKE_TTL_MS;
-
-      const requestRecord: SetupHandshakeRequest = {
-        id,
-        token,
-        status: "pending",
-        createdAt,
-        expiresAt,
-        decidedAt: null,
-        decisionNote: null,
-        clientName,
-        clientHost,
-        clientVersion,
-        requestedByIp,
-      };
-      setupHandshakeRequests.set(id, requestRecord);
-      persistHandshakeRequests();
-
-      res.status(201).json({
-        ok: true,
-        requestId: id,
-        token,
-        status: "pending",
-        createdAt,
-        expiresAt,
-        message: "Waiting for approval on the Host computer.",
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error?.message || "Could not create approval request" });
-    }
-  });
-
-  app.get("/api/setup/handshake/request/:id", async (req, res) => {
-    try {
-      cleanupSetupHandshakeRequests();
-
-      const requestId = String(req.params.id || "").trim();
-      const token = String(req.query.token || "").trim();
-      const found = setupHandshakeRequests.get(requestId);
-      if (!found) return res.status(404).json({ error: "Approval request not found." });
-      if (!token || token !== found.token) {
-        return res.status(403).json({ error: "Invalid approval token." });
-      }
-
-      res.json(buildSetupHandshakeClientResponse(found));
-    } catch (error: any) {
-      res.status(500).json({ error: error?.message || "Could not read approval request" });
-    }
-  });
-
-  app.get("/api/setup/handshake/pending", async (req, res) => {
-    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
-    if (!isLoopbackIp(remote)) {
-      return res.status(403).json({ error: "Host approval queue is local-only." });
-    }
-
-    cleanupSetupHandshakeRequests();
-    const pending = Array.from(setupHandshakeRequests.values())
-      .filter((item) => item.status === "pending")
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .map(buildSetupHandshakePromptPayload);
-
-    res.json({ pending });
-  });
-
-  app.post("/api/setup/handshake/request/:id/decision", async (req, res) => {
-    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
-    if (!isLoopbackIp(remote)) {
-      return res.status(403).json({ error: "Approval decisions are local-only." });
-    }
-
-    cleanupSetupHandshakeRequests();
-
-    const requestId = String(req.params.id || "").trim();
-    const found = setupHandshakeRequests.get(requestId);
-    if (!found) {
-      return res.status(404).json({ error: "Approval request not found." });
-    }
-
-    if (found.status !== "pending") {
-      return res.json(buildSetupHandshakeClientResponse(found));
-    }
-
-    const decisionRaw = String(req.body?.decision || "").trim().toLowerCase();
-    if (decisionRaw !== "approved" && decisionRaw !== "denied") {
-      return res.status(400).json({ error: "Decision must be approved or denied." });
-    }
-
-    const decision = decisionRaw as "approved" | "denied";
-    const noteFallback =
-      decision === "approved"
-        ? "Approved on the Host computer."
-        : "Denied on the Host computer.";
-    const note = sanitizeSetupHandshakeText(req.body?.note, noteFallback, 220);
-
-    found.status = decision;
-    found.decidedAt = Date.now();
-    found.decisionNote = note;
-    setupHandshakeRequests.set(requestId, found);
-    persistHandshakeRequests();
-
-    res.json(buildSetupHandshakeClientResponse(found));
-  });
-
   app.post("/api/setup/bootstrap", async (req, res, next) => {
     // Do not trust proxy headers for setup restrictions.
     const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
@@ -620,11 +431,20 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
     }
 
+    // Part 1.3: Mutex — prevent concurrent bootstrap requests
+    if (setupBootstrapInProgress) {
+      return res.status(409).json({ error: "Setup already in progress" });
+    }
+    setupBootstrapInProgress = true;
+
     try {
       const setupCode = readSetupCodeFromBody(req.body);
+      const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
+      const selectedOfficeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
 
+      // Portal token flow provides office info from the portal response
       const officeName = typeof officeBody?.name === "string" ? officeBody.name.trim() : "";
       const officeAddress =
         typeof officeBody?.address === "string" ? officeBody.address.trim() : undefined;
@@ -639,8 +459,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
-      if (!setupCode) {
-        return res.status(400).json({ error: "Host Claim Code is required" });
+      // Support two activation paths:
+      // 1. portalToken + officeId (new: desktop portal sign-in flow)
+      // 2. setupCode (legacy: claim code flow)
+      const usePortalToken = Boolean(portalToken && selectedOfficeId);
+
+      if (!usePortalToken && !setupCode) {
+        return res.status(400).json({ error: "Host Claim Code or portal token is required" });
       }
       if (!officeName) {
         return res.status(400).json({ error: "Office name is required" });
@@ -670,91 +495,202 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
 
-      const [officeStats] = await db.select({ count: sql`count(*)` }).from(offices);
-      const [userStats] = await db.select({ count: sql`count(*)` }).from(users);
-      const officeCount = Number(officeStats?.count) || 0;
-      const userCount = Number(userStats?.count) || 0;
-
-      if (userCount > 0) {
-        return res.status(409).json({ error: "This office is already set up." });
-      }
-      if (officeCount > 1) {
-        return res.status(409).json({ error: "Multiple offices exist. Please contact support." });
-      }
-
-      const existingUser = await storage.getUserByLoginId(adminLoginId);
-      if (existingUser) {
-        return res.status(409).json({ error: "A user with this Login ID already exists." });
-      }
-
+      // Part 1.2: Portal call BEFORE any local DB writes — if this fails, nothing is written locally.
       let licenseSnapshot = getLicenseSnapshot();
       try {
-        licenseSnapshot = await activateHostForSetup(setupCode);
+        if (usePortalToken) {
+          licenseSnapshot = await activateHostWithPortalToken(portalToken, selectedOfficeId);
+        } else {
+          licenseSnapshot = await activateHostForSetup(setupCode);
+        }
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);
         return res.status(failure.status).json({ error: failure.message, code: failure.code });
       }
 
-      const office =
-        officeCount === 1
-          ? (await storage.getAllOffices())[0]
-          : await storage.createOffice({
-              name: officeName,
-              address: officeAddress,
-              phone: officePhone,
-              email: officeEmail,
-            });
-
-      const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
-      const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
-      const setupCodeTail = setupCodeLast4(setupCode);
-      mergedSettings.licensing = {
-        setupCodeLast4: setupCodeTail,
-        activationCodeLast4: setupCodeTail,
-        activationAttemptedAt: Date.now(),
-        activationVerifiedAt: activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null,
-      };
-
-      const updatedOffice = await storage.updateOffice(office.id, {
-        name: officeName,
-        address: officeAddress,
-        phone: officePhone,
-        email: officeEmail,
-        settings: mergedSettings,
-      });
-
-      let adminEmail = buildLocalAuthEmail(adminLoginId, updatedOffice.id);
-      while (await storage.getUserByEmail(adminEmail)) {
-        adminEmail = buildLocalAuthEmail(adminLoginId, updatedOffice.id);
-      }
-
-      // If no password provided, generate a random unguessable placeholder hash.
+      // Pre-compute hashes before the synchronous transaction
       const passwordHash = adminPassword
         ? await hashSecret(adminPassword)
         : await hashSecret(randomBytes(32).toString("hex"));
+      const pinHash = await hashSecret(adminPin);
 
-      const user = await storage.createUser({
-        email: adminEmail,
-        loginId: adminLoginId,
-        firstName: adminFirstName,
-        lastName: adminLastName,
-        password: passwordHash,
-        pinHash: await hashSecret(adminPin),
-        officeId: updatedOffice.id,
-        role: "owner",
-      });
+      // Part 1.2: Atomic DB transaction — office + user created together or not at all.
+      const { createdOffice, createdUser } = sqlite.transaction(() => {
+        const [officeStats] = db.select({ count: sql`count(*)` }).from(offices).all();
+        const [userStats] = db.select({ count: sql`count(*)` }).from(users).all();
+        const officeCount = Number(officeStats?.count) || 0;
+        const userCount = Number(userStats?.count) || 0;
 
-      req.login(user, (err) => {
+        if (userCount > 0) {
+          throw Object.assign(new Error("This office is already set up."), { status: 409 });
+        }
+        if (officeCount > 1) {
+          throw Object.assign(new Error("Multiple offices exist. Please contact support."), { status: 409 });
+        }
+
+        const existingUser = db.select().from(users).where(eq(users.loginId, adminLoginId)).limit(1).all()[0];
+        if (existingUser) {
+          throw Object.assign(new Error("A user with this Login ID already exists."), { status: 409 });
+        }
+
+        // Create or update office
+        let office;
+        if (officeCount === 1) {
+          office = db.select().from(offices).limit(1).all()[0];
+        } else {
+          const { randomUUID } = require("crypto");
+          [office] = db.insert(offices).values({
+            id: randomUUID(),
+            name: officeName,
+            address: officeAddress,
+            phone: officePhone,
+            email: officeEmail,
+          }).returning().all();
+        }
+
+        const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
+        const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
+        const setupCodeTail = usePortalToken ? "portal" : setupCodeLast4(setupCode);
+        mergedSettings.licensing = {
+          setupCodeLast4: setupCodeTail,
+          activationCodeLast4: setupCodeTail,
+          activationAttemptedAt: Date.now(),
+          activationVerifiedAt: activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null,
+        };
+
+        [office] = db.update(offices).set({
+          name: officeName,
+          address: officeAddress,
+          phone: officePhone,
+          email: officeEmail,
+          settings: mergedSettings,
+          updatedAt: new Date(),
+        }).where(eq(offices.id, office.id)).returning().all();
+
+        // Part 1.4: Email generation with max 10 retries
+        let adminEmail = buildLocalAuthEmail(adminLoginId, office.id);
+        for (let i = 0; i < 10; i++) {
+          const existing = db.select().from(users).where(eq(users.email, adminEmail)).limit(1).all()[0];
+          if (!existing) break;
+          adminEmail = buildLocalAuthEmail(adminLoginId, office.id);
+          if (i === 9) throw new Error("Failed to generate unique admin email after 10 attempts");
+        }
+
+        const { randomUUID: uuid } = require("crypto");
+        const [user] = db.insert(users).values({
+          id: uuid(),
+          email: adminEmail,
+          loginId: adminLoginId,
+          firstName: adminFirstName,
+          lastName: adminLastName,
+          password: passwordHash,
+          pinHash,
+          officeId: office.id,
+          role: "owner",
+        }).returning().all();
+
+        return { createdOffice: office, createdUser: user };
+      })();
+
+      req.login(createdUser, (err) => {
         if (err) return next(err);
         res.status(201).json({
           ok: true,
-          office: updatedOffice,
-          user: withoutPassword(user),
+          office: createdOffice,
+          user: withoutPassword(createdUser),
           license: licenseSnapshot,
         });
       });
     } catch (error: any) {
-      res.status(500).json({ error: error?.message || "Setup failed" });
+      const status = error?.status || 500;
+      res.status(status).json({ error: error?.message || "Setup failed" });
+    } finally {
+      setupBootstrapInProgress = false;
+    }
+  });
+
+  // ── Client registration via invite code (unauthenticated) ──────────
+  app.post("/api/setup/client-register", async (req, res) => {
+    try {
+      const inviteCode = typeof req.body?.inviteCode === "string" ? req.body.inviteCode.trim() : "";
+      const installationId = typeof req.body?.installationId === "string" ? req.body.installationId.trim() : "";
+      const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
+      const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
+      const loginId = typeof req.body?.loginId === "string" ? req.body.loginId.trim() : "";
+      const pin = typeof req.body?.pin === "string" ? req.body.pin.trim() : "";
+
+      // Validate required fields
+      if (!/^\d{6}$/.test(inviteCode)) {
+        return res.status(400).json({ error: "Invite code must be 6 digits" });
+      }
+      if (!installationId) {
+        return res.status(400).json({ error: "Installation ID is required" });
+      }
+      if (!firstName) {
+        return res.status(400).json({ error: "First name is required" });
+      }
+      if (!lastName) {
+        return res.status(400).json({ error: "Last name is required" });
+      }
+      const loginIdError = validateLoginId(loginId);
+      if (loginIdError) {
+        return res.status(400).json({ error: loginIdError });
+      }
+      if (!isValidSixDigitPin(pin)) {
+        return res.status(400).json({ error: "PIN must be exactly 6 digits" });
+      }
+
+      // Validate invite code with portal
+      const validation = await portalValidateInviteCode({ inviteCode, installationId });
+      if (!validation.ok) {
+        return res.status(403).json({ error: "invalid_invite_code" });
+      }
+
+      // Check loginId not already taken
+      const normalizedLoginId = normalizeLoginId(loginId);
+      const existingUser = await storage.getUserByLoginId(normalizedLoginId);
+      if (existingUser) {
+        return res.status(409).json({ error: "login_id_taken" });
+      }
+
+      // Get the local office
+      const allOffices = await storage.getAllOffices();
+      if (allOffices.length === 0) {
+        return res.status(500).json({ error: "No office configured on this Host" });
+      }
+      const office = allOffices[0];
+
+      // Pre-compute hashes
+      const pinHash = await hashSecret(pin);
+      const email = buildLocalAuthEmail(normalizedLoginId, office.id);
+      // Clients registered via invite code use PIN-only auth; generate a random
+      // unusable password so the NOT NULL column is satisfied.
+      const passwordHash = await hashSecret(randomBytes(32).toString("hex"));
+
+      // Create user in transaction
+      const createdUser = await storage.createUser({
+        firstName,
+        lastName,
+        loginId: normalizedLoginId,
+        email,
+        password: passwordHash,
+        pinHash,
+        role: "staff",
+        officeId: office.id,
+      });
+
+      res.status(201).json({
+        ok: true,
+        user: {
+          id: createdUser.id,
+          loginId: createdUser.loginId,
+          firstName: createdUser.firstName,
+          lastName: createdUser.lastName,
+        },
+      });
+    } catch (error: any) {
+      console.error("Client registration failed:", error);
+      res.status(500).json({ error: error?.message || "Registration failed" });
     }
   });
 
@@ -769,6 +705,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
     try {
       const setupCode = readSetupCodeFromBody(req.body);
+      const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
+      const selectedOfficeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
       const snapshot = req.body?.snapshot;
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
@@ -786,8 +724,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
-      if (!setupCode) {
-        return res.status(400).json({ error: "Host Claim Code is required" });
+      const usePortalToken = Boolean(portalToken && selectedOfficeId);
+      if (!usePortalToken && !setupCode) {
+        return res.status(400).json({ error: "Portal sign-in or Host Claim Code is required" });
       }
       if (!snapshot || typeof snapshot !== "object") {
         return res.status(400).json({ error: "Snapshot file is required" });
@@ -849,7 +788,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       let licenseSnapshot = getLicenseSnapshot();
       try {
-        licenseSnapshot = await activateHostForSetup(setupCode);
+        if (usePortalToken) {
+          licenseSnapshot = await activateHostWithPortalToken(portalToken, selectedOfficeId);
+        } else {
+          licenseSnapshot = await activateHostForSetup(setupCode);
+        }
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);
         return res.status(failure.status).json({ error: failure.message, code: failure.code });
@@ -862,7 +805,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
       const activationVerifiedAt = activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null;
-      const setupCodeTail = setupCodeLast4(setupCode);
+      const setupCodeTail = usePortalToken ? "portal" : setupCodeLast4(setupCode);
 
       const result = importSnapshotV1({
         snapshot,
@@ -1716,8 +1659,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       // Keep email storage populated for legacy compatibility, but generate a local-only internal address.
       let internalEmail = buildLocalAuthEmail(loginId, office.id);
-      while (await storage.getUserByEmail(internalEmail)) {
+      for (let i = 0; i < 10; i++) {
+        if (!(await storage.getUserByEmail(internalEmail))) break;
         internalEmail = buildLocalAuthEmail(loginId, office.id);
+        if (i === 9) throw new Error("Failed to generate unique email after 10 attempts");
       }
 
       const trustProxy = process.env.OTTO_TRUST_PROXY === "true";

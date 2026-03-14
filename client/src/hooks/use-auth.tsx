@@ -47,10 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await apiRequest("POST", "/api/login", credentials);
       return await res.json();
     },
-    onMutate: () => {
-      queryClient.clear();
-    },
     onSuccess: (user: PublicUser) => {
+      queryClient.clear();
       queryClient.setQueryData(["/api/user"], user);
     },
     onError: (error: Error) => {
@@ -67,10 +65,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await apiRequest("POST", "/api/login/pin", credentials);
       return await res.json();
     },
-    onMutate: () => {
-      queryClient.clear();
-    },
     onSuccess: (user: PublicUser) => {
+      queryClient.clear();
       queryClient.setQueryData(["/api/user"], user);
     },
     onError: (error: Error) => {
@@ -87,10 +83,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await apiRequest("POST", "/api/register", credentials);
       return await res.json();
     },
-    onMutate: () => {
-      queryClient.clear();
-    },
     onSuccess: (user: PublicUser) => {
+      queryClient.clear();
       queryClient.setQueryData(["/api/user"], user);
     },
     onError: (error: Error) => {

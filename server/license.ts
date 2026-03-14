@@ -1,7 +1,8 @@
 import os from "os";
+import { OTTO_DEFAULT_PORT } from "@shared/constants";
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
-import { portalActivate, portalCheckin, portalConsumeHostClaim, portalValidateHostClaim } from "./license-client";
+import { portalActivate, portalCheckin, portalConsumeHostClaim, portalIssueAndConsume, portalValidateHostClaim } from "./license-client";
 import type { ClaimValidationResult } from "./license-client";
 
 let state: LicenseState | null = null;
@@ -21,6 +22,10 @@ function updateState(patch: Partial<LicenseState>): LicenseState {
 
 export function getLicenseSnapshot(): LicenseSnapshot {
   return computeLicenseSnapshot(getState());
+}
+
+export function getHostToken(): string {
+  return getState().hostToken || "";
 }
 
 const ACTIVATION_ALLOWED = /^[A-HJ-NP-Z2-9]+$/;
@@ -147,6 +152,26 @@ export async function activateHostForSetup(setupCode: string): Promise<LicenseSn
   return applyActivationResult(result);
 }
 
+export async function activateHostWithPortalToken(portalToken: string, officeId: string): Promise<LicenseSnapshot> {
+  if (!portalToken) throw new Error("Portal token is required");
+  if (!officeId) throw new Error("Office ID is required");
+
+  const current = getState();
+  const result = await portalIssueAndConsume({
+    portalToken,
+    officeId,
+    installationId: current.installationId,
+    hostFingerprint256: current.hostFingerprint256,
+    appVersion: process.env.npm_package_version,
+  });
+
+  if (!result.ok) {
+    throwLicenseRequestError(result.error);
+  }
+
+  return applyActivationResult(result);
+}
+
 export type ClaimValidation = {
   validated: boolean;
   office?: ClaimValidationResult extends { ok: true } ? ClaimValidationResult["office"] : never;
@@ -189,7 +214,7 @@ export async function validateClaimForSetup(setupCode: string): Promise<ClaimVal
 }
 
 function getLocalAddresses(): string[] {
-  const port = process.env.PORT || "5150";
+  const port = process.env.PORT || String(OTTO_DEFAULT_PORT);
   const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
   const nets = os.networkInterfaces();
   return Object.values(nets)

@@ -2,8 +2,12 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import { Express } from "express";
 import session from "express-session";
-import MemoryStoreFactory from "memorystore";
+import SqliteStoreFactory from "better-sqlite3-session-store";
+import Database from "better-sqlite3";
 import { randomBytes } from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
 import { hashSecret, verifySecret } from "./secret-hash";
@@ -52,9 +56,8 @@ async function comparePasswords(supplied: string, stored: string) {
 }
 
 export function setupAuth(app: Express) {
-  // HIPAA-compliant session timeout: 15 minutes of inactivity
-  const SESSION_TIMEOUT_MS = 1000 * 60 * 15; // 15 minutes
-  
+  const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 8; // 8 hours
+
   if (!process.env.SESSION_SECRET) {
     if (process.env.NODE_ENV === "production") {
       throw new Error("SESSION_SECRET must be set");
@@ -63,9 +66,20 @@ export function setupAuth(app: Express) {
     console.warn("SESSION_SECRET was not set; generated a temporary one for this dev run.");
   }
 
-  const MemoryStore = MemoryStoreFactory(session);
-  const sessionStore = new MemoryStore({
-    checkPeriod: SESSION_TIMEOUT_MS,
+  // Persistent SQLite session store — survives app restarts
+  const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const sessionDbPath = path.join(dataDir, "sessions.sqlite");
+  const sessionDb = new Database(sessionDbPath);
+  sessionDb.pragma("journal_mode = WAL");
+
+  const SqliteStore = SqliteStoreFactory(session);
+  const sessionStore = new SqliteStore({
+    client: sessionDb,
+    expired: {
+      clear: true,
+      intervalMs: SESSION_TIMEOUT_MS,
+    },
   });
 
   const cookieSecure =
@@ -77,7 +91,7 @@ export function setupAuth(app: Express) {
 
   const sessionSettings: session.SessionOptions = {
     secret: process.env.SESSION_SECRET,
-    resave: true, // Required for rolling sessions
+    resave: false,
     saveUninitialized: false,
     store: sessionStore,
     rolling: true, // Reset session expiry on every request (activity extends session)

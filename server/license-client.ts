@@ -34,14 +34,16 @@ function getLicenseBaseUrl(): URL {
   }
 }
 
-async function fetchJson(url: URL, body: unknown): Promise<PostJsonResult> {
+async function fetchJson(url: URL, body: unknown, bearerToken?: string): Promise<PostJsonResult> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 8000);
   try {
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
@@ -296,4 +298,154 @@ export async function portalValidateHostClaim(payload: {
   }
 
   return result;
+}
+
+export async function portalIssueAndConsume(payload: {
+  portalToken: string;
+  officeId: string;
+  installationId: string;
+  hostFingerprint256: string;
+  appVersion?: string;
+}): Promise<LicenseActivateResult | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/desktop/claims/issue-and-consume", base);
+  const { portalToken, ...body } = payload;
+  const { status, json, networkError } = await fetchJson(url, body, portalToken);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return parseActivationPayload(json, "Issue-and-consume response was missing required fields.");
+}
+
+export type InviteCodeValidationResult =
+  | { ok: true; officeName: string; officeId: string }
+  | { ok: false; error: LicenseRequestError };
+
+export async function portalValidateInviteCode(payload: {
+  inviteCode: string;
+  installationId: string;
+}): Promise<InviteCodeValidationResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/invite-codes/validate", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+
+  if (status < 200 || status >= 300) {
+    return { ok: false, error: errorFromResponse(status, json) };
+  }
+
+  if (!json?.valid) {
+    return {
+      ok: false,
+      error: {
+        statusCode: 403,
+        code: "INVALID_INVITE_CODE",
+        message: json?.message || "Invalid or expired invite code",
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    officeName: String(json.officeName || ""),
+    officeId: String(json.officeId || ""),
+  };
+}
+
+// --- Invite code management (Host-side, requires hostToken) ---
+
+export type InviteCodeInfo =
+  | { ok: true; inviteCode: string; expiresAt?: number }
+  | { ok: false; error: LicenseRequestError };
+
+export async function portalGetInviteCode(payload: {
+  hostToken: string;
+}): Promise<InviteCodeInfo> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/invite-codes", base);
+  const { status, json, networkError } = await fetchJson(url, { hostToken: payload.hostToken });
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+
+  return {
+    ok: true,
+    inviteCode: String(json?.inviteCode || ""),
+    expiresAt: typeof json?.expiresAt === "number" ? json.expiresAt : undefined,
+  };
+}
+
+export async function portalRegenerateInviteCode(payload: {
+  hostToken: string;
+}): Promise<InviteCodeInfo> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/invite-codes/regenerate", base);
+  const { status, json, networkError } = await fetchJson(url, { hostToken: payload.hostToken });
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+
+  return {
+    ok: true,
+    inviteCode: String(json?.inviteCode || ""),
+    expiresAt: typeof json?.expiresAt === "number" ? json.expiresAt : undefined,
+  };
+}
+
+// --- Portal desktop auth (email/password → token + offices) ---
+
+export type PortalDesktopAuthResult =
+  | {
+      ok: true;
+      token: string;
+      expiresAt: number;
+      offices: Array<{ officeId: string; officeName: string; role: string }>;
+      firstName?: string;
+      lastName?: string;
+      email?: string;
+    }
+  | { ok: false; error: LicenseRequestError };
+
+export async function portalDesktopAuth(payload: {
+  email: string;
+  password: string;
+}): Promise<PortalDesktopAuthResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/auth/desktop-token", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+
+  if (status === 401) {
+    return {
+      ok: false,
+      error: { statusCode: 401, code: "INVALID_CREDENTIALS", message: "Invalid email or password." },
+    };
+  }
+
+  if (status < 200 || status >= 300) {
+    return { ok: false, error: errorFromResponse(status, json) };
+  }
+
+  const token = typeof json?.token === "string" ? json.token : "";
+  if (!token) {
+    return {
+      ok: false,
+      error: { statusCode: 502, code: "BAD_PORTAL_RESPONSE", message: "Portal did not return an authentication token." },
+    };
+  }
+
+  const offices = Array.isArray(json?.offices)
+    ? json.offices.map((o: any) => ({
+        officeId: String(o?.officeId || o?.portalOfficeId || o?.id || ""),
+        officeName: String(o?.officeName || o?.name || ""),
+        role: String(o?.role || ""),
+      }))
+    : [];
+
+  return {
+    ok: true,
+    token,
+    expiresAt: typeof json?.expiresAt === "number" ? json.expiresAt : 0,
+    offices,
+    firstName: typeof json?.firstName === "string" ? json.firstName : undefined,
+    lastName: typeof json?.lastName === "string" ? json.lastName : undefined,
+    email: typeof json?.email === "string" ? json.email : undefined,
+  };
 }

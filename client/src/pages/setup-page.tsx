@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -12,45 +12,54 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, KeyRound, Building2, UserPlus, ShieldAlert, ArrowLeft, CheckCircle2 } from "lucide-react";
+import {
+  Loader2,
+  LogIn,
+  Building2,
+  UserPlus,
+  ShieldAlert,
+  ArrowLeft,
+  CheckCircle2,
+} from "lucide-react";
 
-const ACTIVATION_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
-const SETUP_CODE_REGEX = /^[A-Z0-9][A-Z0-9_-]{5,95}$/i;
 const LOGIN_ID_REGEX = /^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i;
 const PIN_REGEX = /^\d{6}$/;
 
-function normalizeSetupCode(raw: string): string {
-  const value = String(raw || "").trim().replace(/\s+/g, "");
-  if (!value) return "";
-  return value.toUpperCase();
-}
+// --- Types ---
 
-function formatSetupCode(raw: string): string {
-  const normalized = normalizeSetupCode(raw);
-  if (!normalized) return "";
+type PortalOffice = {
+  officeId: string;
+  officeName: string;
+  role: string;
+};
 
-  const activationCompact = normalized.replace(/[^A-Z0-9]/g, "").replace(/[IO01]/g, "");
-  if (activationCompact.length <= 16) {
-    const groups = activationCompact.match(/.{1,4}/g) || [];
-    return groups.slice(0, 4).join("-").slice(0, 19);
-  }
+type PortalAuthResponse = {
+  token: string;
+  expiresAt: number;
+  offices: PortalOffice[];
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+};
 
-  return normalized.replace(/[^A-Z0-9_-]/g, "").slice(0, 96);
-}
+type SetupStatus = {
+  initialized: boolean;
+  officeId: string | null;
+  officeName: string | null;
+  selfSignupEnabled: boolean;
+};
 
-const setupSchema = z
+// --- Schemas ---
+
+const signInSchema = z.object({
+  email: z.string().email("Please enter a valid email"),
+  password: z.string().min(1, "Password is required"),
+});
+
+type SignInFormData = z.infer<typeof signInSchema>;
+
+const adminSchema = z
   .object({
-    activationCode: z
-      .string()
-      .min(1, "Host Claim Code is required")
-      .refine((val) => {
-        const normalized = normalizeSetupCode(val);
-        if (!normalized) return false;
-        if (ACTIVATION_CODE_REGEX.test(normalized)) return true;
-        return SETUP_CODE_REGEX.test(normalized);
-      }, {
-        message: "Enter a valid Host Claim Code (or legacy Activation Code).",
-      }),
     officeName: z.string().min(1, "Office name is required"),
     officeAddress: z.string().optional(),
     officePhone: z.string().optional(),
@@ -63,48 +72,26 @@ const setupSchema = z
       .max(32, "Login ID must be 32 characters or fewer")
       .regex(LOGIN_ID_REGEX, "Login ID can use letters, numbers, '.', '-', and '_'"),
     adminPin: z.string().regex(PIN_REGEX, "PIN must be exactly 6 digits"),
-    adminPinConfirm: z.string().optional(),
+    adminPinConfirm: z.string().regex(PIN_REGEX, "Confirm your PIN"),
   })
-  .refine((data) => {
-    if (!data.adminPinConfirm) return true;
-    return data.adminPin === data.adminPinConfirm;
-  }, {
+  .refine((data) => data.adminPin === data.adminPinConfirm, {
     message: "PINs do not match",
     path: ["adminPinConfirm"],
   });
 
-type SetupFormData = z.infer<typeof setupSchema>;
+type AdminFormData = z.infer<typeof adminSchema>;
 
-type ClaimData = {
-  validated: boolean;
-  fallbackToConsume?: boolean;
-  office?: {
-    name?: string;
-    address?: string;
-    phone?: string;
-    email?: string;
-    portalOfficeId?: string;
-  };
-  portalUser?: {
-    firstName?: string;
-    lastName?: string;
-    email?: string;
-  };
-};
-
-type SetupStatus = {
-  initialized: boolean;
-  officeId: string | null;
-  officeName: string | null;
-  selfSignupEnabled: boolean;
-};
+// --- Component ---
 
 export default function SetupPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [setupStep, setSetupStep] = useState<"claim" | "details">("claim");
-  const [claimData, setClaimData] = useState<ClaimData | null>(null);
+
+  // Flow state
+  const [step, setStep] = useState<"signin" | "office" | "admin">("signin");
+  const [portalAuth, setPortalAuth] = useState<PortalAuthResponse | null>(null);
+  const [selectedOffice, setSelectedOffice] = useState<PortalOffice | null>(null);
   const [setupMode, setSetupMode] = useState<"new" | "import">("new");
   const [snapshot, setSnapshot] = useState<any | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
@@ -125,10 +112,14 @@ export default function SetupPage() {
     queryKey: ["/api/setup/status"],
   });
 
-  const form = useForm<SetupFormData>({
-    resolver: zodResolver(setupSchema),
+  const signInForm = useForm<SignInFormData>({
+    resolver: zodResolver(signInSchema),
+    defaultValues: { email: "", password: "" },
+  });
+
+  const adminForm = useForm<AdminFormData>({
+    resolver: zodResolver(adminSchema),
     defaultValues: {
-      activationCode: "",
       officeName: "",
       officeAddress: "",
       officePhone: "",
@@ -141,107 +132,71 @@ export default function SetupPage() {
     },
   });
 
-  const setupCodeValue = form.watch("activationCode");
-
-  const hasPortalUser = Boolean(claimData?.portalUser);
-
-  // --- Verify claim mutation (step 1 → step 2) ---
-  const verifyClaimMutation = useMutation({
-    mutationFn: async (code: string) => {
-      const setupCode = normalizeSetupCode(code);
-      const res = await fetch("/api/setup/verify-claim", {
+  // --- Portal sign-in ---
+  const signInMutation = useMutation({
+    mutationFn: async (data: SignInFormData) => {
+      const res = await fetch("/api/setup/portal-auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ setupCode, claimCode: setupCode, activationCode: setupCode }),
+        body: JSON.stringify({ email: data.email, password: data.password }),
       });
 
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        const message = payload?.error || payload?.message || res.statusText || "Verification failed";
-        throw new Error(message);
+        throw new Error(payload?.error || "Sign-in failed");
       }
-      return payload as ClaimData;
+      return payload as PortalAuthResponse;
     },
     onSuccess: (data) => {
-      setClaimData(data);
+      setPortalAuth(data);
 
-      // Pre-fill office fields from portal response
-      if (data.office) {
-        if (data.office.name) form.setValue("officeName", data.office.name, { shouldValidate: true });
-        if (data.office.address) form.setValue("officeAddress", data.office.address);
-        if (data.office.phone) form.setValue("officePhone", data.office.phone);
-        if (data.office.email) form.setValue("officeEmail", data.office.email);
+      // Pre-fill admin name from portal user
+      if (data.firstName) adminForm.setValue("adminFirstName", data.firstName);
+      if (data.lastName) adminForm.setValue("adminLastName", data.lastName);
+      if (data.email) {
+        const emailLocal = data.email.split("@")[0] || "";
+        const sanitized = emailLocal.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 32);
+        if (sanitized.length >= 3) adminForm.setValue("adminLoginId", sanitized);
       }
 
-      // Pre-fill owner fields from portal user
-      if (data.portalUser) {
-        if (data.portalUser.firstName) form.setValue("adminFirstName", data.portalUser.firstName);
-        if (data.portalUser.lastName) form.setValue("adminLastName", data.portalUser.lastName);
-        if (data.portalUser.email) {
-          // Derive login ID from portal email (local part)
-          const emailLocal = data.portalUser.email.split("@")[0] || "";
-          const sanitized = emailLocal.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 32);
-          if (sanitized.length >= 3 && !form.getValues("adminLoginId")) {
-            form.setValue("adminLoginId", sanitized);
-          }
-        }
+      if (data.offices.length === 1) {
+        // Auto-select single office and skip to admin step
+        const office = data.offices[0];
+        setSelectedOffice(office);
+        adminForm.setValue("officeName", office.officeName, { shouldValidate: true });
+        setStep("admin");
+      } else if (data.offices.length > 1) {
+        setStep("office");
+      } else {
+        toast({
+          title: "No practices found",
+          description: "Your portal account has no practices. Create one at ottojobtracker.com first.",
+          variant: "destructive",
+        });
       }
-
-      setSetupStep("details");
     },
     onError: (error: Error) => {
       toast({
-        title: "Claim verification failed",
+        title: "Sign-in failed",
         description: error.message,
         variant: "destructive",
       });
     },
   });
 
-  // Load pending activation code from Electron bridge
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const bridge = (window as any)?.otto;
-        if (!bridge?.getPendingActivationCode) return;
-        const pending = await bridge.getPendingActivationCode();
-        if (cancelled) return;
-        if (typeof pending !== "string") return;
-
-        const trimmed = formatSetupCode(pending.trim());
-        if (!trimmed) return;
-
-        const current = form.getValues("activationCode");
-        if (!current) {
-          form.setValue("activationCode", trimmed, { shouldValidate: true });
-          // Auto-verify the pending code
-          verifyClaimMutation.mutate(trimmed);
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // --- Bootstrap (final submit) ---
   const bootstrapMutation = useMutation({
-    mutationFn: async (data: SetupFormData) => {
-      const setupCode = normalizeSetupCode(data.activationCode);
+    mutationFn: async (data: AdminFormData) => {
+      if (!portalAuth || !selectedOffice) throw new Error("Missing portal authentication");
+
       const res = await fetch("/api/setup/bootstrap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          setupCode,
-          claimCode: setupCode,
-          activationCode: setupCode,
+          portalToken: portalAuth.token,
+          officeId: selectedOffice.officeId,
           office: {
             name: data.officeName,
             address: data.officeAddress || undefined,
@@ -259,64 +214,36 @@ export default function SetupPage() {
 
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        const message = payload?.error || payload?.message || res.statusText || "Setup failed";
+        const message = payload?.error || payload?.message || "Setup failed";
         const details = Array.isArray(payload?.details) ? payload.details.join("\n") : null;
         throw new Error(details ? `${message}\n${details}` : message);
       }
-
-      return payload as {
-        ok: true;
-        office: any;
-        user: any;
-        activationWarning?: string | null;
-      };
+      return payload as { ok: true; office: any; user: any; license?: any };
     },
     onSuccess: (payload) => {
       queryClient.setQueryData(["/api/user"], payload.user);
       queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
-      try {
-        (window as any)?.otto?.clearPendingActivationCode?.();
-      } catch {
-        // ignore
-      }
-      toast({
-        title: "Setup complete",
-        description: "Your office is ready.",
-      });
-
-      if (payload.activationWarning) {
-        toast({
-          title: "Activation not verified yet",
-          description: payload.activationWarning,
-        });
-      }
-
+      toast({ title: "Setup complete", description: "Your office is ready." });
       setLocation("/");
     },
     onError: (error: Error) => {
-      toast({
-        title: "Setup failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Setup failed", description: error.message, variant: "destructive" });
     },
   });
 
+  // --- Import with snapshot ---
   const importMutation = useMutation({
-    mutationFn: async (data: SetupFormData) => {
-      if (!snapshot) {
-        throw new Error("Please choose a migration snapshot file.");
-      }
-      const setupCode = normalizeSetupCode(data.activationCode);
+    mutationFn: async (data: AdminFormData) => {
+      if (!portalAuth || !selectedOffice) throw new Error("Missing portal authentication");
+      if (!snapshot) throw new Error("Please choose a migration snapshot file.");
 
       const res = await fetch("/api/setup/import-snapshot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          setupCode,
-          claimCode: setupCode,
-          activationCode: setupCode,
+          portalToken: portalAuth.token,
+          officeId: selectedOffice.officeId,
           snapshot,
           office: {
             name: data.officeName,
@@ -335,50 +262,83 @@ export default function SetupPage() {
 
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
-        const message = payload?.error || payload?.message || res.statusText || "Import failed";
+        const message = payload?.error || payload?.message || "Import failed";
         const details = Array.isArray(payload?.details) ? payload.details.join("\n") : null;
         throw new Error(details ? `${message}\n${details}` : message);
       }
-
-      return payload as {
-        ok: true;
-        office: any;
-        user: any;
-        importedCounts?: Record<string, number>;
-        activationWarning?: string | null;
-      };
+      return payload as { ok: true; office: any; user: any; importedCounts?: Record<string, number> };
     },
     onSuccess: (payload) => {
       queryClient.setQueryData(["/api/user"], payload.user);
       queryClient.invalidateQueries({ queryKey: ["/api/setup/status"] });
-      try {
-        (window as any)?.otto?.clearPendingActivationCode?.();
-      } catch {
-        // ignore
-      }
-
-      toast({
-        title: "Import complete",
-        description: "Your office data is imported.",
-      });
-
-      if (payload.activationWarning) {
-        toast({
-          title: "Activation not verified yet",
-          description: payload.activationWarning,
-        });
-      }
-
+      toast({ title: "Import complete", description: "Your office data is imported." });
       setLocation("/");
     },
     onError: (error: Error) => {
-      toast({
-        title: "Import failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Import failed", description: error.message, variant: "destructive" });
     },
   });
+
+  // --- Helpers ---
+
+  const handleSelectOffice = (officeId: string) => {
+    const office = portalAuth?.offices.find((o) => o.officeId === officeId);
+    if (!office) return;
+    setSelectedOffice(office);
+    adminForm.setValue("officeName", office.officeName, { shouldValidate: true });
+    setStep("admin");
+  };
+
+  const handleSnapshotFile = async (file: File | null) => {
+    if (!file) {
+      setSnapshot(null);
+      setSnapshotError(null);
+      setSnapshotPreview(null);
+      return;
+    }
+
+    setSnapshotError(null);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      if (!parsed || typeof parsed !== "object") throw new Error("File is not a valid JSON snapshot.");
+      if (parsed.format !== "otto-snapshot" || parsed.version !== 1) {
+        throw new Error("This snapshot file is not supported.");
+      }
+
+      setSnapshot(parsed);
+
+      const office = parsed.office || {};
+      const officeName = typeof office.name === "string" ? office.name : "";
+      if (officeName) adminForm.setValue("officeName", officeName, { shouldValidate: true });
+      if (typeof office.address === "string") adminForm.setValue("officeAddress", office.address);
+      if (typeof office.phone === "string") adminForm.setValue("officePhone", office.phone);
+      if (typeof office.email === "string") adminForm.setValue("officeEmail", office.email);
+
+      setSnapshotPreview({
+        officeName: officeName || "Office",
+        users: Array.isArray(parsed.users) ? parsed.users.length : 0,
+        jobs: Array.isArray(parsed.jobs) ? parsed.jobs.length : 0,
+        archivedJobs: Array.isArray(parsed.archivedJobs) ? parsed.archivedJobs.length : 0,
+        comments: Array.isArray(parsed.jobComments) ? parsed.jobComments.length : 0,
+      });
+    } catch (error: any) {
+      setSnapshot(null);
+      setSnapshotPreview(null);
+      setSnapshotError(error?.message || "Could not read this snapshot file.");
+    }
+  };
+
+  const onAdminSubmit = (data: AdminFormData) => {
+    if (setupMode === "import") {
+      importMutation.mutate(data);
+    } else {
+      bootstrapMutation.mutate(data);
+    }
+  };
+
+  // --- Loading ---
 
   const loading = authLoading || statusLoading;
   if (loading) {
@@ -388,6 +348,8 @@ export default function SetupPage() {
       </div>
     );
   }
+
+  // --- Non-localhost guard ---
 
   if (!isLocalHost) {
     return (
@@ -410,257 +372,208 @@ export default function SetupPage() {
     );
   }
 
+  // --- Already initialized ---
+
   if (setupStatus?.initialized) {
     setLocation(user ? "/" : "/auth");
     return null;
   }
 
-  const handleSnapshotFile = async (file: File | null) => {
-    if (!file) {
-      setSnapshot(null);
-      setSnapshotError(null);
-      setSnapshotPreview(null);
-      return;
-    }
-
-    setSnapshotError(null);
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-
-      if (!parsed || typeof parsed !== "object") {
-        throw new Error("File is not a valid JSON snapshot.");
-      }
-
-      const format = (parsed as any).format;
-      const version = (parsed as any).version;
-      if (format !== "otto-snapshot" || version !== 1) {
-        throw new Error("This snapshot file is not supported.");
-      }
-
-      setSnapshot(parsed);
-
-      const office = (parsed as any).office || {};
-      const officeName = typeof office?.name === "string" ? office.name : "";
-      const officeAddress = typeof office?.address === "string" ? office.address : "";
-      const officePhone = typeof office?.phone === "string" ? office.phone : "";
-      const officeEmail = typeof office?.email === "string" ? office.email : "";
-
-      form.setValue("officeName", officeName || "", { shouldValidate: true });
-      form.setValue("officeAddress", officeAddress || "");
-      form.setValue("officePhone", officePhone || "");
-      form.setValue("officeEmail", officeEmail || "");
-
-      setSnapshotPreview({
-        officeName: officeName || "Office",
-        users: Array.isArray((parsed as any).users) ? (parsed as any).users.length : 0,
-        jobs: Array.isArray((parsed as any).jobs) ? (parsed as any).jobs.length : 0,
-        archivedJobs: Array.isArray((parsed as any).archivedJobs) ? (parsed as any).archivedJobs.length : 0,
-        comments: Array.isArray((parsed as any).jobComments) ? (parsed as any).jobComments.length : 0,
-      });
-    } catch (error: any) {
-      setSnapshot(null);
-      setSnapshotPreview(null);
-      setSnapshotError(error?.message || "Could not read this snapshot file.");
-    }
-  };
-
-  const handleVerifyClaim = async () => {
-    const valid = await form.trigger("activationCode");
-    if (!valid) return;
-    const code = form.getValues("activationCode");
-    verifyClaimMutation.mutate(code);
-  };
-
-  const onSubmit = (data: SetupFormData) => {
-    if (setupMode === "import") {
-      importMutation.mutate(data);
-    } else {
-      bootstrapMutation.mutate(data);
-    }
-  };
-
   const isSubmitting = bootstrapMutation.isPending || importMutation.isPending;
-  const isVerifying = verifyClaimMutation.isPending;
-  const importMissingFile = setupMode === "import" && !snapshot;
 
-  // --- Step 1: Claim code entry (side-by-side: instructions | actions) ---
-  if (setupStep === "claim") {
+  // ============================
+  // Step 1: Portal sign-in
+  // ============================
+  if (step === "signin") {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
         <div className="w-full max-w-5xl space-y-6">
           <div className="text-center">
             <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
             <p className="text-muted-foreground">
-              Enter your Host Claim Code to get started. We'll verify it online and pre-fill your office details.
+              Sign in with your ottojobtracker.com account to get started.
             </p>
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Left column: instructions */}
+            {/* Left: instructions */}
             <Card className="h-fit">
               <CardHeader>
-                <CardTitle>Before you start</CardTitle>
-                <CardDescription>What this setup does and why.</CardDescription>
+                <CardTitle>How setup works</CardTitle>
+                <CardDescription>Quick overview of what happens next.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 text-sm text-muted-foreground">
                 <ol className="list-decimal pl-5 space-y-1">
-                  <li>Enter your Host Claim Code to verify your office setup (no patient data is sent).</li>
-                  <li>Create your office record and first owner login (local to this office).</li>
-                  <li>After setup, new users can request access from the sign-in screen and be approved in <b>Team</b>.</li>
+                  <li>Sign in with your Otto portal account to verify your practice.</li>
+                  <li>Choose which practice to set up on this computer.</li>
+                  <li>Create the first owner login (stored locally on this computer).</li>
                 </ol>
                 <Alert>
                   <AlertDescription>
-                    This Host setup step requires internet access to verify your Host Claim Code.
+                    This step requires internet access to verify your account. No patient data is sent.
                   </AlertDescription>
                 </Alert>
                 <Alert>
                   <AlertDescription>
-                    Not the Host computer? Use <b>File → Change Connection…</b> to switch this computer to Client.
+                    Not the Host computer? Use <b>File &rarr; Change Connection&hellip;</b> to switch this computer to Client.
                   </AlertDescription>
                 </Alert>
               </CardContent>
             </Card>
 
-            {/* Right column: claim code + migration */}
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <KeyRound className="h-5 w-5 text-primary" />
-                    Host claim
-                  </CardTitle>
-                  <CardDescription>
-                    Paste the Host Claim Code from your portal handoff screen. Legacy Activation Codes are still accepted during
-                    transition.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
+            {/* Right: sign-in form */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <LogIn className="h-5 w-5 text-primary" />
+                  Sign in to Otto
+                </CardTitle>
+                <CardDescription>
+                  Use the email and password from your ottojobtracker.com account.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form
+                  onSubmit={signInForm.handleSubmit((data) => signInMutation.mutate(data))}
+                  className="space-y-4"
+                >
                   <div className="space-y-2">
-                    <Label htmlFor="activationCode">Host Claim Code *</Label>
+                    <Label htmlFor="email">Email</Label>
                     <Input
-                      id="activationCode"
-                      placeholder="CLAIM-XXXX-XXXX or XXXX-XXXX-XXXX-XXXX"
-                      value={setupCodeValue}
-                      onChange={(event) => {
-                        form.setValue("activationCode", formatSetupCode(event.target.value), {
-                          shouldValidate: true,
-                        });
-                      }}
-                      disabled={isVerifying}
-                      data-testid="input-activation-code"
+                      id="email"
+                      type="email"
+                      placeholder="you@example.com"
+                      {...signInForm.register("email")}
+                      disabled={signInMutation.isPending}
+                      data-testid="input-portal-email"
                     />
-                    {form.formState.errors.activationCode && (
-                      <p className="text-sm text-destructive">{form.formState.errors.activationCode.message}</p>
+                    {signInForm.formState.errors.email && (
+                      <p className="text-sm text-destructive">{signInForm.formState.errors.email.message}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      {...signInForm.register("password")}
+                      disabled={signInMutation.isPending}
+                      data-testid="input-portal-password"
+                    />
+                    {signInForm.formState.errors.password && (
+                      <p className="text-sm text-destructive">{signInForm.formState.errors.password.message}</p>
                     )}
                   </div>
 
                   <Button
-                    type="button"
+                    type="submit"
                     className="w-full"
-                    disabled={isVerifying || !setupCodeValue}
-                    onClick={handleVerifyClaim}
+                    disabled={signInMutation.isPending}
                   >
-                    {isVerifying && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Verify & Continue
+                    {signInMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Sign in &amp; continue
                   </Button>
-                </CardContent>
-              </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Office migration (optional)</CardTitle>
-                  <CardDescription>
-                    If you used the hosted Otto web app, import a snapshot to bring your office data to this Host.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <Button
-                      type="button"
-                      variant={setupMode === "new" ? "default" : "secondary"}
-                      onClick={() => {
-                        setSetupMode("new");
-                        setSnapshotError(null);
-                      }}
+                  <p className="text-xs text-center text-muted-foreground">
+                    <a
+                      href="https://ottojobtracker.com/portal/reset"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-foreground"
                     >
-                      Start fresh
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={setupMode === "import" ? "default" : "secondary"}
-                      onClick={() => setSetupMode("import")}
-                    >
-                      Import snapshot
-                    </Button>
-                  </div>
-
-                  {setupMode === "import" && (
-                    <div className="space-y-2">
-                      <Label htmlFor="snapshotFile">Snapshot file *</Label>
-                      <Input
-                        id="snapshotFile"
-                        type="file"
-                        accept=".otto-snapshot.json,application/json"
-                        onChange={(event) => handleSnapshotFile(event.target.files?.[0] || null)}
-                        disabled={isVerifying}
-                      />
-                      {snapshotError && <p className="text-sm text-destructive">{snapshotError}</p>}
-
-                      {snapshotPreview && (
-                        <div className="rounded-lg border bg-card p-3 text-sm text-muted-foreground">
-                          <div className="font-medium text-foreground mb-1">{snapshotPreview.officeName}</div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>Users: {snapshotPreview.users}</div>
-                            <div>Active jobs: {snapshotPreview.jobs}</div>
-                            <div>Archived jobs: {snapshotPreview.archivedJobs}</div>
-                            <div>Comments: {snapshotPreview.comments}</div>
-                          </div>
-                        </div>
-                      )}
-
-                      <Alert>
-                        <AlertDescription>
-                          In Otto Web, export a migration snapshot file. Import is only available on a fresh Host (no existing
-                          data).
-                        </AlertDescription>
-                      </Alert>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+                      Forgot your password?
+                    </a>
+                  </p>
+                </form>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
     );
   }
 
-  // --- Step 2: Office details + owner login (pre-filled from claim verification) ---
-  const preFilledFromPortal = claimData && !claimData.fallbackToConsume && Boolean(claimData.office?.name || claimData.portalUser?.firstName);
+  // ============================
+  // Step 2: Select practice
+  // ============================
+  if (step === "office" && portalAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
+        <div className="w-full max-w-md space-y-6">
+          <div className="text-center">
+            <h1 className="text-3xl font-bold text-foreground mb-2">Choose your practice</h1>
+            <p className="text-muted-foreground">
+              Your account has access to multiple practices. Select the one to set up on this computer.
+            </p>
+          </div>
 
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                Your practices
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {portalAuth.offices.map((office) => (
+                <Button
+                  key={office.officeId}
+                  variant="outline"
+                  className="w-full justify-start text-left h-auto py-3"
+                  onClick={() => handleSelectOffice(office.officeId)}
+                >
+                  <div>
+                    <div className="font-medium">{office.officeName}</div>
+                    {office.role && (
+                      <div className="text-xs text-muted-foreground capitalize">{office.role}</div>
+                    )}
+                  </div>
+                </Button>
+              ))}
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setStep("signin");
+                  setPortalAuth(null);
+                }}
+                className="mt-2"
+              >
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                Use a different account
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================
+  // Step 3: Office details + admin account
+  // ============================
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
       <div className="w-full max-w-5xl space-y-6">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
           <p className="text-muted-foreground">
-            {preFilledFromPortal
-              ? "We've pre-filled your office details from the portal. Confirm everything looks right and create your owner login."
-              : "Enter your office details and create the first owner login."}
+            Confirm your office details and create the first owner login.
           </p>
         </div>
 
-        {preFilledFromPortal && (
-          <Alert className="border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            <AlertDescription className="text-emerald-700 dark:text-emerald-300">
-              Claim code verified. Office details have been pre-filled from your portal account.
-            </AlertDescription>
-          </Alert>
-        )}
+        <Alert className="border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          <AlertDescription className="text-emerald-700 dark:text-emerald-300">
+            Signed in as {portalAuth?.email || portalAuth?.firstName}. Setting up <b>{selectedOffice?.officeName}</b>.
+          </AlertDescription>
+        </Alert>
 
-        <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-6 lg:grid-cols-2">
+        <form onSubmit={adminForm.handleSubmit(onAdminSubmit)} className="grid gap-6 lg:grid-cols-2">
+          {/* Left: Office details */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -670,9 +583,7 @@ export default function SetupPage() {
               <CardDescription>
                 {setupMode === "import"
                   ? "These are loaded from the snapshot. You can adjust them now or later in Settings."
-                  : preFilledFromPortal
-                    ? "Pre-filled from your portal account — edit if needed."
-                    : "This is shown inside the app for your team."}
+                  : "Pre-filled from your portal account. Edit if needed."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -681,35 +592,90 @@ export default function SetupPage() {
                 <Input
                   id="officeName"
                   placeholder="Smith Eye Care"
-                  {...form.register("officeName")}
+                  {...adminForm.register("officeName")}
                   data-testid="input-office-name"
                 />
-                {form.formState.errors.officeName && (
-                  <p className="text-sm text-destructive">{form.formState.errors.officeName.message}</p>
+                {adminForm.formState.errors.officeName && (
+                  <p className="text-sm text-destructive">{adminForm.formState.errors.officeName.message}</p>
                 )}
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="officeAddress">Address</Label>
-                <Input id="officeAddress" placeholder="123 Main St" {...form.register("officeAddress")} />
+                <Input id="officeAddress" placeholder="123 Main St" {...adminForm.register("officeAddress")} />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label htmlFor="officePhone">Phone</Label>
-                  <Input id="officePhone" placeholder="(555) 123-4567" {...form.register("officePhone")} />
+                  <Input id="officePhone" placeholder="(555) 123-4567" {...adminForm.register("officePhone")} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="officeEmail">Office email</Label>
-                  <Input id="officeEmail" placeholder="contact@practice.com" {...form.register("officeEmail")} />
-                  {form.formState.errors.officeEmail && (
-                    <p className="text-sm text-destructive">{form.formState.errors.officeEmail.message}</p>
+                  <Input id="officeEmail" placeholder="contact@practice.com" {...adminForm.register("officeEmail")} />
+                  {adminForm.formState.errors.officeEmail && (
+                    <p className="text-sm text-destructive">{adminForm.formState.errors.officeEmail.message}</p>
                   )}
                 </div>
+              </div>
+
+              {/* Migration option */}
+              <div className="pt-3 border-t">
+                <Label className="text-xs text-muted-foreground mb-2 block">Data migration (optional)</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={setupMode === "new" ? "default" : "secondary"}
+                    onClick={() => { setSetupMode("new"); setSnapshotError(null); }}
+                  >
+                    Start fresh
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={setupMode === "import" ? "default" : "secondary"}
+                    onClick={() => setSetupMode("import")}
+                  >
+                    Import snapshot
+                  </Button>
+                </div>
+
+                {setupMode === "import" && (
+                  <div className="space-y-2 mt-3">
+                    <Label htmlFor="snapshotFile">Snapshot file *</Label>
+                    <Input
+                      id="snapshotFile"
+                      type="file"
+                      accept=".otto-snapshot.json,application/json"
+                      onChange={(event) => handleSnapshotFile(event.target.files?.[0] || null)}
+                    />
+                    {snapshotError && <p className="text-sm text-destructive">{snapshotError}</p>}
+
+                    {snapshotPreview && (
+                      <div className="rounded-lg border bg-card p-3 text-sm text-muted-foreground">
+                        <div className="font-medium text-foreground mb-1">{snapshotPreview.officeName}</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>Users: {snapshotPreview.users}</div>
+                          <div>Active jobs: {snapshotPreview.jobs}</div>
+                          <div>Archived jobs: {snapshotPreview.archivedJobs}</div>
+                          <div>Comments: {snapshotPreview.comments}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    <Alert>
+                      <AlertDescription>
+                        In Otto Web, export a migration snapshot file. Import is only available on a fresh Host (no existing data).
+                      </AlertDescription>
+                    </Alert>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
 
+          {/* Right: Admin account */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -717,100 +683,99 @@ export default function SetupPage() {
                 Create the owner login
               </CardTitle>
               <CardDescription>
-                {hasPortalUser
-                  ? "Pre-filled from your portal account — edit if needed. This owner login controls approvals and office settings."
-                  : "This owner login controls approvals and office settings so your team can start work quickly and safely."}
+                This owner login controls approvals and office settings. Your name has been pre-filled from your portal account.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="adminFirstName">First name *</Label>
-                  <Input id="adminFirstName" {...form.register("adminFirstName")} />
-                  {form.formState.errors.adminFirstName && (
-                    <p className="text-sm text-destructive">{form.formState.errors.adminFirstName.message}</p>
+                  <Input id="adminFirstName" {...adminForm.register("adminFirstName")} />
+                  {adminForm.formState.errors.adminFirstName && (
+                    <p className="text-sm text-destructive">{adminForm.formState.errors.adminFirstName.message}</p>
                   )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="adminLastName">Last name *</Label>
-                  <Input id="adminLastName" {...form.register("adminLastName")} />
-                  {form.formState.errors.adminLastName && (
-                    <p className="text-sm text-destructive">{form.formState.errors.adminLastName.message}</p>
+                  <Input id="adminLastName" {...adminForm.register("adminLastName")} />
+                  {adminForm.formState.errors.adminLastName && (
+                    <p className="text-sm text-destructive">{adminForm.formState.errors.adminLastName.message}</p>
                   )}
                 </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="adminLoginId">Login ID *</Label>
-                <Input id="adminLoginId" placeholder="jane.cho" {...form.register("adminLoginId")} />
+                <Input id="adminLoginId" placeholder="jane.cho" {...adminForm.register("adminLoginId")} />
                 <p className="text-xs text-muted-foreground">3-32 characters. Use letters, numbers, ".", "-", or "_".</p>
-                {form.formState.errors.adminLoginId && (
-                  <p className="text-sm text-destructive">{form.formState.errors.adminLoginId.message}</p>
+                {adminForm.formState.errors.adminLoginId && (
+                  <p className="text-sm text-destructive">{adminForm.formState.errors.adminLoginId.message}</p>
                 )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="adminPin">6-digit PIN *</Label>
-                  <Input id="adminPin" type="password" inputMode="numeric" maxLength={6} {...form.register("adminPin")} />
-                  {form.formState.errors.adminPin && (
-                    <p className="text-sm text-destructive">{form.formState.errors.adminPin.message}</p>
+                  <Input
+                    id="adminPin"
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    {...adminForm.register("adminPin")}
+                  />
+                  {adminForm.formState.errors.adminPin && (
+                    <p className="text-sm text-destructive">{adminForm.formState.errors.adminPin.message}</p>
                   )}
                 </div>
-                {!hasPortalUser && (
-                  <div className="space-y-2">
-                    <Label htmlFor="adminPinConfirm">Confirm PIN *</Label>
-                    <Input
-                      id="adminPinConfirm"
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={6}
-                      {...form.register("adminPinConfirm")}
-                    />
-                    {form.formState.errors.adminPinConfirm && (
-                      <p className="text-sm text-destructive">{form.formState.errors.adminPinConfirm.message}</p>
-                    )}
-                  </div>
-                )}
+                <div className="space-y-2">
+                  <Label htmlFor="adminPinConfirm">Confirm PIN *</Label>
+                  <Input
+                    id="adminPinConfirm"
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    {...adminForm.register("adminPinConfirm")}
+                  />
+                  {adminForm.formState.errors.adminPinConfirm && (
+                    <p className="text-sm text-destructive">{adminForm.formState.errors.adminPinConfirm.message}</p>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
 
+          {/* Bottom: submit */}
           <div className="lg:col-span-2 space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="activationCodeDisplay" className="text-muted-foreground text-xs">Verified claim code</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="activationCodeDisplay"
-                  value={setupCodeValue}
-                  disabled
-                  className="bg-muted max-w-xs"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setSetupStep("claim");
-                    setClaimData(null);
-                  }}
-                >
-                  <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
-                  Change
-                </Button>
-              </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  if (portalAuth && portalAuth.offices.length > 1) {
+                    setStep("office");
+                  } else {
+                    setStep("signin");
+                    setPortalAuth(null);
+                    setSelectedOffice(null);
+                  }
+                }}
+              >
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                Back
+              </Button>
             </div>
 
             <Button
               type="submit"
               className="w-full"
-              disabled={isSubmitting || importMissingFile}
+              disabled={isSubmitting || (setupMode === "import" && !snapshot)}
               data-testid="button-complete-setup"
             >
               {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {setupMode === "import" ? "Import & complete setup" : "Complete setup"}
             </Button>
-            {importMissingFile && (
+            {setupMode === "import" && !snapshot && (
               <p className="text-xs text-muted-foreground">Choose a snapshot file above to enable import.</p>
             )}
           </div>
