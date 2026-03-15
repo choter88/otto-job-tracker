@@ -2183,6 +2183,55 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
   return { ok: true, relaunched: true };
 });
 
+ipcMain.handle("otto:setup:bootstrap", async (_event, payload) => {
+  // Called by setup.html to bootstrap the Host. Runs in the main process to
+  // avoid TLS/CORS issues with the renderer's file:// origin fetching localhost.
+  const config = readConfig();
+  const protocol = app.isPackaged ? "https" : "http";
+  const port = process.env.PORT || "5150";
+  const url = `${protocol}://127.0.0.1:${port}/api/setup/bootstrap`;
+
+  try {
+    const mod = protocol === "https" ? https : http;
+    const body = JSON.stringify(payload);
+    const result = await new Promise((resolve, reject) => {
+      const req = mod.request(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 30000,
+        rejectUnauthorized: false, // Trust our own self-signed cert
+      }, (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode, json: JSON.parse(data) });
+          } catch {
+            resolve({ status: res.statusCode, json: null });
+          }
+        });
+      });
+      req.on("error", (err) => reject(err));
+      req.on("timeout", () => { req.destroy(); reject(new Error("Bootstrap request timed out.")); });
+      req.write(body);
+      req.end();
+    });
+
+    if (result.status < 200 || result.status >= 300) {
+      const error = result.json?.error || `Setup failed (${result.status})`;
+      const code = result.json?.code || "";
+      return { ok: false, error, code, status: result.status };
+    }
+
+    return { ok: true, data: result.json };
+  } catch (err) {
+    return { ok: false, error: err?.message || "Could not reach the local server." };
+  }
+});
+
 ipcMain.handle("otto:setup:complete", async () => {
   // Called by setup.html after Host bootstrap succeeds.
   // Opens the main window and closes the setup window.

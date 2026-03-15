@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("otto", {
   portalFindHost: (payload) => ipcRenderer.invoke("otto:portal:find-host", payload),
   portalDesktopAuth: (payload) => ipcRenderer.invoke("otto:portal:desktop-auth", payload),
   validateInviteCode: (payload) => ipcRenderer.invoke("otto:portal:validate-invite-code", payload),
+  setupBootstrap: (payload) => ipcRenderer.invoke("otto:setup:bootstrap", payload),
   setupComplete: () => ipcRenderer.invoke("otto:setup:complete"),
   showDiagnostics: () => ipcRenderer.invoke("otto:diagnostics:show"),
   exportSupportBundle: () => ipcRenderer.invoke("otto:supportBundle:export"),
