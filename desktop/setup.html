@@ -904,23 +904,18 @@
             },
           };
 
-          const bootstrapRes = await fetch(`${serverBaseUrl}/api/setup/bootstrap`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(bootstrapBody),
-          });
+          const bootstrapResult = await window.otto.setupBootstrap(bootstrapBody);
 
-          const bootstrapData = await bootstrapRes.json().catch(() => null);
+          if (!bootstrapResult.ok) {
+            const errorMsg = bootstrapResult.error || "Setup failed";
+            const errorCode = bootstrapResult.code || "";
+            const status = bootstrapResult.status || 0;
 
-          if (!bootstrapRes.ok) {
-            const errorMsg = bootstrapData?.error || `Setup failed (${bootstrapRes.status})`;
-            const errorCode = bootstrapData?.code || "";
-
-            if (bootstrapRes.status === 402 || errorCode === "SUBSCRIPTION_REQUIRED" || errorCode === "subscription_required") {
+            if (status === 402 || errorCode === "SUBSCRIPTION_REQUIRED" || errorCode === "subscription_required") {
               showActivationError("Your Otto account needs a subscription to get started. Visit ottojobtracker.com/portal/billing.", true);
               return;
             }
-            if (bootstrapRes.status === 409 && (errorCode === "HOST_ALREADY_ACTIVATED" || errorCode === "host_already_active")) {
+            if (status === 409 && (errorCode === "HOST_ALREADY_ACTIVATED" || errorCode === "host_already_active")) {
               showActivationError("This practice already has Otto set up on another computer. If you're replacing that computer, visit ottojobtracker.com/portal to use the Replace Host option.", true);
               return;
             }
@@ -929,6 +924,7 @@
           }
 
           // Success!
+          const bootstrapData = bootstrapResult.data;
           setActivatingText("Setup complete!");
           const officeName = bootstrapData?.office?.name || selectedOffice?.officeName || "your practice";
 

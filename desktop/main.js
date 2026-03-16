@@ -1129,20 +1129,30 @@ async function maybeStartHostServer() {
   });
 }
 
+// Per-session mutable set of allowed host:port strings (updated when server starts).
+const sessionAllowedHostPorts = new Map();
+
+function addAllowedOriginForSession(electronSession, origin) {
+  if (!origin) return;
+  try {
+    const url = new URL(origin);
+    const port = url.port || (url.protocol === "https:" ? "443" : "80");
+    const hostPort = `${url.hostname}:${port}`;
+    let set = sessionAllowedHostPorts.get(electronSession);
+    if (!set) {
+      set = new Set();
+      sessionAllowedHostPorts.set(electronSession, set);
+    }
+    set.add(hostPort);
+  } catch {}
+}
+
 function setupNoInternetNetworkGuard(electronSession, allowedOrigin) {
   if (guardedSessions.has(electronSession)) return;
   guardedSessions.add(electronSession);
 
-  const allowedHostPort = (() => {
-    if (!allowedOrigin) return null;
-    try {
-      const url = new URL(allowedOrigin);
-      const port = url.port || (url.protocol === "https:" ? "443" : "80");
-      return `${url.hostname}:${port}`;
-    } catch {
-      return null;
-    }
-  })();
+  // Seed with the initial allowed origin (if any).
+  addAllowedOriginForSession(electronSession, allowedOrigin);
 
   electronSession.webRequest.onBeforeRequest((details, callback) => {
     try {
@@ -1168,7 +1178,8 @@ function setupNoInternetNetworkGuard(electronSession, allowedOrigin) {
             ? "80"
             : "");
       const hostPort = port ? `${url.hostname}:${port}` : url.hostname;
-      if (allowedHostPort && hostPort === allowedHostPort) {
+      const allowed = sessionAllowedHostPorts.get(electronSession);
+      if (allowed && allowed.has(hostPort)) {
         return callback({ cancel: false });
       }
 
@@ -1519,7 +1530,9 @@ function createSetupWindow() {
 
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.loadFile(path.join(__dirname, "setup.html"));
-  setupNoInternetNetworkGuard(win.webContents.session);
+  // Don't apply the restrictive network guard to the setup window —
+  // it needs to fetch from localhost (bootstrap) and discovered Hosts
+  // (client registration). All external API calls go through IPC.
   setupWindow = win;
   win.on("closed", () => {
     if (setupWindow === win) setupWindow = null;
@@ -2138,6 +2151,15 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
         return { ok: false, relaunched: false, message: "Could not start the server." };
       }
       const serverBaseUrl = `${protocol}://127.0.0.1:${port}`;
+
+      // Allow the setup window to make fetch requests to the local server.
+      // 1. Update network guard to permit the server origin.
+      // 2. Register TLS trust so the self-signed cert is accepted.
+      if (setupWindow && !setupWindow.isDestroyed()) {
+        addAllowedOriginForSession(setupWindow.webContents.session, serverBaseUrl);
+        registerTlsTrustForWindow(setupWindow, serverBaseUrl, config);
+      }
+
       return { ok: true, relaunched: false, serverBaseUrl };
     }
 
@@ -2159,6 +2181,55 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
   app.relaunch();
   app.exit(0);
   return { ok: true, relaunched: true };
+});
+
+ipcMain.handle("otto:setup:bootstrap", async (_event, payload) => {
+  // Called by setup.html to bootstrap the Host. Runs in the main process to
+  // avoid TLS/CORS issues with the renderer's file:// origin fetching localhost.
+  const config = readConfig();
+  const protocol = app.isPackaged ? "https" : "http";
+  const port = process.env.PORT || "5150";
+  const url = `${protocol}://127.0.0.1:${port}/api/setup/bootstrap`;
+
+  try {
+    const mod = protocol === "https" ? https : http;
+    const body = JSON.stringify(payload);
+    const result = await new Promise((resolve, reject) => {
+      const req = mod.request(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 30000,
+        rejectUnauthorized: false, // Trust our own self-signed cert
+      }, (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode, json: JSON.parse(data) });
+          } catch {
+            resolve({ status: res.statusCode, json: null });
+          }
+        });
+      });
+      req.on("error", (err) => reject(err));
+      req.on("timeout", () => { req.destroy(); reject(new Error("Bootstrap request timed out.")); });
+      req.write(body);
+      req.end();
+    });
+
+    if (result.status < 200 || result.status >= 300) {
+      const error = result.json?.error || `Setup failed (${result.status})`;
+      const code = result.json?.code || "";
+      return { ok: false, error, code, status: result.status };
+    }
+
+    return { ok: true, data: result.json };
+  } catch (err) {
+    return { ok: false, error: err?.message || "Could not reach the local server." };
+  }
 });
 
 ipcMain.handle("otto:setup:complete", async () => {
