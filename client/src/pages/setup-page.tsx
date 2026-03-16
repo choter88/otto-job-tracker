@@ -744,7 +744,7 @@ export default function SetupPage() {
                 This owner login controls approvals and office settings. Your name has been pre-filled from your portal account.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="adminFirstName">First name *</Label>
