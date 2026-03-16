@@ -31,6 +31,10 @@ type PortalOffice = {
   officeId: string;
   officeName: string;
   role: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  subscriptionStatus?: string;
 };
 
 type PortalAuthResponse = {
@@ -167,20 +171,40 @@ export default function SetupPage() {
         if (sanitized.length >= 3) adminForm.setValue("adminLoginId", sanitized);
       }
 
-      if (data.offices.length === 1) {
-        // Auto-select single office and skip to admin step
-        const office = data.offices[0];
-        setSelectedOffice(office);
-        adminForm.setValue("officeName", office.officeName, { shouldValidate: true });
-        setStep("admin");
-      } else if (data.offices.length > 1) {
-        setStep("office");
-      } else {
+      // Filter to offices with active subscriptions
+      const activatable = data.offices.filter(
+        (o) => o.subscriptionStatus === "active" || o.subscriptionStatus === "trialing"
+      );
+
+      if (activatable.length === 0 && data.offices.length > 0) {
+        toast({
+          title: "No active subscriptions",
+          description: "None of your practices have an active subscription. Visit ottojobtracker.com/portal/billing to activate.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (activatable.length === 0) {
         toast({
           title: "No practices found",
           description: "Your portal account has no practices. Create one at ottojobtracker.com first.",
           variant: "destructive",
         });
+        return;
+      }
+
+      if (activatable.length === 1) {
+        // Auto-select single office and skip to admin step
+        const office = activatable[0];
+        setSelectedOffice(office);
+        adminForm.setValue("officeName", office.officeName, { shouldValidate: true });
+        if (office.address) adminForm.setValue("officeAddress", office.address);
+        if (office.phone) adminForm.setValue("officePhone", office.phone);
+        if (office.email) adminForm.setValue("officeEmail", office.email);
+        setStep("admin");
+      } else {
+        setStep("office");
       }
     },
     onError: (error: Error) => {
@@ -307,10 +331,17 @@ export default function SetupPage() {
   // --- Helpers ---
 
   const handleSelectOffice = (officeId: string) => {
-    const office = portalAuth?.offices.find((o) => o.officeId === officeId);
+    // Only show activatable offices in the picker
+    const activatable = portalAuth?.offices.filter(
+      (o) => o.subscriptionStatus === "active" || o.subscriptionStatus === "trialing"
+    ) || [];
+    const office = activatable.find((o) => o.officeId === officeId);
     if (!office) return;
     setSelectedOffice(office);
     adminForm.setValue("officeName", office.officeName, { shouldValidate: true });
+    if (office.address) adminForm.setValue("officeAddress", office.address);
+    if (office.phone) adminForm.setValue("officePhone", office.phone);
+    if (office.email) adminForm.setValue("officeEmail", office.email);
     setStep("admin");
   };
 
@@ -541,7 +572,9 @@ export default function SetupPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {portalAuth.offices.map((office) => (
+              {portalAuth.offices
+                .filter((o) => o.subscriptionStatus === "active" || o.subscriptionStatus === "trialing")
+                .map((office) => (
                 <Button
                   key={office.officeId}
                   variant="outline"

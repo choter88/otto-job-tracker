@@ -702,6 +702,25 @@
           portalToken = result.token;
           portalOffices = result.offices || [];
 
+          // Pre-fill admin name from portal user data
+          if (result.firstName && adminFirstName) adminFirstName.value = result.firstName;
+          if (result.lastName && adminLastName) adminLastName.value = result.lastName;
+          if (result.email) {
+            const emailLocal = result.email.split("@")[0] || "";
+            const sanitized = emailLocal.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 32);
+            if (sanitized.length >= 3 && adminLoginId) adminLoginId.value = sanitized;
+          }
+
+          // Filter to only activatable offices (active or trialing subscription)
+          const activatable = portalOffices.filter(
+            (o) => o.subscriptionStatus === "active" || o.subscriptionStatus === "trialing"
+          );
+
+          if (activatable.length === 0 && portalOffices.length > 0) {
+            setStatus(signInStatus, "None of your practices have an active subscription. Visit ottojobtracker.com/portal/billing to activate.", "err");
+            return;
+          }
+
           if (portalOffices.length === 0) {
             setStatus(signInStatus, "No practices found for this account. Sign up at ottojobtracker.com first.", "err");
             return;
@@ -709,12 +728,13 @@
 
           setStatus(signInStatus, "");
 
-          if (portalOffices.length === 1) {
+          if (activatable.length === 1) {
             // Skip office selection
-            selectedOffice = portalOffices[0];
+            selectedOffice = activatable[0];
             showPanel("panelHostAdmin");
           } else {
-            // Show office selection
+            // Show office selection (only activatable offices)
+            portalOffices = activatable;
             renderOfficeSelect();
             showPanel("panelHostOffice");
           }
@@ -872,6 +892,9 @@
             officeId: selectedOffice?.officeId || "",
             office: {
               name: selectedOffice?.officeName || "My Practice",
+              address: selectedOffice?.address || "",
+              phone: selectedOffice?.phone || "",
+              email: selectedOffice?.email || "",
             },
             admin: {
               firstName: adminFirstName.value.trim(),

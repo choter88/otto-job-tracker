@@ -36,7 +36,7 @@ import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
-import { activateHostForSetup, activateHostWithPortalToken, activateLicense, forceCheckin, getHostToken, getLicenseSnapshot, validateClaimForSetup } from "./license";
+import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot } from "./license";
 import { portalValidateInviteCode, portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
@@ -162,25 +162,6 @@ function withDefaultMessageTemplates(settingsInput: unknown): Record<string, any
   return settings;
 }
 
-function readSetupCodeFromBody(body: any): string {
-  const candidates = [body?.setupCode, body?.claimCode, body?.activationCode];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate.trim();
-    }
-  }
-  return "";
-}
-
-function setupCodeLast4(setupCode: string): string {
-  const compact = String(setupCode || "")
-    .replace(/\s+/g, "")
-    .replace(/[^A-Za-z0-9]/g, "")
-    .toUpperCase();
-  if (!compact) return "";
-  return compact.slice(-4);
-}
-
 function parseSetupActivationFailure(error: any): { status: number; message: string; code: string } {
   const status = typeof error?.statusCode === "number" ? error.statusCode : 0;
   const code = String(error?.code || "").trim().toUpperCase();
@@ -196,52 +177,11 @@ function parseSetupActivationFailure(error: any): { status: number; message: str
     };
   }
 
-  if (code === "CLAIM_ENDPOINT_NOT_CONFIGURED") {
+  if (status === 402 || code === "SUBSCRIPTION_REQUIRED") {
     return {
-      status: 500,
-      message: "Host Claim Code verification is not configured on the portal yet.",
-      code: "REQUEST_FAILED",
-    };
-  }
-
-  if (code === "CLAIM_ENDPOINT_NOT_FOUND") {
-    return {
-      status: 503,
-      message:
-        "This portal does not support Host Claim Codes yet. Use a legacy Activation Code for now or update the portal.",
-      code: "REQUEST_FAILED",
-    };
-  }
-
-  if (code === "CLAIM_NOT_FOUND" || code === "NOT_FOUND") {
-    return {
-      status: 404,
-      message: "Host Claim Code was not found. Generate a new code in the portal and try again.",
-      code: "CLAIM_NOT_FOUND",
-    };
-  }
-
-  if (code === "CLAIM_INVALID" || code === "INVALID_CODE") {
-    return {
-      status: 400,
-      message: rawMessage || "Host Claim Code is invalid. Check the code and try again.",
-      code: "CLAIM_INVALID",
-    };
-  }
-
-  if (code === "CLAIM_EXPIRED") {
-    return {
-      status: 410,
-      message: rawMessage || "Host Claim Code has expired. Generate a new code in the portal.",
-      code: "CLAIM_EXPIRED",
-    };
-  }
-
-  if (code === "CLAIM_USED") {
-    return {
-      status: 409,
-      message: rawMessage || "This Host Claim Code has already been used.",
-      code: "CLAIM_USED",
+      status: 402,
+      message: "Your subscription is not active. Visit ottojobtracker.com/portal/billing to update your plan.",
+      code: "SUBSCRIPTION_REQUIRED",
     };
   }
 
@@ -256,8 +196,7 @@ function parseSetupActivationFailure(error: any): { status: number; message: str
   if (code === "PORTAL_UNREACHABLE" || code === "PORTAL_TIMEOUT" || status >= 500 || status === 0) {
     return {
       status: 503,
-      message:
-        "Host setup requires internet to verify your Host Claim Code. Check internet access on this Host computer and try again.",
+      message: "Host setup requires internet access. Check your connection and try again.",
       code: "REQUEST_FAILED",
     };
   }
@@ -265,14 +204,14 @@ function parseSetupActivationFailure(error: any): { status: number; message: str
   if (status >= 400 && status < 500) {
     return {
       status,
-      message: rawMessage || "Host Claim Code was not accepted. Generate a new code in the portal and try again.",
+      message: rawMessage || "Activation was not accepted. Please try again or contact support.",
       code: "REQUEST_FAILED",
     };
   }
 
   return {
     status: 500,
-    message: rawMessage || "Host setup could not verify your Host Claim Code.",
+    message: rawMessage || "Host activation failed.",
     code: "REQUEST_FAILED",
   };
 }
@@ -288,19 +227,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.get("/api/license/status", (_req, res) => {
     applyNoStoreHeaders(res);
     res.json(getLicenseSnapshot());
-  });
-
-  app.post("/api/license/activate", requireAuth, requireRole(["owner"]), async (req, res) => {
-    applyNoStoreHeaders(res);
-    try {
-      const activationCode =
-        typeof req.body?.activationCode === "string" ? req.body.activationCode.trim() : "";
-      const snapshot = await activateLicense(activationCode);
-      res.json(snapshot);
-    } catch (error: any) {
-      const status = typeof error?.statusCode === "number" ? error.statusCode : 400;
-      res.status(status).json({ error: error?.message || "Activation failed" });
-    }
   });
 
   app.post("/api/license/checkin", requireAuth, requireRole(["owner"]), async (req, res) => {
@@ -402,26 +328,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     });
   });
 
-  app.post("/api/setup/verify-claim", async (req, res) => {
-    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
-    if (!isLoopbackIp(remote)) {
-      return res.status(403).json({ error: "Setup must be completed on the Host computer." });
-    }
-
-    const setupCode = readSetupCodeFromBody(req.body);
-    if (!setupCode) {
-      return res.status(400).json({ error: "Host Claim Code is required." });
-    }
-
-    try {
-      const result = await validateClaimForSetup(setupCode);
-      res.json(result);
-    } catch (error: any) {
-      const failure = parseSetupActivationFailure(error);
-      res.status(failure.status).json({ error: failure.message, code: failure.code });
-    }
-  });
-
   app.post("/api/setup/bootstrap", async (req, res, next) => {
     // Do not trust proxy headers for setup restrictions.
     const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
@@ -438,13 +344,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     setupBootstrapInProgress = true;
 
     try {
-      const setupCode = readSetupCodeFromBody(req.body);
       const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
       const selectedOfficeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
 
-      // Portal token flow provides office info from the portal response
       const officeName = typeof officeBody?.name === "string" ? officeBody.name.trim() : "";
       const officeAddress =
         typeof officeBody?.address === "string" ? officeBody.address.trim() : undefined;
@@ -459,13 +363,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
-      // Support two activation paths:
-      // 1. portalToken + officeId (new: desktop portal sign-in flow)
-      // 2. setupCode (legacy: claim code flow)
-      const usePortalToken = Boolean(portalToken && selectedOfficeId);
-
-      if (!usePortalToken && !setupCode) {
-        return res.status(400).json({ error: "Host Claim Code or portal token is required" });
+      if (!portalToken || !selectedOfficeId) {
+        return res.status(400).json({ error: "Portal sign-in is required to set up this Host." });
       }
       if (!officeName) {
         return res.status(400).json({ error: "Office name is required" });
@@ -506,12 +405,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       // Portal activation call — if this fails, nothing is written locally.
       let licenseSnapshot = getLicenseSnapshot();
+      let activateResult: import("./license-client").LicenseActivateResult | null = null;
       try {
-        if (usePortalToken) {
-          licenseSnapshot = await activateHostWithPortalToken(portalToken, selectedOfficeId);
-        } else {
-          licenseSnapshot = await activateHostForSetup(setupCode);
-        }
+        const activation = await activateHostWithPortalToken(portalToken, selectedOfficeId);
+        licenseSnapshot = activation.snapshot;
+        activateResult = activation.activateResult;
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);
         return res.status(failure.status).json({ error: failure.message, code: failure.code });
@@ -557,21 +455,27 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           }).returning().all();
         }
 
+        // Use portal-provided office data as fallback if not provided in the request
+        const portalOffice = activateResult?.office;
+        const finalOfficeName = officeName || portalOffice?.name || "My Practice";
+        const finalOfficeAddress = officeAddress ?? portalOffice?.address;
+        const finalOfficePhone = officePhone ?? portalOffice?.phone;
+        const finalOfficeEmail = officeEmail ?? portalOffice?.email;
+
         const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
         const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
-        const setupCodeTail = usePortalToken ? "portal" : setupCodeLast4(setupCode);
         mergedSettings.licensing = {
-          setupCodeLast4: setupCodeTail,
-          activationCodeLast4: setupCodeTail,
+          setupCodeLast4: "portal",
+          activationCodeLast4: "portal",
           activationAttemptedAt: Date.now(),
           activationVerifiedAt: activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null,
         };
 
         [office] = db.update(offices).set({
-          name: officeName,
-          address: officeAddress,
-          phone: officePhone,
-          email: officeEmail,
+          name: finalOfficeName,
+          address: finalOfficeAddress,
+          phone: finalOfficePhone,
+          email: finalOfficeEmail,
           settings: mergedSettings,
           updatedAt: new Date(),
         }).where(eq(offices.id, office.id)).returning().all();
@@ -713,7 +617,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
 
     try {
-      const setupCode = readSetupCodeFromBody(req.body);
       const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
       const selectedOfficeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
       const snapshot = req.body?.snapshot;
@@ -733,9 +636,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const adminFirstName = typeof adminBody?.firstName === "string" ? adminBody.firstName.trim() : "";
       const adminLastName = typeof adminBody?.lastName === "string" ? adminBody.lastName.trim() : "";
 
-      const usePortalToken = Boolean(portalToken && selectedOfficeId);
-      if (!usePortalToken && !setupCode) {
-        return res.status(400).json({ error: "Portal sign-in or Host Claim Code is required" });
+      if (!portalToken || !selectedOfficeId) {
+        return res.status(400).json({ error: "Portal sign-in is required to import data." });
       }
       if (!snapshot || typeof snapshot !== "object") {
         return res.status(400).json({ error: "Snapshot file is required" });
@@ -797,11 +699,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       let licenseSnapshot = getLicenseSnapshot();
       try {
-        if (usePortalToken) {
-          licenseSnapshot = await activateHostWithPortalToken(portalToken, selectedOfficeId);
-        } else {
-          licenseSnapshot = await activateHostForSetup(setupCode);
-        }
+        const activation = await activateHostWithPortalToken(portalToken, selectedOfficeId);
+        licenseSnapshot = activation.snapshot;
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);
         return res.status(failure.status).json({ error: failure.message, code: failure.code });
@@ -814,7 +713,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
       const activationVerifiedAt = activationSucceeded ? licenseSnapshot.activatedAt || Date.now() : null;
-      const setupCodeTail = usePortalToken ? "portal" : setupCodeLast4(setupCode);
 
       const result = importSnapshotV1({
         snapshot,
@@ -825,7 +723,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           passwordHash: adminPasswordHash,
           pinHash: adminPinHash,
         },
-        activationCodeLast4: setupCodeTail,
+        activationCodeLast4: "portal",
         activationVerifiedAt,
       });
 

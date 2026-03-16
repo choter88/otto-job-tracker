@@ -195,5 +195,6 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
     nextCheckinDueAt,
     graceEndsAt,
     lastError,
+    currentInviteCodeLast4: typeof state.currentInviteCodeLast4 === "string" ? state.currentInviteCodeLast4 : null,
   };
 }

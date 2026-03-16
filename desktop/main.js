@@ -2406,11 +2406,19 @@ async function portalDesktopAuth(payload) {
 
     const token = json.token || "";
     const expiresAt = json.expiresAt || 0;
+
+    // User data is nested under json.user in the portal response
+    const user = json.user && typeof json.user === "object" ? json.user : null;
+
     const offices = Array.isArray(json.offices)
       ? json.offices.map((o) => ({
           officeId: o.officeId || o.portalOfficeId || o.id || "",
           officeName: o.officeName || o.name || "",
           role: o.role || "",
+          address: o.address || null,
+          phone: o.phone || null,
+          email: o.email || null,
+          subscriptionStatus: o.subscriptionStatus || null,
         }))
       : [];
 
@@ -2418,7 +2426,15 @@ async function portalDesktopAuth(payload) {
       return { ok: false, message: "Portal did not return an authentication token." };
     }
 
-    return { ok: true, token, expiresAt, offices };
+    return {
+      ok: true,
+      token,
+      expiresAt,
+      offices,
+      firstName: user?.firstName || null,
+      lastName: user?.lastName || null,
+      email: user?.email || null,
+    };
   } catch (err) {
     const isTimeout = err && err.message && err.message.includes("timed out");
     return {

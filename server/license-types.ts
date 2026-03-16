@@ -28,6 +28,7 @@ export type LicenseState = {
   lastAttemptAt?: number; // local time (ms)
   lastError?: string;
   tokenInvalid?: boolean;
+  currentInviteCodeLast4?: string;
 };
 
 export type LicenseSnapshot = {
@@ -44,5 +45,6 @@ export type LicenseSnapshot = {
   nextCheckinDueAt: number | null;
   graceEndsAt: number | null;
   lastError: string | null;
+  currentInviteCodeLast4: string | null;
 };
 

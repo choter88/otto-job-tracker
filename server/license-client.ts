@@ -1,9 +1,25 @@
+export type ActivationOfficeInfo = {
+  name?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  portalOfficeId?: string;
+};
+
+export type ActivationPortalUser = {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+};
+
 export type LicenseActivateResult = {
   ok: true;
   hostToken: string;
   serverTime: number;
   nextCheckinDueAt: number;
   status: "ACTIVE" | "DISABLED";
+  office?: ActivationOfficeInfo;
+  portalUser?: ActivationPortalUser;
 };
 
 export type LicenseCheckinResult = {
@@ -11,6 +27,7 @@ export type LicenseCheckinResult = {
   serverTime: number;
   nextCheckinDueAt: number;
   status: "ACTIVE" | "DISABLED";
+  currentInviteCodeLast4?: string;
 };
 
 export type LicenseRequestError = {
@@ -91,14 +108,9 @@ function errorFromResponse(status: number, json: any): LicenseRequestError {
 }
 
 function parseActivationPayload(
-  jsonInput: any,
+  json: any,
   badResponseMessage: string,
 ): LicenseActivateResult | { ok: false; error: LicenseRequestError } {
-  const json =
-    jsonInput && typeof jsonInput === "object" && jsonInput.license && typeof jsonInput.license === "object"
-      ? jsonInput.license
-      : jsonInput;
-
   const hostToken = typeof json?.hostToken === "string" ? json.hostToken : "";
   const serverTime = typeof json?.serverTime === "number" ? json.serverTime : 0;
   const nextCheckinDueAt = typeof json?.nextCheckinDueAt === "number" ? json.nextCheckinDueAt : 0;
@@ -115,167 +127,13 @@ function parseActivationPayload(
     };
   }
 
-  return {
+  const result: LicenseActivateResult = {
     ok: true,
     hostToken,
     serverTime,
     nextCheckinDueAt,
     status: officeStatus,
   };
-}
-
-export async function portalActivate(payload: {
-  activationCode: string;
-  installationId: string;
-  hostFingerprint256: string;
-  appVersion?: string;
-}): Promise<LicenseActivateResult | { ok: false; error: LicenseRequestError }> {
-  const base = getLicenseBaseUrl();
-  const url = new URL("/license/v1/activate", base);
-  const { status, json, networkError } = await fetchJson(url, payload);
-  if (networkError) return { ok: false, error: networkError };
-  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
-  return parseActivationPayload(json, "Activation server response was missing required fields.");
-}
-
-function getClaimConsumePathCandidates(): string[] {
-  const fromEnv = String(process.env.OTTO_PORTAL_CLAIM_CONSUME_PATH || "").trim();
-  const defaults = ["/api/desktop/claims/consume", "/portal/api/desktop/claims/consume", "/license/v1/claim-host"];
-  const candidates = [fromEnv, ...defaults].filter(Boolean);
-  return Array.from(new Set(candidates));
-}
-
-export async function portalConsumeHostClaim(payload: {
-  claimCode: string;
-  installationId: string;
-  hostFingerprint256: string;
-  appVersion?: string;
-}): Promise<LicenseActivateResult | { ok: false; error: LicenseRequestError }> {
-  const base = getLicenseBaseUrl();
-  const candidates = getClaimConsumePathCandidates();
-  if (candidates.length === 0) {
-    return {
-      ok: false,
-      error: {
-        statusCode: 500,
-        code: "CLAIM_ENDPOINT_NOT_CONFIGURED",
-        message: "Claim endpoint is not configured.",
-      },
-    };
-  }
-
-  let lastNotFoundError: LicenseRequestError | null = null;
-  for (const path of candidates) {
-    const url = new URL(path, base);
-    const { status, json, networkError } = await fetchJson(url, payload);
-    if (networkError) return { ok: false, error: networkError };
-
-    if (status === 404) {
-      lastNotFoundError = errorFromResponse(status, json);
-      continue;
-    }
-
-    if (status < 200 || status >= 300) {
-      return { ok: false, error: errorFromResponse(status, json) };
-    }
-
-    return parseActivationPayload(
-      json,
-      "Claim response was missing license activation fields (hostToken/serverTime/nextCheckinDueAt).",
-    );
-  }
-
-  return {
-    ok: false,
-    error:
-      lastNotFoundError ||
-      {
-        statusCode: 404,
-        code: "CLAIM_ENDPOINT_NOT_FOUND",
-        message: "Claim endpoint was not found on the portal service.",
-      },
-  };
-}
-
-export async function portalCheckin(payload: {
-  hostToken: string;
-  installationId: string;
-  hostFingerprint256: string;
-  appVersion?: string;
-  localAddresses?: string[];
-  pairingCode?: string;
-  tlsFingerprint256?: string;
-}): Promise<LicenseCheckinResult | { ok: false; error: LicenseRequestError }> {
-  const base = getLicenseBaseUrl();
-  const url = new URL("/license/v1/checkin", base);
-  const { status, json, networkError } = await fetchJson(url, payload);
-  if (networkError) return { ok: false, error: networkError };
-  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
-
-  const serverTime = typeof json?.serverTime === "number" ? json.serverTime : 0;
-  const nextCheckinDueAt = typeof json?.nextCheckinDueAt === "number" ? json.nextCheckinDueAt : 0;
-  const officeStatus = json?.status === "DISABLED" ? "DISABLED" : "ACTIVE";
-
-  if (!serverTime || !nextCheckinDueAt) {
-    return {
-      ok: false,
-      error: {
-        statusCode: 502,
-        code: "BAD_PORTAL_RESPONSE",
-        message: "Check-in server response was missing required fields.",
-      },
-    };
-  }
-
-  return {
-    ok: true,
-    serverTime,
-    nextCheckinDueAt,
-    status: officeStatus,
-  };
-}
-
-// --- Claim validation (non-destructive, returns office + user details) ---
-
-export type ClaimValidationResult = {
-  ok: true;
-  office?: {
-    name?: string;
-    address?: string;
-    phone?: string;
-    email?: string;
-    portalOfficeId?: string;
-  };
-  portalUser?: {
-    firstName?: string;
-    lastName?: string;
-    email?: string;
-  };
-};
-
-export async function portalValidateHostClaim(payload: {
-  claimCode: string;
-  installationId: string;
-  hostFingerprint256: string;
-  appVersion?: string;
-}): Promise<ClaimValidationResult | { ok: false; error: LicenseRequestError }> {
-  const base = getLicenseBaseUrl();
-  const url = new URL("/api/desktop/claims/validate", base);
-  const { status, json, networkError } = await fetchJson(url, payload);
-  if (networkError) return { ok: false, error: networkError };
-
-  if (status === 404) {
-    return {
-      ok: false,
-      error: { statusCode: 404, code: "VALIDATE_NOT_SUPPORTED", message: "Portal does not support claim validation." },
-    };
-  }
-
-  if (status < 200 || status >= 300) {
-    return { ok: false, error: errorFromResponse(status, json) };
-  }
-
-  const result: ClaimValidationResult = { ok: true };
 
   const officeData = json?.office;
   if (officeData && typeof officeData === "object") {
@@ -314,6 +172,45 @@ export async function portalIssueAndConsume(payload: {
   if (networkError) return { ok: false, error: networkError };
   if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
   return parseActivationPayload(json, "Issue-and-consume response was missing required fields.");
+}
+
+export async function portalCheckin(payload: {
+  hostToken: string;
+  installationId: string;
+  hostFingerprint256: string;
+  appVersion?: string;
+  localAddresses?: string[];
+  pairingCode?: string;
+  tlsFingerprint256?: string;
+}): Promise<LicenseCheckinResult | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/checkin", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+
+  const serverTime = typeof json?.serverTime === "number" ? json.serverTime : 0;
+  const nextCheckinDueAt = typeof json?.nextCheckinDueAt === "number" ? json.nextCheckinDueAt : 0;
+  const officeStatus = json?.status === "DISABLED" ? "DISABLED" : "ACTIVE";
+
+  if (!serverTime || !nextCheckinDueAt) {
+    return {
+      ok: false,
+      error: {
+        statusCode: 502,
+        code: "BAD_PORTAL_RESPONSE",
+        message: "Check-in server response was missing required fields.",
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    serverTime,
+    nextCheckinDueAt,
+    status: officeStatus,
+    currentInviteCodeLast4: typeof json?.currentInviteCodeLast4 === "string" ? json.currentInviteCodeLast4 : undefined,
+  };
 }
 
 export type InviteCodeValidationResult =
@@ -361,7 +258,7 @@ export async function portalGetInviteCode(payload: {
   hostToken: string;
 }): Promise<InviteCodeInfo> {
   const base = getLicenseBaseUrl();
-  const url = new URL("/portal/api/invite-codes", base);
+  const url = new URL("/license/v1/invite-code", base);
   const { status, json, networkError } = await fetchJson(url, { hostToken: payload.hostToken });
   if (networkError) return { ok: false, error: networkError };
   if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
@@ -377,7 +274,7 @@ export async function portalRegenerateInviteCode(payload: {
   hostToken: string;
 }): Promise<InviteCodeInfo> {
   const base = getLicenseBaseUrl();
-  const url = new URL("/portal/api/invite-codes/regenerate", base);
+  const url = new URL("/license/v1/invite-code/regenerate", base);
   const { status, json, networkError } = await fetchJson(url, { hostToken: payload.hostToken });
   if (networkError) return { ok: false, error: networkError };
   if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
@@ -391,12 +288,22 @@ export async function portalRegenerateInviteCode(payload: {
 
 // --- Portal desktop auth (email/password → token + offices) ---
 
+export type PortalOfficeEntry = {
+  officeId: string;
+  officeName: string;
+  role: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  subscriptionStatus?: string;
+};
+
 export type PortalDesktopAuthResult =
   | {
       ok: true;
       token: string;
       expiresAt: number;
-      offices: Array<{ officeId: string; officeName: string; role: string }>;
+      offices: PortalOfficeEntry[];
       firstName?: string;
       lastName?: string;
       email?: string;
@@ -431,11 +338,18 @@ export async function portalDesktopAuth(payload: {
     };
   }
 
-  const offices = Array.isArray(json?.offices)
+  // User data is nested under json.user in the portal response
+  const user = json?.user && typeof json.user === "object" ? json.user : null;
+
+  const offices: PortalOfficeEntry[] = Array.isArray(json?.offices)
     ? json.offices.map((o: any) => ({
         officeId: String(o?.officeId || o?.portalOfficeId || o?.id || ""),
         officeName: String(o?.officeName || o?.name || ""),
         role: String(o?.role || ""),
+        address: typeof o?.address === "string" ? o.address : undefined,
+        phone: typeof o?.phone === "string" ? o.phone : undefined,
+        email: typeof o?.email === "string" ? o.email : undefined,
+        subscriptionStatus: typeof o?.subscriptionStatus === "string" ? o.subscriptionStatus : undefined,
       }))
     : [];
 
@@ -444,8 +358,8 @@ export async function portalDesktopAuth(payload: {
     token,
     expiresAt: typeof json?.expiresAt === "number" ? json.expiresAt : 0,
     offices,
-    firstName: typeof json?.firstName === "string" ? json.firstName : undefined,
-    lastName: typeof json?.lastName === "string" ? json.lastName : undefined,
-    email: typeof json?.email === "string" ? json.email : undefined,
+    firstName: typeof user?.firstName === "string" ? user.firstName : undefined,
+    lastName: typeof user?.lastName === "string" ? user.lastName : undefined,
+    email: typeof user?.email === "string" ? user.email : undefined,
   };
 }

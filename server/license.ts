@@ -2,8 +2,8 @@ import os from "os";
 import { OTTO_DEFAULT_PORT } from "@shared/constants";
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
-import { portalActivate, portalCheckin, portalConsumeHostClaim, portalIssueAndConsume, portalValidateHostClaim } from "./license-client";
-import type { ClaimValidationResult } from "./license-client";
+import { portalCheckin, portalIssueAndConsume } from "./license-client";
+import type { LicenseActivateResult } from "./license-client";
 
 let state: LicenseState | null = null;
 let checkinTimer: NodeJS.Timeout | null = null;
@@ -26,46 +26,6 @@ export function getLicenseSnapshot(): LicenseSnapshot {
 
 export function getHostToken(): string {
   return getState().hostToken || "";
-}
-
-const ACTIVATION_ALLOWED = /^[A-HJ-NP-Z2-9]+$/;
-const SETUP_CODE_ALLOWED = /^[A-Z0-9_-]+$/i;
-
-function normalizeActivationCode(input: string): string {
-  const raw = String(input || "").trim().toUpperCase();
-  const stripped = raw.replace(/[^A-Z0-9]/g, "").replace(/[IO01]/g, "");
-  if (stripped.length === 16 && ACTIVATION_ALLOWED.test(stripped)) {
-    return stripped.match(/.{1,4}/g)?.join("-") || stripped;
-  }
-  return raw;
-}
-
-function compactActivationCode(input: string): string {
-  const stripped = String(input || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .replace(/[IO01]/g, "");
-  return stripped;
-}
-
-function isLikelyActivationCode(input: string): boolean {
-  const compacted = compactActivationCode(input);
-  return compacted.length === 16 && ACTIVATION_ALLOWED.test(compacted);
-}
-
-function normalizeSetupCode(input: string): string {
-  const raw = String(input || "").trim();
-  if (!raw) return "";
-
-  const normalizedActivation = normalizeActivationCode(raw);
-  if (isLikelyActivationCode(normalizedActivation)) {
-    return normalizedActivation;
-  }
-
-  const compact = raw.replace(/\s+/g, "");
-  if (!compact) return "";
-  if (!SETUP_CODE_ALLOWED.test(compact)) return raw;
-  return compact.toUpperCase();
 }
 
 function applyActivationResult(result: {
@@ -94,65 +54,12 @@ function throwLicenseRequestError(err: { statusCode?: number; code?: string; mes
   throw Object.assign(new Error(message), { statusCode: err?.statusCode || 500, code: err?.code || "REQUEST_FAILED" });
 }
 
-export async function activateLicense(activationCode: string): Promise<LicenseSnapshot> {
-  const trimmed = normalizeActivationCode(activationCode);
-  if (!trimmed) {
-    throw new Error("Activation Code is required");
-  }
+export type ActivateHostResult = {
+  snapshot: LicenseSnapshot;
+  activateResult: LicenseActivateResult;
+};
 
-  const current = getState();
-  let result = await portalActivate({
-    activationCode: trimmed,
-    installationId: current.installationId,
-    hostFingerprint256: current.hostFingerprint256,
-    appVersion: process.env.npm_package_version,
-  });
-
-  if (!result.ok && result.error?.code === "INVALID_CODE") {
-    const compacted = compactActivationCode(trimmed);
-    if (compacted && compacted !== trimmed) {
-      result = await portalActivate({
-        activationCode: compacted,
-        installationId: current.installationId,
-        hostFingerprint256: current.hostFingerprint256,
-        appVersion: process.env.npm_package_version,
-      });
-    }
-  }
-
-  if (!result.ok) {
-    throwLicenseRequestError(result.error);
-  }
-
-  return applyActivationResult(result);
-}
-
-export async function activateHostForSetup(setupCode: string): Promise<LicenseSnapshot> {
-  const trimmed = normalizeSetupCode(setupCode);
-  if (!trimmed) {
-    throw new Error("Host Claim Code is required");
-  }
-
-  if (isLikelyActivationCode(trimmed)) {
-    return activateLicense(trimmed);
-  }
-
-  const current = getState();
-  const result = await portalConsumeHostClaim({
-    claimCode: trimmed,
-    installationId: current.installationId,
-    hostFingerprint256: current.hostFingerprint256,
-    appVersion: process.env.npm_package_version,
-  });
-
-  if (!result.ok) {
-    throwLicenseRequestError(result.error);
-  }
-
-  return applyActivationResult(result);
-}
-
-export async function activateHostWithPortalToken(portalToken: string, officeId: string): Promise<LicenseSnapshot> {
+export async function activateHostWithPortalToken(portalToken: string, officeId: string): Promise<ActivateHostResult> {
   if (!portalToken) throw new Error("Portal token is required");
   if (!officeId) throw new Error("Office ID is required");
 
@@ -169,48 +76,8 @@ export async function activateHostWithPortalToken(portalToken: string, officeId:
     throwLicenseRequestError(result.error);
   }
 
-  return applyActivationResult(result);
-}
-
-export type ClaimValidation = {
-  validated: boolean;
-  office?: ClaimValidationResult extends { ok: true } ? ClaimValidationResult["office"] : never;
-  portalUser?: ClaimValidationResult extends { ok: true } ? ClaimValidationResult["portalUser"] : never;
-  fallbackToConsume?: boolean;
-};
-
-export async function validateClaimForSetup(setupCode: string): Promise<ClaimValidation> {
-  const trimmed = normalizeSetupCode(setupCode);
-  if (!trimmed) {
-    throw new Error("Host Claim Code is required");
-  }
-
-  // Legacy activation codes don't support validation — fall back to single-submit flow
-  if (isLikelyActivationCode(trimmed)) {
-    return { validated: true, fallbackToConsume: true };
-  }
-
-  const current = getState();
-  const result = await portalValidateHostClaim({
-    claimCode: trimmed,
-    installationId: current.installationId,
-    hostFingerprint256: current.hostFingerprint256,
-    appVersion: process.env.npm_package_version,
-  });
-
-  if (!result.ok) {
-    if (result.error.code === "VALIDATE_NOT_SUPPORTED") {
-      // Old portal without validate endpoint — fall back to single-submit flow
-      return { validated: true, fallbackToConsume: true };
-    }
-    throwLicenseRequestError(result.error);
-  }
-
-  return {
-    validated: true,
-    office: result.office,
-    portalUser: result.portalUser,
-  };
+  const snapshot = applyActivationResult(result);
+  return { snapshot, activateResult: result };
 }
 
 function getLocalAddresses(): string[] {
@@ -271,6 +138,7 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
     lastAttemptAt: Date.now(),
     lastError: "",
     tokenInvalid: false,
+    currentInviteCodeLast4: result.currentInviteCodeLast4,
   });
 
   return getLicenseSnapshot();
