@@ -4,7 +4,7 @@ import os from "os";
 import path from "path";
 import { createServer as createHttpServer, type Server as HttpServer } from "http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "https";
-import { createHash, randomBytes } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import { setupAuth, validatePasswordComplexity } from "./auth";
 import { storage } from "./storage";
 import {
@@ -445,7 +445,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         if (officeCount === 1) {
           office = db.select().from(offices).limit(1).all()[0];
         } else {
-          const { randomUUID } = require("crypto");
           [office] = db.insert(offices).values({
             id: randomUUID(),
             name: officeName,
@@ -489,9 +488,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           if (i === 9) throw new Error("Failed to generate unique admin email after 10 attempts");
         }
 
-        const { randomUUID: uuid } = require("crypto");
         const [user] = db.insert(users).values({
-          id: uuid(),
+          id: randomUUID(),
           email: adminEmail,
           loginId: adminLoginId,
           firstName: adminFirstName,
