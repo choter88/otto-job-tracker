@@ -2138,6 +2138,20 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
         if (app.isPackaged) {
           applyHostTlsEnv();
         }
+
+        // Check port availability before starting the server to avoid a crash
+        // from the server's EADDRINUSE handler (which used to call process.exit).
+        const numPort = Number(port);
+        const portFree = await isPortAvailable(numPort, "0.0.0.0");
+        if (!portFree) {
+          try { fs.unlinkSync(getConfigPath()); } catch {}
+          return {
+            ok: false,
+            relaunched: false,
+            message: `Port ${port} is already in use. Please close the other app or restart your computer and try again.`,
+          };
+        }
+
         await maybeStartHostServer();
         const readiness = await waitForHostReady({ protocol, host: "127.0.0.1", port, timeoutMs: 45000 });
         if (!readiness.ok) {

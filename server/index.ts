@@ -219,7 +219,7 @@ app.use((req, res, next) => {
 
 (async () => {
   const { server, sessionMiddleware } = await registerRoutes(app);
-  
+
   setupSyncWebSocket(server as any, sessionMiddleware);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -232,7 +232,7 @@ app.use((req, res, next) => {
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
+  // doesn’t interfere with the other routes
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
@@ -246,17 +246,23 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || String(OTTO_DEFAULT_PORT), 10);
   const host = process.env.OTTO_LISTEN_HOST || "0.0.0.0";
 
+  // When running embedded in Electron (via import()), process.exit() would
+  // kill the entire Electron app.  Instead, log the error and let Electron’s
+  // readiness probe time out gracefully so it can show a user-friendly dialog.
   server.on("error", (err: any) => {
     if (err?.code === "EADDRINUSE") {
       console.error(
         `Otto Tracker can’t start because port ${port} is already being used by another app.\n` +
           `Fix: close the other app (or change PORT in your .env file) and try again.`,
       );
-      process.exit(1);
+    } else {
+      console.error("Server error:", process.env.OTTO_DEBUG === "true" ? err : err?.message);
     }
 
-    console.error("Server error:", process.env.OTTO_DEBUG === "true" ? err : err?.message);
-    process.exit(1);
+    // Only exit when running standalone (not embedded in Electron).
+    if (!process.versions.electron) {
+      process.exit(1);
+    }
   });
 
   server.listen({
@@ -272,4 +278,10 @@ app.use((req, res, next) => {
         });
     }
   });
-})();
+})().catch((err) => {
+  console.error("Server failed to start:", process.env.OTTO_DEBUG === "true" ? err : err?.message);
+  // When embedded in Electron, let the readiness probe handle the failure.
+  if (!process.versions.electron) {
+    process.exit(1);
+  }
+});
