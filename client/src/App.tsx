@@ -9,13 +9,11 @@ import SyncManager from "@/components/sync-manager";
 import { ProtectedRoute } from "@/lib/protected-route";
 import Dashboard from "@/pages/dashboard";
 import AuthPage from "@/pages/auth-page";
-import SetupPage from "@/pages/setup-page";
 import NotFound from "@/pages/not-found";
 
 function Router() {
   return (
     <Switch>
-      <Route path="/setup" component={SetupPage} />
       <ProtectedRoute path="/" component={Dashboard} />
       <ProtectedRoute path="/dashboard/:tab?" component={Dashboard} />
       <ProtectedRoute path="/important" component={Dashboard} />

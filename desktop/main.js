@@ -2144,7 +2144,6 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
         const numPort = Number(port);
         const portFree = await isPortAvailable(numPort, "0.0.0.0");
         if (!portFree) {
-          try { fs.unlinkSync(getConfigPath()); } catch {}
           return {
             ok: false,
             relaunched: false,
@@ -2155,13 +2154,9 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
         await maybeStartHostServer();
         const readiness = await waitForHostReady({ protocol, host: "127.0.0.1", port, timeoutMs: 45000 });
         if (!readiness.ok) {
-          // Clean up config so retry doesn't trigger app.relaunch()
-          try { fs.unlinkSync(getConfigPath()); } catch {}
           return { ok: false, relaunched: false, message: "Server did not start in time. Please close Otto and try again." };
         }
       } catch (err) {
-        // Clean up config so retry doesn't trigger app.relaunch()
-        try { fs.unlinkSync(getConfigPath()); } catch {}
         return { ok: false, relaunched: false, message: "Could not start the server." };
       }
       const serverBaseUrl = `${protocol}://127.0.0.1:${port}`;
@@ -2236,6 +2231,76 @@ ipcMain.handle("otto:setup:bootstrap", async (_event, payload) => {
 
     if (result.status < 200 || result.status >= 300) {
       const error = result.json?.error || `Setup failed (${result.status})`;
+      const code = result.json?.code || "";
+      return { ok: false, error, code, status: result.status };
+    }
+
+    return { ok: true, data: result.json };
+  } catch (err) {
+    return { ok: false, error: err?.message || "Could not reach the local server." };
+  }
+});
+
+ipcMain.handle("otto:setup:pick-snapshot", async () => {
+  // Open a file dialog to pick a JSON snapshot file, read & parse it.
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: "Select backup snapshot",
+    properties: ["openFile"],
+    filters: [{ name: "JSON Snapshot", extensions: ["json"] }],
+    defaultPath: app.getPath("documents"),
+  });
+
+  if (canceled || filePaths.length === 0) return { ok: false, canceled: true };
+
+  try {
+    const raw = fs.readFileSync(filePaths[0], "utf-8");
+    const snapshot = JSON.parse(raw);
+    const fileName = path.basename(filePaths[0]);
+    return { ok: true, snapshot, fileName };
+  } catch (err) {
+    return { ok: false, error: err?.message || "Could not read snapshot file." };
+  }
+});
+
+ipcMain.handle("otto:setup:import-snapshot", async (_event, payload) => {
+  // Called by setup.html to import a backup snapshot during Host setup.
+  // Proxies the request to the local server, same pattern as bootstrap.
+  const config = readConfig();
+  const protocol = app.isPackaged ? "https" : "http";
+  const port = process.env.PORT || "5150";
+  const url = `${protocol}://127.0.0.1:${port}/api/setup/import-snapshot`;
+
+  try {
+    const mod = protocol === "https" ? https : http;
+    const body = JSON.stringify(payload);
+    const result = await new Promise((resolve, reject) => {
+      const req = mod.request(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 60000,
+        rejectUnauthorized: false,
+      }, (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode, json: JSON.parse(data) });
+          } catch {
+            resolve({ status: res.statusCode, json: null });
+          }
+        });
+      });
+      req.on("error", (err) => reject(err));
+      req.on("timeout", () => { req.destroy(); reject(new Error("Import request timed out.")); });
+      req.write(body);
+      req.end();
+    });
+
+    if (result.status < 200 || result.status >= 300) {
+      const error = result.json?.error || `Import failed (${result.status})`;
       const code = result.json?.code || "";
       return { ok: false, error, code, status: result.status };
     }
@@ -3297,7 +3362,16 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  // cleanup on quit
+  // Gracefully shut down the embedded server so the port is released.
+  try {
+    const server = globalThis.__ottoServer;
+    if (server && typeof server.close === "function") {
+      server.close();
+      globalThis.__ottoServer = null;
+    }
+  } catch {
+    // best-effort
+  }
 });
 
 app.on("second-instance", (_event, argv) => {

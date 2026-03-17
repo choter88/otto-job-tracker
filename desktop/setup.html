@@ -414,17 +414,27 @@
       <div id="panelHostOffice" class="panel">
         <div class="card">
           <div class="step-label">Step 2 of 3 &middot; Select your practice</div>
-          <h2 class="card-title" style="font-size:22px">Which practice?</h2>
-          <p class="card-subtitle">Choose the practice you want to set up on this computer.</p>
+          <h2 class="card-title" style="font-size:22px">Your practice</h2>
+          <p class="card-subtitle">Confirm the practice you want to set up on this computer.</p>
 
           <div class="field">
-            <label for="officeSelect">Your practices</label>
+            <label for="officeSelect">Practice</label>
             <select id="officeSelect"></select>
+          </div>
+
+          <div id="importSection" style="margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
+            <p style="margin:0 0 6px; font-size:13px; font-weight:700;">Migrating from another computer?</p>
+            <p style="margin:0 0 10px; font-size:13px; color:var(--muted-foreground); line-height:1.45;">
+              If you have a backup snapshot file, you can import your data instead of starting fresh.
+            </p>
+            <button id="importSnapshotBtn" type="button" style="font-size:13px;">Import backup snapshot&hellip;</button>
+            <div id="importFileName" style="margin-top:6px; font-size:12px; color:var(--muted-foreground);"></div>
+            <div id="importStatus" class="status"></div>
           </div>
 
           <div class="actions">
             <button class="btn-back" id="hostOfficeBack">&larr; Back</button>
-            <button class="btn-primary" id="hostOfficeNext">Continue</button>
+            <button class="btn-primary" id="hostOfficeNext">Start fresh</button>
           </div>
         </div>
       </div>
@@ -728,16 +738,13 @@
 
           setStatus(signInStatus, "");
 
+          // Always show office selection as step 2, even with one office
+          portalOffices = activatable;
           if (activatable.length === 1) {
-            // Skip office selection
             selectedOffice = activatable[0];
-            showPanel("panelHostAdmin");
-          } else {
-            // Show office selection (only activatable offices)
-            portalOffices = activatable;
-            renderOfficeSelect();
-            showPanel("panelHostOffice");
           }
+          renderOfficeSelect();
+          showPanel("panelHostOffice");
         } catch {
           setStatus(signInStatus, "Connection failed. Check internet access and try again.", "err");
         } finally {
@@ -765,7 +772,41 @@
       document.getElementById("hostOfficeNext").addEventListener("click", () => {
         const idx = Number(officeSelect.value);
         selectedOffice = portalOffices[Number.isFinite(idx) ? idx : 0] || portalOffices[0];
+        pendingImportSnapshot = null; // Start fresh
         showPanel("panelHostAdmin");
+      });
+
+      // ===== Host Step 2b: Import snapshot =====
+      let pendingImportSnapshot = null;
+      const importStatus = document.getElementById("importStatus");
+      const importFileName = document.getElementById("importFileName");
+      const hostOfficeNext = document.getElementById("hostOfficeNext");
+
+      function updateOfficeNextButton() {
+        hostOfficeNext.textContent = pendingImportSnapshot ? "Import & set up" : "Start fresh";
+      }
+
+      document.getElementById("importSnapshotBtn").addEventListener("click", async () => {
+        setStatus(importStatus, "");
+        importFileName.textContent = "";
+        try {
+          const result = await window.otto.setupPickSnapshot();
+          if (result.canceled) return;
+          if (!result.ok) {
+            setStatus(importStatus, result.error || "Could not read snapshot file.", "err");
+            pendingImportSnapshot = null;
+            updateOfficeNextButton();
+            return;
+          }
+          pendingImportSnapshot = result.snapshot;
+          importFileName.textContent = result.fileName || "snapshot.json";
+          setStatus(importStatus, "Snapshot loaded. Click \u201cImport & set up\u201d to continue.", "ok");
+          updateOfficeNextButton();
+        } catch (err) {
+          setStatus(importStatus, "Could not read snapshot file: " + (err.message || "Unknown error"), "err");
+          pendingImportSnapshot = null;
+          updateOfficeNextButton();
+        }
       });
 
       // ===== Host Step 3: Admin account =====
@@ -778,11 +819,7 @@
       const hostAdminNext = document.getElementById("hostAdminNext");
 
       document.getElementById("hostAdminBack").addEventListener("click", () => {
-        if (portalOffices.length > 1) {
-          showPanel("panelHostOffice");
-        } else {
-          showPanel("panelHostSignIn");
-        }
+        showPanel("panelHostOffice");
       });
 
       function clearFieldErrors() {
@@ -884,10 +921,11 @@
             serverBaseUrl = saveResult.serverBaseUrl;
           }
 
-          // Step 2: Call the bootstrap endpoint with portal token + admin data
-          setActivatingText("Activating your practice...");
+          // Step 2: Call bootstrap or import-snapshot endpoint
+          const isImport = !!pendingImportSnapshot;
+          setActivatingText(isImport ? "Importing your data..." : "Activating your practice...");
 
-          const bootstrapBody = {
+          const basePayload = {
             portalToken: portalToken,
             officeId: selectedOffice?.officeId || "",
             office: {
@@ -904,7 +942,15 @@
             },
           };
 
-          const bootstrapResult = await window.otto.setupBootstrap(bootstrapBody);
+          let bootstrapResult;
+          if (isImport) {
+            bootstrapResult = await window.otto.setupImportSnapshot({
+              ...basePayload,
+              snapshot: pendingImportSnapshot,
+            });
+          } else {
+            bootstrapResult = await window.otto.setupBootstrap(basePayload);
+          }
 
           if (!bootstrapResult.ok) {
             const errorMsg = bootstrapResult.error || "Setup failed";

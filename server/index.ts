@@ -282,6 +282,9 @@ app.use((req, res, next) => {
     }
   });
 
+  // Expose the server instance so Electron's before-quit handler can close it.
+  (globalThis as any).__ottoServer = server;
+
   server.listen({
     port,
     host,

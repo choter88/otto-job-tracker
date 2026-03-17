@@ -214,13 +214,6 @@ export default function AuthPage() {
   }
 
   if (!setupStatus?.initialized) {
-    // Inside Electron, setup is handled by the native setup window — don’t redirect to /setup.
-    // Only redirect to /setup for direct browser access on localhost.
-    const isElectron = !!(window as any)?.otto?.getConfig;
-    if (isLocalHost && !isElectron) {
-      return <Redirect to="/setup" />;
-    }
-
     return (
       <div className="min-h-screen flex items-center justify-center p-8">
         <Card className="w-full max-w-md">
