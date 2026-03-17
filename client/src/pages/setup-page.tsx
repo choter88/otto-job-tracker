@@ -194,18 +194,8 @@ export default function SetupPage() {
         return;
       }
 
-      if (activatable.length === 1) {
-        // Auto-select single office and skip to admin step
-        const office = activatable[0];
-        setSelectedOffice(office);
-        adminForm.setValue("officeName", office.officeName, { shouldValidate: true });
-        if (office.address) adminForm.setValue("officeAddress", office.address);
-        if (office.phone) adminForm.setValue("officePhone", office.phone);
-        if (office.email) adminForm.setValue("officeEmail", office.email);
-        setStep("admin");
-      } else {
-        setStep("office");
-      }
+      // Always show office picker (step 2) as confirmation, even with one office
+      setStep("office");
     },
     onError: (error: Error) => {
       toast({
@@ -342,7 +332,6 @@ export default function SetupPage() {
     if (office.address) adminForm.setValue("officeAddress", office.address);
     if (office.phone) adminForm.setValue("officePhone", office.phone);
     if (office.email) adminForm.setValue("officeEmail", office.email);
-    setStep("admin");
   };
 
   const handleSnapshotFile = async (file: File | null) => {
@@ -554,13 +543,18 @@ export default function SetupPage() {
   // Step 2: Select practice
   // ============================
   if (step === "office" && portalAuth) {
+    const activatable = portalAuth.offices.filter(
+      (o) => o.subscriptionStatus === "active" || o.subscriptionStatus === "trialing"
+    );
+
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
-        <div className="w-full max-w-md space-y-6">
+        <div className="w-full max-w-lg space-y-6">
           <div className="text-center">
+            <p className="text-sm font-medium text-primary mb-1">STEP 2 OF 3</p>
             <h1 className="text-3xl font-bold text-foreground mb-2">Choose your practice</h1>
             <p className="text-muted-foreground">
-              Your account has access to multiple practices. Select the one to set up on this computer.
+              Select the practice to set up on this computer.
             </p>
           </div>
 
@@ -572,37 +566,100 @@ export default function SetupPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {portalAuth.offices
-                .filter((o) => o.subscriptionStatus === "active" || o.subscriptionStatus === "trialing")
-                .map((office) => (
+              {activatable.map((office) => (
                 <Button
                   key={office.officeId}
-                  variant="outline"
+                  variant={selectedOffice?.officeId === office.officeId ? "default" : "outline"}
                   className="w-full justify-start text-left h-auto py-3"
                   onClick={() => handleSelectOffice(office.officeId)}
                 >
                   <div>
                     <div className="font-medium">{office.officeName}</div>
-                    {office.role && (
-                      <div className="text-xs text-muted-foreground capitalize">{office.role}</div>
-                    )}
+                    <div className="text-xs opacity-70">
+                      {[office.role, office.address].filter(Boolean).join(" · ")}
+                    </div>
                   </div>
                 </Button>
               ))}
 
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setStep("signin");
-                  setPortalAuth(null);
-                }}
-                className="mt-2"
-              >
-                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
-                Use a different account
-              </Button>
+              {/* Import option */}
+              <div className="pt-3 border-t">
+                <Label className="text-sm font-medium mb-2 block">Migrating from Otto Web?</Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Import your existing data (jobs, users, settings) from a snapshot file exported from Otto Web.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={setupMode === "new" ? "default" : "secondary"}
+                    onClick={() => { setSetupMode("new"); setSnapshot(null); setSnapshotError(null); setSnapshotPreview(null); }}
+                  >
+                    Start fresh
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={setupMode === "import" ? "default" : "secondary"}
+                    onClick={() => setSetupMode("import")}
+                  >
+                    Import snapshot
+                  </Button>
+                </div>
+
+                {setupMode === "import" && (
+                  <div className="space-y-2 mt-3">
+                    <Label htmlFor="snapshotFile">Snapshot file *</Label>
+                    <Input
+                      id="snapshotFile"
+                      type="file"
+                      accept=".otto-snapshot.json,application/json"
+                      onChange={(event) => handleSnapshotFile(event.target.files?.[0] || null)}
+                    />
+                    {snapshotError && <p className="text-sm text-destructive">{snapshotError}</p>}
+
+                    {snapshotPreview && (
+                      <div className="rounded-lg border bg-card p-3 text-sm text-muted-foreground">
+                        <div className="font-medium text-foreground mb-1">{snapshotPreview.officeName}</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>Users: {snapshotPreview.users}</div>
+                          <div>Active jobs: {snapshotPreview.jobs}</div>
+                          <div>Archived jobs: {snapshotPreview.archivedJobs}</div>
+                          <div>Comments: {snapshotPreview.comments}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-3 flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setStep("signin");
+                    setPortalAuth(null);
+                    setSelectedOffice(null);
+                    setSetupMode("new");
+                    setSnapshot(null);
+                    setSnapshotError(null);
+                    setSnapshotPreview(null);
+                  }}
+                >
+                  <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                  Use a different account
+                </Button>
+                <div className="flex-1" />
+                <Button
+                  type="button"
+                  disabled={!selectedOffice || (setupMode === "import" && !snapshot)}
+                  onClick={() => setStep("admin")}
+                >
+                  Continue
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -617,18 +674,12 @@ export default function SetupPage() {
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/5 to-accent/5">
       <div className="w-full max-w-5xl space-y-6">
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-foreground mb-2">Set up Otto Tracker</h1>
+          <p className="text-sm font-medium text-primary mb-1">STEP 3 OF 3 · CREATE YOUR ADMIN ACCOUNT</p>
+          <h1 className="text-3xl font-bold text-foreground mb-2">Your Admin Account</h1>
           <p className="text-muted-foreground">
-            Confirm your office details and create the first owner login.
+            This will be the owner account for <b>{selectedOffice?.officeName}</b>.
           </p>
         </div>
-
-        <Alert className="border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950">
-          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-          <AlertDescription className="text-emerald-700 dark:text-emerald-300">
-            Signed in as {portalAuth?.email || portalAuth?.firstName}. Setting up <b>{selectedOffice?.officeName}</b>.
-          </AlertDescription>
-        </Alert>
 
         <form onSubmit={adminForm.handleSubmit(onAdminSubmit)} className="grid gap-6 lg:grid-cols-2">
           {/* Left: Office details */}
@@ -676,60 +727,6 @@ export default function SetupPage() {
                   )}
                 </div>
               </div>
-
-              {/* Migration option */}
-              <div className="pt-3 border-t">
-                <Label className="text-xs text-muted-foreground mb-2 block">Data migration (optional)</Label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={setupMode === "new" ? "default" : "secondary"}
-                    onClick={() => { setSetupMode("new"); setSnapshotError(null); }}
-                  >
-                    Start fresh
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={setupMode === "import" ? "default" : "secondary"}
-                    onClick={() => setSetupMode("import")}
-                  >
-                    Import snapshot
-                  </Button>
-                </div>
-
-                {setupMode === "import" && (
-                  <div className="space-y-2 mt-3">
-                    <Label htmlFor="snapshotFile">Snapshot file *</Label>
-                    <Input
-                      id="snapshotFile"
-                      type="file"
-                      accept=".otto-snapshot.json,application/json"
-                      onChange={(event) => handleSnapshotFile(event.target.files?.[0] || null)}
-                    />
-                    {snapshotError && <p className="text-sm text-destructive">{snapshotError}</p>}
-
-                    {snapshotPreview && (
-                      <div className="rounded-lg border bg-card p-3 text-sm text-muted-foreground">
-                        <div className="font-medium text-foreground mb-1">{snapshotPreview.officeName}</div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>Users: {snapshotPreview.users}</div>
-                          <div>Active jobs: {snapshotPreview.jobs}</div>
-                          <div>Archived jobs: {snapshotPreview.archivedJobs}</div>
-                          <div>Comments: {snapshotPreview.comments}</div>
-                        </div>
-                      </div>
-                    )}
-
-                    <Alert>
-                      <AlertDescription>
-                        In Otto Web, export a migration snapshot file. Import is only available on a fresh Host (no existing data).
-                      </AlertDescription>
-                    </Alert>
-                  </div>
-                )}
-              </div>
             </CardContent>
           </Card>
 
@@ -765,7 +762,7 @@ export default function SetupPage() {
               <div className="space-y-2">
                 <Label htmlFor="adminLoginId">Login ID *</Label>
                 <Input id="adminLoginId" placeholder="jane.cho" {...adminForm.register("adminLoginId")} />
-                <p className="text-xs text-muted-foreground">3-32 characters. Use letters, numbers, ".", "-", or "_".</p>
+                <p className="text-xs text-muted-foreground">Short username for daily sign-in. Letters, numbers, periods, hyphens.</p>
                 {adminForm.formState.errors.adminLoginId && (
                   <p className="text-sm text-destructive">{adminForm.formState.errors.adminLoginId.message}</p>
                 )}
@@ -809,15 +806,7 @@ export default function SetupPage() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  if (portalAuth && portalAuth.offices.length > 1) {
-                    setStep("office");
-                  } else {
-                    setStep("signin");
-                    setPortalAuth(null);
-                    setSelectedOffice(null);
-                  }
-                }}
+                onClick={() => setStep("office")}
               >
                 <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
                 Back
@@ -827,15 +816,12 @@ export default function SetupPage() {
             <Button
               type="submit"
               className="w-full"
-              disabled={isSubmitting || (setupMode === "import" && !snapshot)}
+              disabled={isSubmitting}
               data-testid="button-complete-setup"
             >
               {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {setupMode === "import" ? "Import & complete setup" : "Complete setup"}
             </Button>
-            {setupMode === "import" && !snapshot && (
-              <p className="text-xs text-muted-foreground">Choose a snapshot file above to enable import.</p>
-            )}
           </div>
         </form>
       </div>

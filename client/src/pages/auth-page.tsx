@@ -328,7 +328,7 @@ export default function AuthPage() {
                       data-testid="button-toggle-signup"
                     >
                       <UserPlus className="mr-2 h-4 w-4" />
-                      {showSignup ? "Back to sign in" : "First time here?"}
+                      {showSignup ? "Back to sign in" : "Request access"}
                     </Button>
                   )}
                 </div>

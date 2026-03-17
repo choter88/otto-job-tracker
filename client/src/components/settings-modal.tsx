@@ -30,7 +30,7 @@ import {
   Check
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
-import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, chooseHighContrastColor, getColorForBadge, hexToHSL } from "@/lib/default-colors";
+import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, chooseHighContrastColor, getColorForBadge, hexToHSL, normalizeToHex } from "@/lib/default-colors";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import type { Office } from "@shared/schema";
 import {
@@ -307,30 +307,38 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
           ? settings.smsTemplates
           : {};
       
+      // Normalize color fields to hex so <input type="color"> works correctly
+      const normalizeItems = (items: any[]) =>
+        items.map((item) => ({
+          ...item,
+          color: normalizeToHex(item.color, item.hsl, item.hex),
+          hsl: item.hsl || (item.color && /^#/.test(item.color) ? hexToHSL(item.color) : item.hsl || ""),
+        }));
+
       // Merge existing settings with defaults (existing settings take priority)
-      const mergedStatuses = existingStatuses.length > 0 
-        ? existingStatuses 
-        : DEFAULT_STATUS_COLORS.map(def => ({ 
-            id: def.id, 
-            label: def.label, 
+      const mergedStatuses = existingStatuses.length > 0
+        ? normalizeItems(existingStatuses)
+        : DEFAULT_STATUS_COLORS.map(def => ({
+            id: def.id,
+            label: def.label,
             color: def.hex,
             hsl: def.hsl,
-            order: def.order 
+            order: def.order
           }));
-      
-      const mergedTypes = existingTypes.length > 0 
-        ? existingTypes 
-        : DEFAULT_JOB_TYPE_COLORS.map(def => ({ 
-            id: def.id, 
-            label: def.label, 
+
+      const mergedTypes = existingTypes.length > 0
+        ? normalizeItems(existingTypes)
+        : DEFAULT_JOB_TYPE_COLORS.map(def => ({
+            id: def.id,
+            label: def.label,
             color: def.hex,
             hsl: def.hsl,
-            order: def.order 
+            order: def.order
           }));
-      
+
       setCustomStatuses(mergedStatuses);
       setCustomJobTypes(mergedTypes);
-      setCustomOrderDestinations(existingDestinations);
+      setCustomOrderDestinations(normalizeItems(existingDestinations));
       setCustomColumns(existingColumns);
       setMessageTemplates(ensureReadyForPickupTemplate(existingTemplates, mergedStatuses));
       setJobIdentifierMode(settings.jobIdentifierMode === "trayNumber" ? "trayNumber" : "patientName");

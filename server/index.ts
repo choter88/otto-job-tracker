@@ -2,7 +2,7 @@ import "./local-env";
 import express, { type Request, Response, NextFunction } from "express";
 import { enforceAirgap } from "./airgap";
 import { logAudit } from "./audit-logger";
-import { getLicenseSnapshot, startLicenseScheduler } from "./license";
+import { getLicenseSnapshot, startLicenseScheduler, onLicenseStateChange } from "./license";
 import { broadcastToOffice, setupSyncWebSocket } from "./sync-websocket";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
@@ -15,6 +15,23 @@ enforceAirgap();
 startLicenseScheduler();
 
 // Enforce licensing: after grace period, the app becomes read-only.
+// Cache the snapshot for 24 hours to avoid computing it on every single write.
+let _licenseCache: { snapshot: ReturnType<typeof getLicenseSnapshot>; cachedAt: number } | null = null;
+const LICENSE_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
+
+// Invalidate the license cache whenever state changes (e.g. after check-in or activation).
+onLicenseStateChange(() => { _licenseCache = null; });
+
+function getCachedLicenseSnapshot() {
+  const now = Date.now();
+  if (_licenseCache && now - _licenseCache.cachedAt < LICENSE_CACHE_TTL_MS) {
+    return _licenseCache.snapshot;
+  }
+  const snapshot = getLicenseSnapshot();
+  _licenseCache = { snapshot, cachedAt: now };
+  return snapshot;
+}
+
 app.use((req, res, next) => {
   const method = String(req.method || "GET").toUpperCase();
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
@@ -35,7 +52,7 @@ app.use((req, res, next) => {
   ]);
   if (allowlist.has(req.path)) return next();
 
-  const snapshot = getLicenseSnapshot();
+  const snapshot = getCachedLicenseSnapshot();
   if (snapshot.writeAllowed) return next();
 
   return res.status(403).json({

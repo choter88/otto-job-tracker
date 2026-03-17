@@ -7,6 +7,12 @@ import type { LicenseActivateResult } from "./license-client";
 
 let state: LicenseState | null = null;
 let checkinTimer: NodeJS.Timeout | null = null;
+let _onStateChange: (() => void) | null = null;
+
+/** Register a callback invoked whenever license state changes (e.g. to invalidate caches). */
+export function onLicenseStateChange(cb: () => void): void {
+  _onStateChange = cb;
+}
 
 function getState(): LicenseState {
   if (!state) state = ensureLicenseState();
@@ -17,6 +23,7 @@ function updateState(patch: Partial<LicenseState>): LicenseState {
   const next: LicenseState = { ...getState(), ...patch };
   state = next;
   saveLicenseState(next);
+  _onStateChange?.();
   return next;
 }
 

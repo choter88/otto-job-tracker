@@ -215,6 +215,36 @@ export function hexToHSL(hex: string): string {
   return `${h} ${s}% ${l}%`;
 }
 
+// Helper to convert HSL string (e.g. "210 50% 60%") to hex
+export function hslToHex(hslStr: string): string {
+  const parts = hslStr.replace(/%/g, "").split(/\s+/).map(Number);
+  if (parts.length < 3 || parts.some(isNaN)) return "#808080";
+  let [h, s, l] = parts;
+  s /= 100;
+  l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+// Normalize any color value to a hex string suitable for <input type="color">.
+// Accepts hex (#rrggbb), HSL ("210 50% 60%"), or empty → fallback.
+export function normalizeToHex(color: string | undefined, hsl: string | undefined, hex: string | undefined): string {
+  if (hex && /^#[0-9a-fA-F]{6}$/.test(hex)) return hex;
+  if (color && /^#[0-9a-fA-F]{6}$/.test(color)) return color;
+  if (color && /^#[0-9a-fA-F]{3}$/.test(color)) {
+    // Expand shorthand #rgb → #rrggbb
+    return `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`;
+  }
+  if (hsl && hsl.includes("%")) return hslToHex(hsl);
+  if (color && color.includes("%")) return hslToHex(color);
+  return "#808080";
+}
+
 // Helper to get color for badge styling
 export function getColorForBadge(color: string | null | undefined): { background: string; text: string } {
   const safeColor = typeof color === "string" ? color.trim() : "";
