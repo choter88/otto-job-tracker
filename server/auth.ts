@@ -56,7 +56,7 @@ async function comparePasswords(supplied: string, stored: string) {
 }
 
 export function setupAuth(app: Express) {
-  const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 8; // 8 hours
+  const SESSION_TIMEOUT_MS = 1000 * 60 * 15; // 15 minutes (HIPAA)
 
   if (!process.env.SESSION_SECRET) {
     if (process.env.NODE_ENV === "production") {

@@ -772,7 +772,7 @@
       document.getElementById("hostOfficeNext").addEventListener("click", () => {
         const idx = Number(officeSelect.value);
         selectedOffice = portalOffices[Number.isFinite(idx) ? idx : 0] || portalOffices[0];
-        pendingImportSnapshot = null; // Start fresh
+        // pendingImportSnapshot is preserved — if user loaded a snapshot, it stays loaded
         showPanel("panelHostAdmin");
       });
 
@@ -1331,27 +1331,19 @@
         setStatus(clientAccountStatus, "Creating your account\u2026");
 
         try {
-          // POST to Host's /api/setup/client-register
-          const registerUrl = new URL("/api/setup/client-register", clientHostUrl).href;
-          const registerBody = {
+          // POST to Host's /api/setup/client-register via IPC (bypasses self-signed cert issue in renderer)
+          const registerResult = await window.otto.clientRegister({
+            hostUrl: clientHostUrl,
             inviteCode: clientInviteCode,
             installationId: clientInstallationId,
             firstName: clientFirstName.value.trim(),
             lastName: clientLastName.value.trim(),
             loginId: clientLoginId.value.trim(),
             pin: clientPin.value.trim(),
-          };
-
-          const registerRes = await fetch(registerUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(registerBody),
           });
 
-          const registerData = await registerRes.json().catch(() => null);
-
-          if (!registerRes.ok) {
-            const errMsg = registerData?.error || `Registration failed (${registerRes.status})`;
+          if (!registerResult?.ok) {
+            const errMsg = registerResult?.error || "Registration failed.";
             if (errMsg === "login_id_taken") {
               setStatus(clientAccountStatus, "That Login ID is already taken. Choose a different one.", "err");
             } else if (errMsg === "invalid_invite_code") {
@@ -1361,6 +1353,8 @@
             }
             return;
           }
+
+          const registerData = registerResult.data;
 
           // Save client config
           setStatus(clientAccountStatus, "Saving configuration\u2026");

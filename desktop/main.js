@@ -1639,6 +1639,53 @@ ipcMain.handle("otto:portal:validate-invite-code", async (_event, payload) => {
   }
 });
 
+ipcMain.handle("otto:portal:client-register", async (_event, payload) => {
+  const { hostUrl, inviteCode, installationId, firstName, lastName, loginId, pin } = payload || {};
+  if (!hostUrl) return { ok: false, error: "Missing host URL." };
+
+  try {
+    const registerUrl = new URL("/api/setup/client-register", hostUrl);
+    const body = JSON.stringify({ inviteCode, installationId, firstName, lastName, loginId, pin });
+    const mod = registerUrl.protocol === "https:" ? https : http;
+
+    const result = await new Promise((resolve, reject) => {
+      const req = mod.request(registerUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 15000,
+        rejectUnauthorized: false,
+      }, (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode, json: JSON.parse(data) });
+          } catch {
+            resolve({ status: res.statusCode, json: null });
+          }
+        });
+      });
+      req.on("error", (err) => reject(err));
+      req.on("timeout", () => { req.destroy(); reject(new Error("Request timed out.")); });
+      req.write(body);
+      req.end();
+    });
+
+    if (result.status < 200 || result.status >= 300) {
+      const error = result.json?.error || `Registration failed (${result.status})`;
+      return { ok: false, error, status: result.status };
+    }
+
+    return { ok: true, data: result.json };
+  } catch (err) {
+    _logStartup("client-register IPC error", err?.message, err?.stack);
+    return { ok: false, error: err?.message || "Could not reach the Host computer." };
+  }
+});
+
 // --- App lifecycle ---
 
 app.whenReady().then(async () => {
@@ -1689,6 +1736,22 @@ app.on("before-quit", () => {
     }
   } catch {
     // best-effort
+  }
+
+  // Clear all sessions on quit so users must re-authenticate on next launch (HIPAA)
+  try {
+    const dataDir = process.env.OTTO_DATA_DIR || path.join(app.getPath("home"), ".otto-job-tracker");
+    const sessionDbPath = path.join(dataDir, "sessions.sqlite");
+    if (fs.existsSync(sessionDbPath)) {
+      fs.unlinkSync(sessionDbPath);
+    }
+    // Also remove WAL/SHM files if present
+    for (const suffix of ["-wal", "-shm"]) {
+      const walPath = sessionDbPath + suffix;
+      if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+    }
+  } catch {
+    // best-effort — if it fails, the 15-min timeout still protects
   }
 });
 
