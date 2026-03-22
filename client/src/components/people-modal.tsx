@@ -146,7 +146,7 @@ export default function PeopleModal({ open, onOpenChange }: PeopleModalProps) {
       owner: "bg-purple-100 text-purple-800",
       manager: "bg-blue-100 text-blue-800", 
       staff: "bg-green-100 text-green-800",
-      view_only: "bg-gray-100 text-gray-800",
+      view_only: "bg-gray-200 text-gray-800",
     };
     return colors[role] || colors.staff;
   };

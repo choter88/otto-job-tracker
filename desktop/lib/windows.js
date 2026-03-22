@@ -118,13 +118,14 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
           buttons,
           defaultId: 0,
           cancelId: buttons.length - 1,
-          message: "Can't connect",
+          message:
+            config.mode === "host"
+              ? "Otto is still starting up"
+              : "Can\u2019t connect to the main computer",
           detail:
             config.mode === "host"
-              ? `The Host server is still starting.\n\nError: ${errorDescription}\nURL: ${validatedURL}`
-              : `This Client can't reach the Host.\n\nCheck that:\n- The Host computer is on\n- Both computers are on the same office network\n- The Host address is correct${
-                  isCertError ? "\n- The Pairing code matches the Host" : ""
-                }\n\nError: ${errorDescription}\nURL: ${validatedURL}`,
+              ? "This may take a moment. Click Retry to try again."
+              : "Make sure the main computer is turned on and connected to the same office network as this one.\n\nIf the problem continues, ask your office manager or IT support for help.",
         };
 
         let result = null;
