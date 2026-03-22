@@ -122,16 +122,16 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
       data-testid="sidebar"
     >
       {/* Office Header */}
-      <div className="border-b border-border p-3">
-        <div className="flex items-start gap-3">
-          {/* Icon — always centered in the 80px column */}
-          <div className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
+      <div className="border-b border-border">
+        {/* Logo row — icon in the same fixed column as nav items */}
+        <div className="flex items-center h-14">
+          <span className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
             <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-              <Glasses className="h-5 w-5 text-primary-foreground" />
+              <Glasses className="h-4 w-4 text-primary-foreground" />
             </div>
-          </div>
+          </span>
           {!collapsed && (
-            <div className="flex-1 min-w-0 pt-1">
+            <div className="flex-1 min-w-0 pr-4">
               <h2 className="font-semibold text-foreground truncate" data-testid="text-office-name">
                 {office?.name || "Loading..."}
               </h2>
@@ -141,20 +141,22 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
             </div>
           )}
         </div>
-        {/* Toggle button — always centered in the 80px icon column */}
-        <div className={cn("mt-3 flex", ICON_COL, "justify-center")}>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setCollapsed((prev) => !prev)}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            data-testid="button-toggle-sidebar"
-          >
-            <PanelLeft className="h-4 w-4" />
-          </Button>
+        {/* Toggle row — icon in the same fixed column as nav items */}
+        <div className="flex items-center h-10 mb-1">
+          <span className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setCollapsed((prev) => !prev)}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              data-testid="button-toggle-sidebar"
+            >
+              <PanelLeft className="h-4 w-4" />
+            </Button>
+          </span>
         </div>
       </div>
 
