@@ -3,13 +3,13 @@ import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { 
-  Glasses, 
-  Briefcase, 
-  Archive, 
-  AlertTriangle, 
-  BarChart3, 
-  Users, 
+import {
+  Glasses,
+  Briefcase,
+  Archive,
+  AlertTriangle,
+  BarChart3,
+  Users,
   Star,
   PanelLeft
 } from "lucide-react";
@@ -108,22 +108,30 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
     },
   ];
 
+  // Fixed icon column width (matches w-20 = 80px).
+  // When expanded, a text column slides out to the right; icons never move.
+  const ICON_COL = "w-20"; // 80px — always present
+  const EXPANDED_W = "w-64"; // 256px total when expanded
+
   return (
     <aside
       className={cn(
-        "bg-card border-r border-border flex flex-col pb-16 transition-[width] duration-200",
-        collapsed ? "w-20" : "w-64",
+        "bg-card border-r border-border flex flex-col pb-16 transition-[width] duration-200 overflow-hidden",
+        collapsed ? ICON_COL : EXPANDED_W,
       )}
       data-testid="sidebar"
     >
       {/* Office Header */}
-      <div className={cn("border-b border-border", collapsed ? "p-3" : "p-6")}>
-        <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center shrink-0">
-            <Glasses className="h-5 w-5 text-primary-foreground" />
+      <div className="border-b border-border p-3">
+        <div className="flex items-start gap-3">
+          {/* Icon — always centered in the 80px column */}
+          <div className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
+            <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+              <Glasses className="h-5 w-5 text-primary-foreground" />
+            </div>
           </div>
           {!collapsed && (
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 pt-1">
               <h2 className="font-semibold text-foreground truncate" data-testid="text-office-name">
                 {office?.name || "Loading..."}
               </h2>
@@ -133,7 +141,8 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
             </div>
           )}
         </div>
-        <div className={cn("mt-3", collapsed ? "flex justify-center" : "flex justify-end")}>
+        {/* Toggle button — always centered in the 80px icon column */}
+        <div className={cn("mt-3 flex", ICON_COL, "justify-center")}>
           <Button
             type="button"
             variant="ghost"
@@ -150,63 +159,87 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
       </div>
 
       {/* Main Navigation */}
-      <nav className="flex-1 p-4 space-y-1">
+      <nav className="flex-1 py-4 space-y-1">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id || (item.id === "all" && activeTab === "all");
-          
+
           return (
-            <Button
+            <button
               key={`${item.id}-${item.label}`}
-              variant="ghost"
+              type="button"
               className={cn(
-                "w-full gap-3 h-10 relative",
-                collapsed ? "justify-center px-2" : "justify-start",
-                isActive && "bg-accent text-accent-foreground"
+                "w-full flex items-center h-10 text-sm font-medium rounded-none",
+                "hover:bg-accent hover:text-accent-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isActive && "bg-accent text-accent-foreground",
+                !isActive && "text-muted-foreground",
               )}
               onClick={() => onTabChange(item.id)}
               title={collapsed ? item.label : undefined}
               aria-label={item.label}
               data-testid={`nav-${item.id}`}
             >
-              <Icon className="h-4 w-4 flex-shrink-0" />
-              {!collapsed && <span className="flex-1 text-left">{item.label}</span>}
-              {item.badge !== null && (
-                <Badge 
-                  variant={(item as any).variant || "secondary"} 
-                  className={cn(
-                    "text-xs",
-                    collapsed
-                      ? "absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 text-[10px] leading-none flex items-center justify-center z-10"
-                      : "",
+              {/* Fixed-width icon area — never moves */}
+              <span className={cn("flex items-center justify-center shrink-0 relative", ICON_COL)}>
+                <Icon className="h-4 w-4" />
+                {item.badge !== null && collapsed && (
+                  <Badge
+                    variant={(item as any).variant || "secondary"}
+                    className="absolute -top-0.5 right-2 h-4 min-w-4 px-1 text-[10px] leading-none flex items-center justify-center z-10"
+                    data-testid={`badge-${item.id}`}
+                  >
+                    {item.badge}
+                  </Badge>
+                )}
+              </span>
+              {/* Text + badge area — only visible when expanded */}
+              {!collapsed && (
+                <span className="flex items-center justify-between flex-1 pr-4">
+                  <span>{item.label}</span>
+                  {item.badge !== null && (
+                    <Badge
+                      variant={(item as any).variant || "secondary"}
+                      className="text-xs"
+                      data-testid={`badge-${item.id}`}
+                    >
+                      {item.badge}
+                    </Badge>
                   )}
-                  data-testid={`badge-${item.id}`}
-                >
-                  {item.badge}
-                </Badge>
+                </span>
               )}
-            </Button>
+            </button>
           );
         })}
 
         {/* Divider */}
-        <div className="pt-4 border-t border-border mt-4">
+        <div className="pt-4 border-t border-border mt-4 mx-4">
           {bottomMenuItems.map((item) => {
             const Icon = item.icon;
-            
+
             return (
-              <Button
+              <button
                 key={item.id}
-                variant="ghost"
-                className={cn("w-full gap-3 h-10", collapsed ? "justify-center px-2" : "justify-start")}
+                type="button"
+                className={cn(
+                  "w-full flex items-center h-10 text-sm font-medium rounded-none -mx-4",
+                  "hover:bg-accent hover:text-accent-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  activeTab === item.id && "bg-accent text-accent-foreground",
+                  activeTab !== item.id && "text-muted-foreground",
+                )}
                 onClick={() => onTabChange(item.id)}
                 title={collapsed ? item.label : undefined}
                 aria-label={item.label}
                 data-testid={`nav-${item.id}`}
               >
-                <Icon className="h-4 w-4" />
-                {!collapsed && <span>{item.label}</span>}
-              </Button>
+                <span className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
+                  <Icon className="h-4 w-4" />
+                </span>
+                {!collapsed && (
+                  <span className="flex-1 text-left">{item.label}</span>
+                )}
+              </button>
             );
           })}
         </div>

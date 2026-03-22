@@ -1,7 +1,7 @@
 import path from "path";
 import { BrowserWindow, Menu, screen } from "electron";
 
-const MAIN_WINDOW_BASE_WIDTH = 1320;
+const MAIN_WINDOW_BASE_WIDTH = 1500;
 const MAIN_WINDOW_BASE_HEIGHT = 864;
 const MAIN_WINDOW_BASE_MIN_WIDTH = 1320;
 const MAIN_WINDOW_BASE_MIN_HEIGHT = 864;
