@@ -1,4 +1,5 @@
 import os from "os";
+import { randomBytes } from "crypto";
 import { OTTO_DEFAULT_PORT } from "@shared/constants";
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
@@ -71,12 +72,16 @@ export async function activateHostWithPortalToken(portalToken: string, officeId:
   if (!officeId) throw new Error("Office ID is required");
 
   const current = getState();
+  // Generate an idempotency key so the portal can return a cached response
+  // if we crash after portal commits but before we persist the hostToken.
+  const idempotencyKey = randomBytes(16).toString("hex");
   const result = await portalIssueAndConsume({
     portalToken,
     officeId,
     installationId: current.installationId,
     hostFingerprint256: current.hostFingerprint256,
     appVersion: process.env.npm_package_version,
+    idempotencyKey,
   });
 
   if (!result.ok) {
@@ -137,7 +142,7 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
     return getLicenseSnapshot();
   }
 
-  updateState({
+  const checkinPatch: Partial<LicenseState> = {
     officeStatus: result.status,
     lastSuccessfulCheckinAt: result.serverTime,
     nextCheckinDueAt: result.nextCheckinDueAt,
@@ -146,7 +151,11 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
     lastError: "",
     tokenInvalid: false,
     currentInviteCodeLast4: result.currentInviteCodeLast4,
-  });
+  };
+  if (typeof result.currentPeriodEnd === "number" && result.currentPeriodEnd > 0) {
+    checkinPatch.currentPeriodEnd = result.currentPeriodEnd;
+  }
+  updateState(checkinPatch);
 
   return getLicenseSnapshot();
 }

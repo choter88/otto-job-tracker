@@ -29,6 +29,10 @@ export type LicenseState = {
   lastError?: string;
   tokenInvalid?: boolean;
   currentInviteCodeLast4?: string;
+
+  // Subscription billing cycle end (unix ms, from portal's Stripe data).
+  // Used to enforce a 3-day grace period after the subscription period expires.
+  currentPeriodEnd?: number;
 };
 
 export type LicenseSnapshot = {

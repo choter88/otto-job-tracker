@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { runMigrations } from "./migrate";
 
 export function bootstrapSqliteSchema(sqlite: Database.Database): void {
   const hasColumn = (table: string, column: string): boolean => {
@@ -570,4 +571,10 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     ensureJobFlagNoteColumns();
     ensureHighContrastOfficeColors();
   })();
+
+  // Run numbered SQL migrations from server/migrations/.
+  const applied = runMigrations(sqlite);
+  if (applied > 0) {
+    console.log(`[otto] Applied ${applied} database migration(s).`);
+  }
 }

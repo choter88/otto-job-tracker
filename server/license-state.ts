@@ -6,7 +6,8 @@ import type { LicenseSnapshot, LicenseState, LicenseMode, LicenseOfficeStatus } 
 
 const LICENSE_FILE_NAME = "license.json";
 const ACTIVATION_GRACE_MS = 1000 * 60 * 60 * 24 * 7; // 7 days to complete activation
-const CHECKIN_OUTAGE_GRACE_MS = 1000 * 60 * 60 * 24 * 30; // tolerate portal outages (local-first)
+const CHECKIN_OUTAGE_GRACE_MS = 1000 * 60 * 60 * 24 * 7; // tolerate portal outages for 7 days
+const SUBSCRIPTION_GRACE_MS = 1000 * 60 * 60 * 24 * 3; // 3 days after subscription period expires
 
 function getDataDir(): string {
   return process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
@@ -176,6 +177,22 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
       mode = "GRACE";
       writeAllowed = true;
       message = "License check-in pending. Otto Tracker will become read-only after the grace period.";
+    }
+  }
+
+  // Subscription billing cycle enforcement: if the subscription period has ended
+  // and the 3-day grace window has passed, block writes regardless of check-in status.
+  if (writeAllowed && hostTokenPresent && typeof state.currentPeriodEnd === "number" && state.currentPeriodEnd > 0) {
+    const subscriptionGraceEndsAt = state.currentPeriodEnd + SUBSCRIPTION_GRACE_MS;
+    if (Date.now() > subscriptionGraceEndsAt) {
+      mode = "READ_ONLY";
+      writeAllowed = false;
+      graceEndsAt = subscriptionGraceEndsAt;
+      message = "Subscription period has expired. Please renew to continue using Otto Tracker.";
+    } else if (Date.now() > state.currentPeriodEnd && mode === "ACTIVE") {
+      mode = "GRACE";
+      graceEndsAt = subscriptionGraceEndsAt;
+      message = "Subscription renewal pending. Otto Tracker will become read-only if not renewed.";
     }
   }
 

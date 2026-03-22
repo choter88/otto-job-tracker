@@ -28,6 +28,7 @@ export type LicenseCheckinResult = {
   nextCheckinDueAt: number;
   status: "ACTIVE" | "DISABLED";
   currentInviteCodeLast4?: string;
+  currentPeriodEnd?: number | null;
 };
 
 export type LicenseRequestError = {
@@ -164,6 +165,7 @@ export async function portalIssueAndConsume(payload: {
   installationId: string;
   hostFingerprint256: string;
   appVersion?: string;
+  idempotencyKey?: string;
 }): Promise<LicenseActivateResult | { ok: false; error: LicenseRequestError }> {
   const base = getLicenseBaseUrl();
   const url = new URL("/portal/api/desktop/claims/issue-and-consume", base);
@@ -210,6 +212,7 @@ export async function portalCheckin(payload: {
     nextCheckinDueAt,
     status: officeStatus,
     currentInviteCodeLast4: typeof json?.currentInviteCodeLast4 === "string" ? json.currentInviteCodeLast4 : undefined,
+    currentPeriodEnd: typeof json?.currentPeriodEnd === "number" ? json.currentPeriodEnd : null,
   };
 }
 
