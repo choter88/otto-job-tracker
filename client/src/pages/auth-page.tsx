@@ -73,7 +73,7 @@ type DesktopMode = "host" | "client" | "unknown";
 export default function AuthPage() {
   const { user, isLoading, loginMutation, pinLoginMutation } = useAuth();
   const [showSignup, setShowSignup] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<"password" | "pin">("password");
+  const [loginMethod, setLoginMethod] = useState<"password" | "pin">("pin");
   const [requestSubmittedMessage, setRequestSubmittedMessage] = useState<string | null>(null);
   const [pinResetMessage, setPinResetMessage] = useState<string | null>(null);
   const [showForgotPin, setShowForgotPin] = useState(false);
@@ -348,81 +348,7 @@ export default function AuthPage() {
                       </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-2 rounded-md bg-muted p-1">
-                      <Button
-                        type="button"
-                        variant={loginMethod === "password" ? "secondary" : "ghost"}
-                        className="h-8"
-                        onClick={() => {
-                          // Preserve login ID when switching methods
-                          const currentId = pinLoginForm.getValues("loginId");
-                          if (currentId) setSharedLoginId(currentId);
-                          setLoginMethod("password");
-                        }}
-                        data-testid="button-login-method-password"
-                      >
-                        Password
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={loginMethod === "pin" ? "secondary" : "ghost"}
-                        className="h-8"
-                        onClick={() => {
-                          // Preserve login ID when switching methods
-                          const currentId = loginForm.getValues("identifier");
-                          if (currentId) setSharedLoginId(currentId);
-                          setLoginMethod("pin");
-                        }}
-                        data-testid="button-login-method-pin"
-                      >
-                        PIN
-                      </Button>
-                    </div>
-
-                    {loginMethod === "password" ? (
-                      <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="identifier">Login ID</Label>
-                          <Input
-                            id="identifier"
-                            type="text"
-                            autoCapitalize="none"
-                            autoCorrect="off"
-                            placeholder="jane.cho"
-                            {...loginForm.register("identifier")}
-                            data-testid="input-login-identifier"
-                          />
-                          <p className="text-xs text-muted-foreground">Older accounts can still sign in with email.</p>
-                          {loginForm.formState.errors.identifier && (
-                            <p className="text-sm text-destructive">{loginForm.formState.errors.identifier.message}</p>
-                          )}
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="password">Password</Label>
-                          <Input
-                            id="password"
-                            type="password"
-                            placeholder="••••••••"
-                            {...loginForm.register("password")}
-                            data-testid="input-password"
-                          />
-                          {loginForm.formState.errors.password && (
-                            <p className="text-sm text-destructive">{loginForm.formState.errors.password.message}</p>
-                          )}
-                        </div>
-
-                        <Button
-                          type="submit"
-                          className="w-full"
-                          disabled={loginMutation.isPending}
-                          data-testid="button-sign-in"
-                        >
-                          {loginMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          Continue
-                        </Button>
-                      </form>
-                    ) : !showForgotPin ? (
+                    {!showForgotPin ? (
                         <form onSubmit={pinLoginForm.handleSubmit(onPinLogin)} className="space-y-4">
                           {pinResetMessage && (
                             <div className="rounded-md border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 px-3 py-2 text-sm text-green-800 dark:text-green-300 flex items-start justify-between gap-2">
