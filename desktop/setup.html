@@ -516,32 +516,10 @@
         </div>
       </div>
 
-      <!-- ============== PANEL: Client Step 1 — Enter invite code ============== -->
-      <div id="panelClientInvite" class="panel">
-        <div class="card">
-          <div class="step-label">Step 1 of 3 &middot; Enter invite code</div>
-          <h2 class="card-title" style="font-size:22px">Join an Existing Practice</h2>
-          <p class="card-subtitle">Ask your practice manager for the 6-digit invite code.</p>
-
-          <div class="field">
-            <label for="clientInviteCode">Invite code</label>
-            <input id="clientInviteCode" type="text" placeholder="123 456" maxlength="7" inputmode="numeric" autocomplete="off" style="font-size:24px; letter-spacing:4px; text-align:center;" />
-            <div class="hint">Your manager can find this in Settings &gt; Invite Code.</div>
-          </div>
-
-          <div id="inviteStatus" class="status"></div>
-
-          <div class="actions">
-            <button class="btn-back" id="clientInviteBack">&larr; Back</button>
-            <button class="btn-primary" id="clientInviteNext">Verify Code</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- ============== PANEL: Client Step 2 — Find Host computer ============== -->
+      <!-- ============== PANEL: Client Step 1 — Find Host computer ============== -->
       <div id="panelClientDiscover" class="panel">
         <div class="card">
-          <div class="step-label">Step 2 of 3 &middot; Find your practice's computer</div>
+          <div class="step-label">Step 1 of 2 &middot; Find your practice's computer</div>
           <h2 class="card-title" style="font-size:22px">Connecting to <span id="discoverOfficeName">your practice</span></h2>
           <p class="card-subtitle">Looking for the Host computer on your office network&hellip;</p>
 
@@ -582,10 +560,10 @@
         </div>
       </div>
 
-      <!-- ============== PANEL: Client Step 3 — Create account ============== -->
+      <!-- ============== PANEL: Client Step 2 — Create account ============== -->
       <div id="panelClientAccount" class="panel">
         <div class="card">
-          <div class="step-label">Step 3 of 3 &middot; Create your account</div>
+          <div class="step-label">Step 2 of 2 &middot; Create your account</div>
           <h2 class="card-title" style="font-size:22px">Your Account</h2>
           <p class="card-subtitle">Create your login for <span id="accountOfficeName">your practice</span>.</p>
 
@@ -660,7 +638,7 @@
       });
 
       document.getElementById("choiceClient").addEventListener("click", () => {
-        showPanel("panelClientInvite");
+        startHostDiscovery();
       });
 
       // ===== Host Step 1: Sign in =====
@@ -1041,69 +1019,13 @@
         el.className = `status${kind ? ` ${kind}` : ""}`;
       }
 
-      // ===== Client flow — 3-step invite code wizard =====
-      let clientInviteCode = "";
+      // ===== Client flow — 2-step setup wizard =====
       let clientOfficeName = "";
-      let clientOfficeId = "";
-      let clientInstallationId = "";
       let clientHostUrl = "";
       let clientPairingCode = "";
       let clientTrustedFingerprint = "";
 
-      // --- Step 1: Invite code ---
-      const inviteCodeInput = document.getElementById("clientInviteCode");
-      const inviteStatus = document.getElementById("inviteStatus");
-      const clientInviteNext = document.getElementById("clientInviteNext");
-
-      // Auto-format: "123456" → "123 456"
-      inviteCodeInput.addEventListener("input", () => {
-        const digits = inviteCodeInput.value.replace(/\D/g, "").slice(0, 6);
-        const formatted = digits.length > 3 ? digits.slice(0, 3) + " " + digits.slice(3) : digits;
-        if (inviteCodeInput.value !== formatted) inviteCodeInput.value = formatted;
-      });
-
-      document.getElementById("clientInviteBack").addEventListener("click", () => {
-        showPanel("panelChoice");
-      });
-
-      clientInviteNext.addEventListener("click", async () => {
-        const digits = inviteCodeInput.value.replace(/\D/g, "");
-        if (digits.length !== 6) {
-          setStatus(inviteStatus, "Please enter the full 6-digit invite code.", "err");
-          return;
-        }
-
-        clientInviteNext.disabled = true;
-        setStatus(inviteStatus, "Verifying invite code\u2026");
-
-        try {
-          if (!window.otto || typeof window.otto.validateInviteCode !== "function") {
-            setStatus(inviteStatus, "Invite code validation is not available in this build.", "err");
-            return;
-          }
-
-          const result = await window.otto.validateInviteCode({ inviteCode: digits });
-
-          if (!result?.ok) {
-            setStatus(inviteStatus, result?.message || "Invalid or expired invite code.", "err");
-            return;
-          }
-
-          clientInviteCode = digits;
-          clientOfficeName = result.officeName || "";
-          clientOfficeId = result.officeId || "";
-          clientInstallationId = result.installationId || "";
-
-          setStatus(inviteStatus, "");
-          startHostDiscovery();
-        } catch {
-          setStatus(inviteStatus, "Could not reach the Otto portal. Check internet and try again.", "err");
-        } finally {
-          clientInviteNext.disabled = false;
-        }
-      });
-
-      // --- Step 2: Host discovery ---
+      // --- Step 1: Host discovery ---
       const discoverProgressText = document.getElementById("discoverProgressText");
       const discoverProgress = document.getElementById("discoverProgress");
       const discoverDone = document.getElementById("discoverDone");
@@ -1119,7 +1041,7 @@
       let discoveredHosts = [];
 
       document.getElementById("clientDiscoverBack").addEventListener("click", () => {
-        showPanel("panelClientInvite");
+        showPanel("panelChoice");
       });
 
       function formatPairingCode(value) {
@@ -1206,6 +1128,9 @@
             discoverFoundMsg.textContent = `Found Host at ${allHosts[0].url}`;
             clientHostUrl = allHosts[0].url;
             clientPairingCode = allHosts[0].pairingCode;
+            clientOfficeName = allHosts[0].officeName || "";
+            const officeNameEl2 = document.getElementById("discoverOfficeName");
+            if (officeNameEl2) officeNameEl2.textContent = clientOfficeName || "your practice";
             clientDiscoverNext.disabled = false;
             return;
           }
@@ -1241,6 +1166,7 @@
         if (!host) return;
         clientHostUrl = host.url;
         clientPairingCode = host.pairingCode;
+        clientOfficeName = host.officeName || "";
       }
 
       discoveredHostSelect2.addEventListener("change", applySelectedDiscoveredHost);
@@ -1334,8 +1260,6 @@
           // POST to Host's /api/setup/client-register via IPC (bypasses self-signed cert issue in renderer)
           const registerResult = await window.otto.clientRegister({
             hostUrl: clientHostUrl,
-            inviteCode: clientInviteCode,
-            installationId: clientInstallationId,
             firstName: clientFirstName.value.trim(),
             lastName: clientLastName.value.trim(),
             loginId: clientLoginId.value.trim(),
@@ -1346,8 +1270,6 @@
             const errMsg = registerResult?.error || "Registration failed.";
             if (errMsg === "login_id_taken") {
               setStatus(clientAccountStatus, "That Login ID is already taken. Choose a different one.", "err");
-            } else if (errMsg === "invalid_invite_code") {
-              setStatus(clientAccountStatus, "Invite code is invalid or expired. Go back and re-enter it.", "err");
             } else {
               setStatus(clientAccountStatus, errMsg, "err");
             }

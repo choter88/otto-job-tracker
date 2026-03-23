@@ -37,7 +37,7 @@ import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot } from "./license";
-import { portalValidateInviteCode, portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth } from "./license-client";
+import { portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
@@ -520,23 +520,15 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  // ── Client registration via invite code (unauthenticated) ──────────
+  // ── Client registration (unauthenticated, LAN-access only) ──────────
   app.post("/api/setup/client-register", async (req, res) => {
     try {
-      const inviteCode = typeof req.body?.inviteCode === "string" ? req.body.inviteCode.trim() : "";
-      const installationId = typeof req.body?.installationId === "string" ? req.body.installationId.trim() : "";
       const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
       const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
       const loginId = typeof req.body?.loginId === "string" ? req.body.loginId.trim() : "";
       const pin = typeof req.body?.pin === "string" ? req.body.pin.trim() : "";
 
       // Validate required fields
-      if (!/^\d{6}$/.test(inviteCode)) {
-        return res.status(400).json({ error: "Invite code must be 6 digits" });
-      }
-      if (!installationId) {
-        return res.status(400).json({ error: "Installation ID is required" });
-      }
       if (!firstName) {
         return res.status(400).json({ error: "First name is required" });
       }
@@ -549,12 +541,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
       if (!isValidSixDigitPin(pin)) {
         return res.status(400).json({ error: "PIN must be exactly 6 digits" });
-      }
-
-      // Validate invite code with portal
-      const validation = await portalValidateInviteCode({ inviteCode, installationId });
-      if (!validation.ok) {
-        return res.status(403).json({ error: "invalid_invite_code" });
       }
 
       // Check loginId not already taken
@@ -574,7 +560,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Pre-compute hashes
       const pinHash = await hashSecret(pin);
       const email = buildLocalAuthEmail(normalizedLoginId, office.id);
-      // Clients registered via invite code use PIN-only auth; generate a random
+      // Clients use PIN-only auth; generate a random
       // unusable password so the NOT NULL column is satisfied.
       const passwordHash = await hashSecret(randomBytes(32).toString("hex"));
 

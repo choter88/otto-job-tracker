@@ -1640,12 +1640,12 @@ ipcMain.handle("otto:portal:validate-invite-code", async (_event, payload) => {
 });
 
 ipcMain.handle("otto:portal:client-register", async (_event, payload) => {
-  const { hostUrl, inviteCode, installationId, firstName, lastName, loginId, pin } = payload || {};
+  const { hostUrl, firstName, lastName, loginId, pin } = payload || {};
   if (!hostUrl) return { ok: false, error: "Missing host URL." };
 
   try {
     const registerUrl = new URL("/api/setup/client-register", hostUrl);
-    const body = JSON.stringify({ inviteCode, installationId, firstName, lastName, loginId, pin });
+    const body = JSON.stringify({ firstName, lastName, loginId, pin });
     const mod = registerUrl.protocol === "https:" ? https : http;
 
     const result = await new Promise((resolve, reject) => {
