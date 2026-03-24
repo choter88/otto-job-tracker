@@ -62,13 +62,40 @@ jobs:
       # produces a single latest-mac.yml that references both arm64 and x64
       # ZIPs.  Splitting into separate jobs would cause the second to overwrite
       # the first's manifest, breaking auto-update for one architecture.
-      - name: Build and publish macOS (arm64 + x64)
+      - name: Build macOS (arm64 + x64)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder --mac --arm64 --x64 --publish always
+        run: npx electron-builder --mac --arm64 --x64 --publish never
+
+      - name: Upload Mac artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          echo "Uploading Mac artifacts for $TAG..."
+
+          # Collect all publishable Mac artifacts
+          FILES=()
+          for f in release/*.dmg release/*.zip release/latest-mac.yml release/*.blockmap; do
+            [ -f "$f" ] && FILES+=("$f")
+          done
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::error::No Mac artifacts found in release/"
+            exit 1
+          fi
+
+          echo "Found ${#FILES[@]} file(s): ${FILES[*]}"
+
+          # Create the release if it doesn't exist yet, then upload
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+          else
+            gh release create "$TAG" "${FILES[@]}" --title "$TAG" --generate-notes
+          fi
 
   # ─── Windows x64 ────────────────────────────────────────────
   windows:
