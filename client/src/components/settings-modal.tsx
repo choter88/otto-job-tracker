@@ -30,7 +30,7 @@ import {
   Check
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
-import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, chooseHighContrastColor, getColorForBadge, hexToHSL, normalizeToHex } from "@/lib/default-colors";
+import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, DEFAULT_DESTINATION_COLORS, chooseHighContrastColor, getColorForBadge, hexToHSL, normalizeToHex } from "@/lib/default-colors";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import type { Office } from "@shared/schema";
 import {
@@ -336,9 +336,19 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
             order: def.order
           }));
 
+      const mergedDestinations = existingDestinations.length > 0
+        ? normalizeItems(existingDestinations)
+        : DEFAULT_DESTINATION_COLORS.map(def => ({
+            id: def.id,
+            label: def.label,
+            color: def.hex,
+            hsl: def.hsl,
+            order: def.order
+          }));
+
       setCustomStatuses(mergedStatuses);
       setCustomJobTypes(mergedTypes);
-      setCustomOrderDestinations(normalizeItems(existingDestinations));
+      setCustomOrderDestinations(mergedDestinations);
       setCustomColumns(existingColumns);
       setMessageTemplates(ensureReadyForPickupTemplate(existingTemplates, mergedStatuses));
       setJobIdentifierMode(settings.jobIdentifierMode === "trayNumber" ? "trayNumber" : "patientName");
