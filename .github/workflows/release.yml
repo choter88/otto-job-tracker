@@ -66,7 +66,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npx electron-builder --mac --arm64 --x64 --publish always
 
@@ -105,12 +105,6 @@ jobs:
         run: npx electron-builder --win --x64 --publish never
         shell: pwsh
 
-      - name: Install Azure Trusted Signing client
-        run: |
-          winget install -e --id Microsoft.Azure.ArtifactSigningClientTools `
-            --accept-package-agreements --accept-source-agreements
-        shell: pwsh
-
       - name: Sign the installer
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -125,6 +119,14 @@ jobs:
           }
           Write-Host "Signing $($installer.FullName)..."
 
+          # Install the Trusted Signing dlib via NuGet (reliable on CI)
+          $nugetDir = "$env:RUNNER_TEMP\TrustedSigning"
+          nuget install Microsoft.Trusted.Signing.Client -OutputDirectory $nugetDir -ExcludeVersion
+
+          $dlib = Get-ChildItem -Path $nugetDir -Recurse -Filter "Azure.CodeSigning.Dlib.dll" |
+            Where-Object { $_.FullName -like "*x64*" } |
+            Select-Object -First 1
+
           # Find signtool.exe from the Windows SDK
           $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
             -Recurse -Filter "signtool.exe" |
@@ -132,14 +134,11 @@ jobs:
             Sort-Object FullName -Descending |
             Select-Object -First 1
 
-          # Find the Azure Trusted Signing dlib
-          $dlib = Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\MicrosoftArtifactSigningClientTools" `
-            -Recurse -Filter "Azure.CodeSigning.Dlib.dll" |
-            Where-Object { $_.FullName -like "*x64*" } |
-            Select-Object -First 1
-
           if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
           if (-not $dlib) { Write-Error "Azure.CodeSigning.Dlib.dll not found"; exit 1 }
+
+          Write-Host "Using signtool: $($signtool.FullName)"
+          Write-Host "Using dlib: $($dlib.FullName)"
 
           & $signtool.FullName sign `
             /v `
