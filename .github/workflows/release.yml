@@ -105,6 +105,32 @@ jobs:
         run: npx electron-builder --win --x64 --publish never
         shell: pwsh
 
+      - name: Install Azure Trusted Signing dlib
+        shell: pwsh
+        run: |
+          # Try both package names (Microsoft rebranded the package)
+          $nugetDir = "$env:RUNNER_TEMP\TrustedSigning"
+
+          $installed = $false
+          foreach ($pkg in @("Microsoft.Trusted.Signing.Client", "Microsoft.ArtifactSigning.Client")) {
+            Write-Host "Trying: nuget install $pkg ..."
+            $result = nuget install $pkg -OutputDirectory $nugetDir -ExcludeVersion -NonInteractive 2>&1
+            Write-Host $result
+            $dlib = Get-ChildItem -Path $nugetDir -Recurse -Filter "Azure.CodeSigning.Dlib.dll" -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -like "*x64*" } |
+              Select-Object -First 1
+            if ($dlib) {
+              Write-Host "Found dlib at: $($dlib.FullName)"
+              $installed = $true
+              break
+            }
+          }
+
+          if (-not $installed) {
+            Write-Error "Failed to install Trusted Signing client via NuGet"
+            exit 1
+          }
+
       - name: Sign the installer
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -119,11 +145,9 @@ jobs:
           }
           Write-Host "Signing $($installer.FullName)..."
 
-          # Install the Trusted Signing dlib via NuGet (reliable on CI)
-          $nugetDir = "$env:RUNNER_TEMP\TrustedSigning"
-          nuget install Microsoft.Trusted.Signing.Client -OutputDirectory $nugetDir -ExcludeVersion
-
-          $dlib = Get-ChildItem -Path $nugetDir -Recurse -Filter "Azure.CodeSigning.Dlib.dll" |
+          # Find the dlib installed in the previous step
+          $dlib = Get-ChildItem -Path "$env:RUNNER_TEMP\TrustedSigning" `
+            -Recurse -Filter "Azure.CodeSigning.Dlib.dll" |
             Where-Object { $_.FullName -like "*x64*" } |
             Select-Object -First 1
 
