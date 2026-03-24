@@ -1,0 +1,5 @@
+{
+  "Endpoint": "https://wus.codesigning.azure.net/",
+  "CodeSigningAccountName": "otto-1",
+  "CertificateProfileName": "brownietools-public"
+}

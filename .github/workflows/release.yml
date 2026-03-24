@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Ensure only one release runs at a time
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ─── macOS (both architectures in one job) ───────────────────
+  mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import Apple certificate
+        env:
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain
+          CERT_PATH=$RUNNER_TEMP/cert.p12
+
+          echo "$APPLE_CERT_BASE64" | base64 --decode -o $CERT_PATH
+
+          security create-keychain -p "temp-password" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "temp-password" $KEYCHAIN_PATH
+          security import $CERT_PATH -k $KEYCHAIN_PATH \
+            -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "temp-password" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      # The web/server bundle must be built before electron-builder packages it.
+      - name: Build web + server bundle
+        run: npm run build
+
+      # electron-updater needs a GitHub PAT at runtime to fetch releases from
+      # the private repo.  This file is bundled into the app and gitignored.
+      - name: Generate auto-update token
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          echo "// Auto-generated at build time. DO NOT commit." > desktop/lib/update-token.js
+          echo "export const UPDATE_TOKEN = \"${GH_TOKEN}\";" >> desktop/lib/update-token.js
+
+      # Build BOTH architectures in a single invocation so electron-builder
+      # produces a single latest-mac.yml that references both arm64 and x64
+      # ZIPs.  Splitting into separate jobs would cause the second to overwrite
+      # the first's manifest, breaking auto-update for one architecture.
+      - name: Build and publish macOS (arm64 + x64)
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder --mac --arm64 --x64 --publish always
+
+  # ─── Windows x64 ────────────────────────────────────────────
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web + server bundle
+        run: npm run build
+
+      - name: Generate auto-update token
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        shell: pwsh
+        run: |
+          $content = "// Auto-generated at build time. DO NOT commit.`nexport const UPDATE_TOKEN = `"$env:GH_TOKEN`";`n"
+          Set-Content -Path "desktop/lib/update-token.js" -Value $content -NoNewline
+
+      # Build the unsigned installer. We don't --publish here because we need
+      # to sign first. electron-builder outputs to the "release" directory
+      # (configured in package.json build.directories.output).
+      - name: Build Windows app (unsigned)
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npx electron-builder --win --x64 --publish never
+        shell: pwsh
+
+      - name: Install Azure Trusted Signing client
+        run: |
+          winget install -e --id Microsoft.Azure.ArtifactSigningClientTools `
+            --accept-package-agreements --accept-source-agreements
+        shell: pwsh
+
+      - name: Sign the installer
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "release" -Filter "*.exe" | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "No .exe found in release/ directory"
+            exit 1
+          }
+          Write-Host "Signing $($installer.FullName)..."
+
+          # Find signtool.exe from the Windows SDK
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
+            -Recurse -Filter "signtool.exe" |
+            Where-Object { $_.FullName -like "*x64*" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+
+          # Find the Azure Trusted Signing dlib
+          $dlib = Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\MicrosoftArtifactSigningClientTools" `
+            -Recurse -Filter "Azure.CodeSigning.Dlib.dll" |
+            Where-Object { $_.FullName -like "*x64*" } |
+            Select-Object -First 1
+
+          if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
+          if (-not $dlib) { Write-Error "Azure.CodeSigning.Dlib.dll not found"; exit 1 }
+
+          & $signtool.FullName sign `
+            /v `
+            /fd SHA256 `
+            /tr "http://timestamp.acs.microsoft.com" `
+            /td SHA256 `
+            /dlib $dlib.FullName `
+            /dmdf ".github/artifact-signing-metadata.json" `
+            $installer.FullName
+
+      # Upload the signed exe and the update manifest to the GitHub Release
+      # that was already created by the Mac job (or create it if Mac hasn't
+      # finished yet).
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exe = Get-ChildItem -Path "release" -Filter "*.exe" | Select-Object -First 1
+          $yml = "release/latest.yml"
+
+          $files = @()
+          if ($exe) { $files += $exe.FullName }
+          if (Test-Path $yml) { $files += $yml }
+
+          if ($files.Count -eq 0) {
+            Write-Error "No artifacts to upload"
+            exit 1
+          }
+
+          Write-Host "Uploading $($files.Count) file(s) to release $tag..."
+
+          # Try uploading to existing release first, create if it doesn't exist
+          try {
+            gh release view $tag 2>$null
+            gh release upload $tag @files --clobber
+          } catch {
+            gh release create $tag @files --generate-notes
+          }

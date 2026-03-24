@@ -41,9 +41,38 @@ else
   echo "Keeping v${CURRENT}"
 fi
 
+TAG="v${NEW_VERSION}"
+
 echo ""
-echo "Next steps:"
-echo "  1. Build Mac:     npm run release:mac"
-echo "  2. Build Windows: git pull && npm run release:win"
-echo "  3. Upload (Mac):  npm run release:upload"
-echo "  4. Upload (Win):  npm run release:upload"
+echo "Ready to release ${TAG}."
+echo ""
+echo "  [A] Push tag to trigger GitHub Actions release (recommended)"
+echo "  [B] Manual build (local scripts)"
+echo ""
+read -rp "Choose [A/B]: " RELEASE_CHOICE
+
+case "$RELEASE_CHOICE" in
+  [Aa])
+    echo ""
+    echo "Creating tag ${TAG} and pushing..."
+    git tag "${TAG}"
+    git push origin main --tags
+    echo "  ✓ Tag ${TAG} pushed — GitHub Actions will build and publish the release."
+    echo ""
+    echo "Monitor the workflow at:"
+    echo "  https://github.com/choter88/otto-job-tracker/actions"
+    ;;
+  [Bb])
+    echo ""
+    echo "Manual build steps:"
+    echo "  1. Build Mac:     npm run release:mac"
+    echo "  2. Build Windows: git pull && npm run release:win"
+    echo "  3. Upload (Mac):  npm run release:upload"
+    echo "  4. Upload (Win):  npm run release:upload"
+    ;;
+  *)
+    echo ""
+    echo "Skipped. To trigger the release later:"
+    echo "  git tag ${TAG} && git push origin main --tags"
+    ;;
+esac
