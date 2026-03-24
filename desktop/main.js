@@ -1,3 +1,5 @@
+// Sentry must be initialized before all other imports to capture early errors.
+import { initSentryMain, setSentryAppMode } from "./lib/sentry.js";
 import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage, screen, shell } from "electron";
 import fs from "fs";
 import os from "os";
@@ -7,6 +9,7 @@ import https from "https";
 import net from "net";
 import crypto from "crypto";
 import { fileURLToPath, pathToFileURL } from "url";
+import { initAutoUpdater, stopAutoUpdater } from "./lib/auto-updater.js";
 
 // --- Module imports ---
 import {
@@ -104,6 +107,11 @@ import {
 
 // --- Constants ---
 const APP_DISPLAY_NAME = "Otto Tracker";
+
+// Initialize Sentry as early as possible (before any async work).
+// SENTRY_DSN may be set via .env (loaded later for dev) or baked in at build time.
+// If unset, initSentryMain silently no-ops.
+initSentryMain({ appVersion: app.getVersion() });
 
 app.setName(APP_DISPLAY_NAME);
 
@@ -1498,6 +1506,18 @@ ipcMain.handle("otto:setup:pick-snapshot", async () => {
   }
 });
 
+ipcMain.handle("otto:import:pick-csv", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: "Select CSV file to import",
+    properties: ["openFile"],
+    filters: [{ name: "CSV Files", extensions: ["csv", "txt"] }],
+    defaultPath: app.getPath("documents"),
+  });
+
+  if (canceled || filePaths.length === 0) return { ok: false, canceled: true };
+  return { ok: true, filePath: filePaths[0] };
+});
+
 ipcMain.handle("otto:setup:import-snapshot", async (_event, payload) => {
   const config = _readConfig();
   const protocol = app.isPackaged ? "https" : "http";
@@ -1712,6 +1732,10 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Re-initialize Sentry with DSN from .env (now loaded) if it wasn't set at
+  // import time.  This is a no-op if SENTRY_DSN was already present.
+  initSentryMain({ appVersion: app.getVersion() });
+
   const hasConfigFile = fs.existsSync(_getConfigPath());
   if (!hasConfigFile) {
     _setAppMenu(getDefaultConfig());
@@ -1720,7 +1744,11 @@ app.whenReady().then(async () => {
   }
 
   const config = _readConfig();
+  setSentryAppMode(config.mode || "unknown");
   await launchMainWindowForConfig(config, { showBootWindow: true });
+
+  // Start silent auto-update checks (no-ops in dev / unpackaged mode).
+  initAutoUpdater();
 });
 
 app.on("window-all-closed", () => {
@@ -1728,6 +1756,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  stopAutoUpdater();
+
   try {
     const server = globalThis.__ottoServer;
     if (server && typeof server.close === "function") {

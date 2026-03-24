@@ -12,9 +12,15 @@ const TAG = `v${version}`;
 console.log(`\nRelease ${TAG}\n`);
 
 const ARTIFACTS = [
+  // Mac: DMG (manual install) + ZIP (auto-update) + update manifest
   "release-mac/otto-tracker-mac-arm64.dmg",
+  "release-mac/otto-tracker-mac-arm64.zip",
   "release-mac/otto-tracker-mac-x64.dmg",
+  "release-mac/otto-tracker-mac-x64.zip",
+  "release-mac/latest-mac.yml",
+  // Windows: NSIS installer + update manifest
   "release-win/otto-tracker-win-x64.exe",
+  "release-win/latest.yml",
 ];
 
 console.log("Found artifacts:");

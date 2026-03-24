@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld("otto", {
   setupComplete: () => ipcRenderer.invoke("otto:setup:complete"),
   showDiagnostics: () => ipcRenderer.invoke("otto:diagnostics:show"),
   exportSupportBundle: () => ipcRenderer.invoke("otto:supportBundle:export"),
+  importPickCsv: () => ipcRenderer.invoke("otto:import:pick-csv"),
 });

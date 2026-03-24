@@ -40,6 +40,8 @@ import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnap
 import { portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
+import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
+import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { broadcastToOffice } from "./sync-websocket";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
@@ -2418,6 +2420,117 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       } else {
         res.status(400).json({ error: result.error });
       }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // CSV Import from EHR
+  // ---------------------------------------------------------------------------
+
+  // Templates: list all (built-in + user)
+  app.get("/api/import/templates", requireOffice, async (_req, res) => {
+    try {
+      res.json(getAllTemplates());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Templates: create user template
+  app.post("/api/import/templates", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const { name, ehrSystem, jobType, fieldMappings, statusMappings, derivedFrom } = req.body || {};
+      if (!name || typeof name !== "string") {
+        return res.status(400).json({ error: "Template name is required" });
+      }
+      if (!jobType || typeof jobType !== "string") {
+        return res.status(400).json({ error: "Job type is required" });
+      }
+      const template = createUserTemplate({
+        name,
+        ehrSystem: ehrSystem || undefined,
+        jobType,
+        fieldMappings: fieldMappings || {},
+        statusMappings: statusMappings || {},
+        derivedFrom: derivedFrom || undefined,
+      });
+      res.status(201).json(template);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Templates: update user template
+  app.put("/api/import/templates/:id", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const template = updateUserTemplate(req.params.id, req.body || {});
+      res.json(template);
+    } catch (error: any) {
+      const status = error.message.includes("not found") ? 404 : 400;
+      res.status(status).json({ error: error.message });
+    }
+  });
+
+  // Templates: delete user template
+  app.delete("/api/import/templates/:id", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      deleteUserTemplate(req.params.id);
+      res.json({ ok: true });
+    } catch (error: any) {
+      const status = error.message.includes("not found") ? 404 : 400;
+      res.status(status).json({ error: error.message });
+    }
+  });
+
+  // CSV parse: return headers, preview rows, and unique status values
+  app.post("/api/import/parse", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const { filePath, statusColumn } = req.body || {};
+      if (!filePath || typeof filePath !== "string") {
+        return res.status(400).json({ error: "filePath is required" });
+      }
+      const result = parseCsvFile(filePath, statusColumn || undefined);
+
+      await logPhiAccess(req, "create", "patient_list", "csv-import-parse", undefined, {
+        fileName: filePath.split(/[/\\]/).pop(),
+        rowCount: result.totalRows,
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // CSV import: execute import and create jobs
+  app.post("/api/import/execute", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const { filePath, jobType, fieldMappings, statusMappings } = req.body || {};
+      if (!filePath || typeof filePath !== "string") {
+        return res.status(400).json({ error: "filePath is required" });
+      }
+      if (!jobType || typeof jobType !== "string") {
+        return res.status(400).json({ error: "jobType is required" });
+      }
+
+      const user = getOfficeUser(req);
+      const result = executeImport(
+        { filePath, jobType, fieldMappings: fieldMappings || {}, statusMappings: statusMappings || {} },
+        user.officeId,
+        user.id,
+      );
+
+      await logPhiAccess(req, "create", "patient_list", "csv-import-execute", undefined, {
+        imported: result.imported,
+        skipped: result.skipped,
+      });
+
+      // Notify other clients so they refresh the jobs list
+      broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "csv_import" });
+
+      res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

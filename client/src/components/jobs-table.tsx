@@ -16,10 +16,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical } from "lucide-react";
 import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
 import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
+import ImportWizard from "./import-wizard";
 import type { Job, Office } from "@shared/schema";
 import { format } from "date-fns";
 import { getDefaultStatusColor, getDefaultJobTypeColor, getDefaultDestinationColor, getColorForBadge } from "@/lib/default-colors";
@@ -66,6 +67,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [sortBy, setSortBy] = useState("createdAt");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
+  const [importWizardOpen, setImportWizardOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | undefined>();
   const [jobDetailsOpen, setJobDetailsOpen] = useState(false);
   const [jobDetailsTab, setJobDetailsTab] = useState<JobDetailsTab>("overview");
@@ -702,6 +704,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               />
             </div>
             
+            {/* Import from EHR */}
+            <Button variant="outline" onClick={() => setImportWizardOpen(true)} data-testid="button-import-ehr">
+              <Upload className="mr-2 h-4 w-4" />
+              Import from EHR
+            </Button>
+
             {/* New Job Button */}
             <Button onClick={() => {
               setEditingJob(undefined);
@@ -1183,6 +1191,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         onOpenChange={setJobDialogOpen}
         job={editingJob}
       />
+
+      {/* Import Wizard */}
+      <ImportWizard open={importWizardOpen} onOpenChange={setImportWizardOpen} />
 
       {/* Job Details Modal */}
       {selectedJobForDetails && (

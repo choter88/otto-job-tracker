@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
 import { SessionTimeoutProvider } from "@/components/session-timeout-provider";
+import { SentryErrorBoundary } from "@/components/sentry-error-boundary";
 import SyncManager from "@/components/sync-manager";
 import { ProtectedRoute } from "@/lib/protected-route";
 import Dashboard from "@/pages/dashboard";
@@ -25,17 +26,19 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <SessionTimeoutProvider>
-          <TooltipProvider>
-            <Toaster />
-            <SyncManager />
-            <Router />
-          </TooltipProvider>
-        </SessionTimeoutProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+    <SentryErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <SessionTimeoutProvider>
+            <TooltipProvider>
+              <Toaster />
+              <SyncManager />
+              <Router />
+            </TooltipProvider>
+          </SessionTimeoutProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </SentryErrorBoundary>
   );
 }
 

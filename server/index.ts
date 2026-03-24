@@ -1,4 +1,5 @@
 import "./local-env";
+import * as Sentry from "@sentry/node";
 import express, { type Request, Response, NextFunction } from "express";
 import { enforceAirgap } from "./airgap";
 import { logAudit } from "./audit-logger";
@@ -8,6 +9,26 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
 import { OTTO_DEFAULT_PORT } from "@shared/constants";
+
+// Initialize Sentry for the Express server when running standalone (non-Electron).
+// When embedded in Electron, the main process already initializes Sentry via
+// @sentry/electron/main (which is built on @sentry/node), so we skip here to
+// avoid double-init.
+if (!process.versions.electron && process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    release: process.env.npm_package_version || undefined,
+    environment: process.env.NODE_ENV || "production",
+    beforeSend(event) {
+      if (event.user) {
+        delete event.user.email;
+        delete event.user.username;
+        delete event.user.ip_address;
+      }
+      return event;
+    },
+  });
+}
 
 const app = express();
 
@@ -238,6 +259,9 @@ app.use((req, res, next) => {
   const { server, sessionMiddleware } = await registerRoutes(app);
 
   setupSyncWebSocket(server as any, sessionMiddleware);
+
+  // Sentry Express error handler — captures route errors before our handler.
+  Sentry.setupExpressErrorHandler(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
