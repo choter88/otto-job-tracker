@@ -159,6 +159,24 @@ function parseActivationPayload(
   return result;
 }
 
+export async function portalActivate(payload: {
+  portalToken: string;
+  officeId: string;
+  installationId: string;
+  hostFingerprint256: string;
+  appVersion?: string;
+  idempotencyKey?: string;
+}): Promise<LicenseActivateResult | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/portal/api/desktop/activate", base);
+  const { portalToken, ...body } = payload;
+  const { status, json, networkError } = await fetchJson(url, body, portalToken);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return parseActivationPayload(json, "Activation response was missing required fields.");
+}
+
+/** @deprecated Use portalActivate() instead — kept for backward compatibility. */
 export async function portalIssueAndConsume(payload: {
   portalToken: string;
   officeId: string;

@@ -3,7 +3,7 @@ import { randomBytes } from "crypto";
 import { OTTO_DEFAULT_PORT } from "@shared/constants";
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
-import { portalCheckin, portalIssueAndConsume } from "./license-client";
+import { portalCheckin, portalActivate } from "./license-client";
 import type { LicenseActivateResult } from "./license-client";
 
 let state: LicenseState | null = null;
@@ -75,7 +75,7 @@ export async function activateHostWithPortalToken(portalToken: string, officeId:
   // Generate an idempotency key so the portal can return a cached response
   // if we crash after portal commits but before we persist the hostToken.
   const idempotencyKey = randomBytes(16).toString("hex");
-  const result = await portalIssueAndConsume({
+  const result = await portalActivate({
     portalToken,
     officeId,
     installationId: current.installationId,
