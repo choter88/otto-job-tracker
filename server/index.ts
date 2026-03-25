@@ -10,22 +10,92 @@ import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
 import { OTTO_DEFAULT_PORT } from "@shared/constants";
 
+// ── PHI scrubbing helpers ──
+// Ensures no Protected Health Information leaves the device via Sentry.
+const PHI_KEY_PATTERNS = [
+  /patient/i, /first.?name/i, /last.?name/i, /phone/i, /email/i,
+  /address/i, /notes/i, /tray.?number/i, /login.?id/i, /pin/i,
+  /password/i, /secret/i, /token/i, /ssn/i, /dob|date.?of.?birth/i,
+  /insurance/i, /diagnosis/i, /prescription/i, /medical/i, /health/i,
+];
+
+function scrubPhi(obj: any, depth = 0): any {
+  if (depth > 8 || obj == null) return obj;
+  if (typeof obj === "string") return obj;
+  if (Array.isArray(obj)) return obj.map((v: any) => scrubPhi(v, depth + 1));
+  if (typeof obj !== "object") return obj;
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (PHI_KEY_PATTERNS.some((p) => p.test(key))) {
+      cleaned[key] = "[Redacted]";
+    } else if (typeof value === "object" && value !== null) {
+      cleaned[key] = scrubPhi(value, depth + 1);
+    } else {
+      cleaned[key] = value;
+    }
+  }
+  return cleaned;
+}
+
+function redactFreeText(text: string): string {
+  if (typeof text !== "string") return text;
+  for (const pattern of PHI_KEY_PATTERNS) {
+    const src = pattern.source;
+    text = text.replace(new RegExp(`("${src}"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, "gi"), '$1"[Redacted]"');
+    text = text.replace(new RegExp(`(${src}\\s*[:=]\\s*)\\S[^,}\\]\\n]*`, "gi"), "$1[Redacted]");
+  }
+  return text;
+}
+
+function scrubBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcrumb | null {
+  if (!breadcrumb) return breadcrumb;
+  if (breadcrumb.data) breadcrumb.data = scrubPhi(breadcrumb.data);
+  if (breadcrumb.message) breadcrumb.message = redactFreeText(breadcrumb.message);
+  return breadcrumb;
+}
+
 // Initialize Sentry for the Express server when running standalone (non-Electron).
 // When embedded in Electron, the main process already initializes Sentry via
 // @sentry/electron/main (which is built on @sentry/node), so we skip here to
 // avoid double-init.
+//
+// HIPAA: All events are scrubbed of PHI before transmission.  Request bodies,
+// breadcrumbs, contexts, extras, and error messages are recursively cleaned
+// of any key matching PHI_KEY_PATTERNS.
 if (!process.versions.electron && process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
     release: process.env.npm_package_version || undefined,
     environment: process.env.NODE_ENV || "production",
+    sendDefaultPii: false,
     beforeSend(event) {
       if (event.user) {
         delete event.user.email;
         delete event.user.username;
         delete event.user.ip_address;
+        delete event.user.id;
+      }
+      if (event.request) {
+        if (event.request.data) {
+          event.request.data = typeof event.request.data === "string"
+            ? redactFreeText(event.request.data) : scrubPhi(event.request.data);
+        }
+        if (event.request.query_string) event.request.query_string = { _: "[Redacted]" } as any;
+        delete event.request.cookies;
+      }
+      if (event.contexts) event.contexts = scrubPhi(event.contexts);
+      if (event.extra) event.extra = scrubPhi(event.extra);
+      if (event.breadcrumbs) event.breadcrumbs = event.breadcrumbs.map(scrubBreadcrumb).filter((b): b is Sentry.Breadcrumb => b != null);
+      if (event.message) event.message = redactFreeText(event.message);
+      if (event.exception?.values) {
+        for (const ex of event.exception.values) {
+          if (ex.value) ex.value = redactFreeText(ex.value);
+        }
       }
       return event;
+    },
+    beforeBreadcrumb(breadcrumb) {
+      return scrubBreadcrumb(breadcrumb);
     },
   });
 }
