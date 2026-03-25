@@ -21,6 +21,8 @@ prod_*.sql
 release
 release-mac
 release-win
+build-mac
+build-win
 desktop/lib/update-token.js
 dist-electron
 out

@@ -18,6 +18,8 @@
     "release:mac": "bash scripts/release-mac.sh",
     "release:win": "node scripts/release-win.js",
     "release:upload": "node scripts/release-upload.js",
+    "build:mac": "bash scripts/build-mac-local.sh",
+    "build:win": "node scripts/build-win-local.js",
     "check": "tsc",
     "test:local-first": "node --import tsx --test tests/local-first-outbox.test.ts",
     "test:migration-import": "node --import tsx --test tests/migration-import.test.ts",
