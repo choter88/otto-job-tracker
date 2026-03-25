@@ -10,6 +10,8 @@ const PHI_KEY_PATTERNS = [
   /address/i, /notes/i, /tray.?number/i, /login.?id/i, /pin/i,
   /password/i, /secret/i, /token/i, /ssn/i, /dob|date.?of.?birth/i,
   /insurance/i, /diagnosis/i, /prescription/i, /medical/i, /health/i,
+  /content/i, /message/i, /user.?agent/i, /ip.?address/i,
+  /requested.?by.?ip/i, /request.?message/i, /custom.?column/i,
 ];
 
 function scrubPhi(obj: unknown, depth = 0): unknown {

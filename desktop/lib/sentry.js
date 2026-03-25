@@ -28,6 +28,13 @@ const PHI_KEY_PATTERNS = [
   /prescription/i,
   /medical/i,
   /health/i,
+  /content/i,
+  /message/i,
+  /user.?agent/i,
+  /ip.?address/i,
+  /requested.?by.?ip/i,
+  /request.?message/i,
+  /custom.?column/i,
 ];
 
 /**
