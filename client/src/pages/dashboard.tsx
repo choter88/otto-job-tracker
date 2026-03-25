@@ -12,6 +12,7 @@ import ImportantJobs from "@/pages/important-jobs";
 import NotificationBell from "@/components/notification-bell";
 import SettingsModal from "@/components/settings-modal";
 import HealthModal from "@/components/health-modal";
+import { FeedbackDialog } from "@/components/feedback-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -31,6 +32,7 @@ export default function Dashboard() {
   const [location, setLocation] = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [healthOpen, setHealthOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   // Derive tab from URL - check if we're on a specific tab route
   const [, importantParams] = useRoute("/important");
@@ -134,7 +136,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-background">
-      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} />
+      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onFeedbackClick={() => setFeedbackOpen(true)} />
       
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -221,6 +223,7 @@ export default function Dashboard() {
       {/* Settings Modal */}
       <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
       <HealthModal open={healthOpen} onOpenChange={setHealthOpen} />
+      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </div>
   );
 }

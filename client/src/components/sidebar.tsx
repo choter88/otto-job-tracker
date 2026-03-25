@@ -11,19 +11,22 @@ import {
   BarChart3,
   Users,
   Star,
-  PanelLeft
+  PanelLeft,
+  MessageCircleQuestion,
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Job, Office } from "@shared/schema";
 
 interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  onFeedbackClick?: () => void;
 }
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "otto.sidebar.collapsed";
 
-export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: SidebarProps) {
   const { user } = useAuth();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -246,6 +249,35 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
           })}
         </div>
       </nav>
+
+      {/* Help & Feedback — pinned to bottom */}
+      <div className="border-t border-border py-2">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "w-full flex items-center h-10 text-sm font-medium rounded-none",
+                "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              )}
+              onClick={onFeedbackClick}
+              aria-label="Help & Feedback"
+              data-testid="nav-feedback"
+            >
+              <span className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
+                <MessageCircleQuestion className="h-4 w-4" />
+              </span>
+              {!collapsed && (
+                <span className="flex-1 text-left">Help & Feedback</span>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            <p>Request a feature, report a bug, or ask a question</p>
+          </TooltipContent>
+        </Tooltip>
+      </div>
     </aside>
   );
 }

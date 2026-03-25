@@ -384,3 +384,24 @@ export async function portalDesktopAuth(payload: {
     email: typeof user?.email === "string" ? user.email : undefined,
   };
 }
+
+// --- Feedback submission ---
+
+export type FeedbackResult =
+  | { ok: true }
+  | { ok: false; error: LicenseRequestError };
+
+export async function portalSubmitFeedback(payload: {
+  hostToken: string;
+  category: string;
+  message: string;
+  appVersion?: string;
+  platform?: string;
+}): Promise<FeedbackResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/feedback", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return { ok: true };
+}

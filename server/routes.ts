@@ -37,7 +37,7 @@ import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot } from "./license";
-import { portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth } from "./license-client";
+import { portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth, portalSubmitFeedback } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
@@ -273,6 +273,36 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.json({ inviteCode: result.inviteCode, expiresAt: result.expiresAt });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to regenerate invite code" });
+    }
+  });
+
+  // ── Feedback submission (proxied to portal) ──
+  app.post("/api/feedback", requireAuth, async (req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(503).json({ error: "Host is not activated" });
+    }
+    try {
+      const { category, message } = req.body;
+      if (!category || typeof category !== "string") {
+        return res.status(400).json({ error: "category is required" });
+      }
+      if (!message || typeof message !== "string" || message.trim().length < 10) {
+        return res.status(400).json({ error: "message must be at least 10 characters" });
+      }
+      const result = await portalSubmitFeedback({
+        hostToken,
+        category,
+        message: message.trim(),
+        appVersion: process.env.npm_package_version || undefined,
+        platform: process.platform,
+      });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message });
+      }
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to submit feedback" });
     }
   });
 
