@@ -1293,11 +1293,21 @@
             return;
           }
 
-          // Show success
+          // Show success or pending approval
+          const isPending = registerData?.pending === true;
           const loginId = registerData?.user?.loginId || clientLoginId.value.trim();
-          document.getElementById("clientReadyTitle").textContent = "You're all set!";
-          document.getElementById("clientReadySubtitle").textContent =
-            `Your account has been created. Sign in with login ID "${loginId}" and your PIN.`;
+
+          if (isPending) {
+            document.getElementById("clientReadyTitle").textContent = "Request Submitted";
+            document.getElementById("clientReadySubtitle").textContent =
+              registerData.message || "Your account request has been submitted. An owner or manager will approve it on the Host computer.";
+            const openBtn = document.getElementById("openOttoClientBtn");
+            if (openBtn) openBtn.textContent = "Close Setup";
+          } else {
+            document.getElementById("clientReadyTitle").textContent = "You're all set!";
+            document.getElementById("clientReadySubtitle").textContent =
+              `Your account has been created. Sign in with login ID "${loginId}" and your PIN.`;
+          }
 
           showPanel("panelClientReady");
         } catch {

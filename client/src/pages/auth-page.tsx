@@ -12,11 +12,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Glasses, MonitorCog, Building2, UserPlus } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 
-const loginSchema = z.object({
-  identifier: z.string().min(1, "Login ID is required"),
-  password: z.string().min(1, "Password is required"),
-});
-
 const pinLoginSchema = z.object({
   loginId: z
     .string()
@@ -40,6 +35,24 @@ const forgotPinSchema = z.object({
     path: ["pinConfirm"],
   });
 
+const portalPinResetSchema = z.object({
+  loginId: z
+    .string()
+    .min(3, "Login ID must be at least 3 characters")
+    .max(32, "Login ID must be 32 characters or fewer")
+    .regex(/^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$/i, "Enter a valid Login ID"),
+  newPin: z.string().regex(/^\d{6}$/, "PIN must be exactly 6 digits"),
+  newPinConfirm: z.string().regex(/^\d{6}$/, "Please confirm your 6-digit PIN"),
+  portalEmail: z.string().email("Enter a valid email address"),
+  portalPassword: z.string().min(1, "Password is required"),
+})
+  .refine((data) => data.newPin === data.newPinConfirm, {
+    message: "PINs do not match",
+    path: ["newPinConfirm"],
+  });
+
+type PortalPinResetFormData = z.infer<typeof portalPinResetSchema>;
+
 const registerSchema = z.object({
   loginId: z
     .string()
@@ -56,7 +69,6 @@ const registerSchema = z.object({
     path: ["pinConfirm"],
   });
 
-type LoginFormData = z.infer<typeof loginSchema>;
 type PinLoginFormData = z.infer<typeof pinLoginSchema>;
 type RegisterFormData = z.infer<typeof registerSchema>;
 type ForgotPinFormData = z.infer<typeof forgotPinSchema>;
@@ -71,14 +83,13 @@ type SetupStatus = {
 type DesktopMode = "host" | "client" | "unknown";
 
 export default function AuthPage() {
-  const { user, isLoading, loginMutation, pinLoginMutation } = useAuth();
+  const { user, isLoading, pinLoginMutation } = useAuth();
   const [showSignup, setShowSignup] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<"password" | "pin">("pin");
   const [requestSubmittedMessage, setRequestSubmittedMessage] = useState<string | null>(null);
   const [pinResetMessage, setPinResetMessage] = useState<string | null>(null);
   const [showForgotPin, setShowForgotPin] = useState(false);
+  const [showPortalReset, setShowPortalReset] = useState(false);
   const [desktopMode, setDesktopMode] = useState<DesktopMode>("unknown");
-  const [sharedLoginId, setSharedLoginId] = useState("");
 
   const { data: setupStatus, isLoading: setupLoading } = useQuery<SetupStatus>({
     queryKey: ["/api/setup/status"],
@@ -117,11 +128,6 @@ export default function AuthPage() {
     return isLocalHost ? "host" : "client";
   }, [desktopMode, isLocalHost]);
 
-  const loginForm = useForm<LoginFormData>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { identifier: "", password: "" },
-  });
-
   const pinLoginForm = useForm<PinLoginFormData>({
     resolver: zodResolver(pinLoginSchema),
     defaultValues: { loginId: "", pin: "" },
@@ -143,15 +149,10 @@ export default function AuthPage() {
     defaultValues: { loginId: "", pin: "", pinConfirm: "" },
   });
 
-  // Sync shared login ID into the active form when switching methods
-  useEffect(() => {
-    if (!sharedLoginId) return;
-    if (loginMethod === "password") {
-      loginForm.setValue("identifier", sharedLoginId);
-    } else {
-      pinLoginForm.setValue("loginId", sharedLoginId);
-    }
-  }, [loginMethod, sharedLoginId, loginForm, pinLoginForm]);
+  const portalResetForm = useForm<PortalPinResetFormData>({
+    resolver: zodResolver(portalPinResetSchema),
+    defaultValues: { loginId: "", newPin: "", newPinConfirm: "", portalEmail: "", portalPassword: "" },
+  });
 
   const requestAccessMutation = useMutation({
     mutationFn: async (payload: Omit<RegisterFormData, "passwordConfirm" | "pinConfirm">) => {
@@ -195,6 +196,35 @@ export default function AuthPage() {
     },
   });
 
+  const portalResetMutation = useMutation({
+    mutationFn: async (payload: { loginId: string; newPin: string; portalEmail: string; portalPassword: string }) => {
+      const res = await apiRequest("POST", "/api/pin-reset/portal", payload);
+      return (await res.json()) as { ok: boolean; message?: string };
+    },
+    onMutate: () => {
+      portalResetForm.clearErrors("root");
+    },
+    onSuccess: (data) => {
+      setShowForgotPin(false);
+      setShowPortalReset(false);
+      setPinResetMessage(data.message || "PIN has been reset. You can now sign in.");
+      portalResetForm.reset();
+    },
+    onError: (error: Error) => {
+      portalResetForm.setError("root", { type: "server", message: error.message });
+    },
+  });
+
+  const onPortalReset = (data: PortalPinResetFormData) => {
+    setPinResetMessage(null);
+    portalResetMutation.mutate({
+      loginId: data.loginId,
+      newPin: data.newPin,
+      portalEmail: data.portalEmail,
+      portalPassword: data.portalPassword,
+    });
+  };
+
   useEffect(() => {
     if (!setupStatus?.selfSignupEnabled && showSignup) {
       setShowSignup(false);
@@ -232,10 +262,6 @@ export default function AuthPage() {
       </div>
     );
   }
-
-  const onLogin = (data: LoginFormData) => {
-    loginMutation.mutate(data);
-  };
 
   const onPinLogin = (data: PinLoginFormData) => {
     pinLoginMutation.mutate({
@@ -418,7 +444,7 @@ export default function AuthPage() {
                             Forgot PIN?
                           </button>
                         </form>
-                      ) : (
+                      ) : !showPortalReset ? (
                         <form onSubmit={forgotPinForm.handleSubmit(onForgotPin)} className="space-y-4">
                           <p className="text-sm text-muted-foreground">
                             Enter your Login ID and a new 6-digit PIN. An owner or manager will review your request on the Host.
@@ -499,8 +525,133 @@ export default function AuthPage() {
                               Submit Reset
                             </Button>
                           </div>
+
+                          <button
+                            type="button"
+                            className="w-full text-center text-sm text-muted-foreground hover:text-primary underline-offset-4 hover:underline"
+                            onClick={() => {
+                              const currentId = forgotPinForm.getValues("loginId");
+                              if (currentId) portalResetForm.setValue("loginId", currentId);
+                              setShowPortalReset(true);
+                            }}
+                            data-testid="button-portal-reset"
+                          >
+                            Are you an owner? Reset via Portal
+                          </button>
                         </form>
-                    )}
+                        ) : (
+                        <form onSubmit={portalResetForm.handleSubmit(onPortalReset)} className="space-y-4">
+                          <p className="text-sm text-muted-foreground">
+                            Verify your identity with your ottojobtracker.com portal account to reset your PIN directly.
+                          </p>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="portal-reset-login-id">Login ID</Label>
+                            <Input
+                              id="portal-reset-login-id"
+                              type="text"
+                              autoCapitalize="none"
+                              autoCorrect="off"
+                              placeholder="jane.cho"
+                              {...portalResetForm.register("loginId")}
+                              data-testid="input-portal-reset-login-id"
+                            />
+                            {portalResetForm.formState.errors.loginId && (
+                              <p className="text-sm text-destructive">{portalResetForm.formState.errors.loginId.message}</p>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="portal-reset-new-pin">New 6-digit PIN</Label>
+                            <Input
+                              id="portal-reset-new-pin"
+                              type="password"
+                              inputMode="numeric"
+                              maxLength={6}
+                              placeholder="••••••"
+                              {...portalResetForm.register("newPin")}
+                              data-testid="input-portal-reset-new-pin"
+                            />
+                            {portalResetForm.formState.errors.newPin && (
+                              <p className="text-sm text-destructive">{portalResetForm.formState.errors.newPin.message}</p>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="portal-reset-confirm-pin">Confirm new PIN</Label>
+                            <Input
+                              id="portal-reset-confirm-pin"
+                              type="password"
+                              inputMode="numeric"
+                              maxLength={6}
+                              placeholder="••••••"
+                              {...portalResetForm.register("newPinConfirm")}
+                              data-testid="input-portal-reset-confirm-pin"
+                            />
+                            {portalResetForm.formState.errors.newPinConfirm && (
+                              <p className="text-sm text-destructive">{portalResetForm.formState.errors.newPinConfirm.message}</p>
+                            )}
+                          </div>
+
+                          <div className="border-t border-border pt-4 space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Portal Credentials</p>
+                            <div className="space-y-2">
+                              <Label htmlFor="portal-reset-email">Portal Email</Label>
+                              <Input
+                                id="portal-reset-email"
+                                type="email"
+                                placeholder="you@example.com"
+                                {...portalResetForm.register("portalEmail")}
+                                data-testid="input-portal-reset-email"
+                              />
+                              {portalResetForm.formState.errors.portalEmail && (
+                                <p className="text-sm text-destructive">{portalResetForm.formState.errors.portalEmail.message}</p>
+                              )}
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="portal-reset-password">Portal Password</Label>
+                              <Input
+                                id="portal-reset-password"
+                                type="password"
+                                placeholder="••••••••"
+                                {...portalResetForm.register("portalPassword")}
+                                data-testid="input-portal-reset-password"
+                              />
+                              {portalResetForm.formState.errors.portalPassword && (
+                                <p className="text-sm text-destructive">{portalResetForm.formState.errors.portalPassword.message}</p>
+                              )}
+                            </div>
+                          </div>
+
+                          {portalResetForm.formState.errors.root && (
+                            <p className="text-sm text-destructive">{portalResetForm.formState.errors.root.message}</p>
+                          )}
+
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="flex-1"
+                              onClick={() => {
+                                setShowPortalReset(false);
+                                portalResetForm.reset();
+                              }}
+                              data-testid="button-portal-reset-cancel"
+                            >
+                              Back
+                            </Button>
+                            <Button
+                              type="submit"
+                              className="flex-1"
+                              disabled={portalResetMutation.isPending}
+                              data-testid="button-portal-reset-submit"
+                            >
+                              {portalResetMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Reset PIN
+                            </Button>
+                          </div>
+                        </form>
+                      )}
                   </div>
                 ) : (
                   <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4">

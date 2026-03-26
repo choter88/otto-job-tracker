@@ -67,7 +67,7 @@ function scrubBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcrumb | nul
 if (!process.versions.electron && process.env.SENTRY_DSN) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
-    release: process.env.npm_package_version || undefined,
+    release: process.env.OTTO_APP_VERSION || process.env.npm_package_version || undefined,
     environment: process.env.NODE_ENV || "production",
     sendDefaultPii: false,
     beforeSend(event) {

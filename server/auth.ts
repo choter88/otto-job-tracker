@@ -19,6 +19,41 @@ declare global {
   }
 }
 
+// ── Login rate limiting / lockout ──
+// After MAX_LOGIN_ATTEMPTS failed attempts, the account is locked for LOCKOUT_DURATION_MS.
+// In-memory only — cleared on server restart (acceptable for LAN-first desktop app).
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
+
+function checkLockout(key: string): { locked: boolean; remainingMs: number } {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry) return { locked: false, remainingMs: 0 };
+  if (entry.lockedUntil > 0 && entry.lockedUntil <= now) {
+    loginAttempts.delete(key);
+    return { locked: false, remainingMs: 0 };
+  }
+  if (entry.lockedUntil > now) {
+    return { locked: true, remainingMs: entry.lockedUntil - now };
+  }
+  return { locked: false, remainingMs: 0 };
+}
+
+function recordFailure(key: string): void {
+  const entry = loginAttempts.get(key) || { count: 0, lockedUntil: 0 };
+  entry.count += 1;
+  if (entry.count >= MAX_LOGIN_ATTEMPTS) {
+    entry.lockedUntil = Date.now() + LOCKOUT_DURATION_MS;
+  }
+  loginAttempts.set(key, entry);
+}
+
+function clearFailures(key: string): void {
+  loginAttempts.delete(key);
+}
+
 function withoutPassword(user: SelectUser) {
   const { password: _password, pinHash: _pinHash, ...rest } = user;
   return rest;
@@ -233,8 +268,33 @@ export function setupAuth(app: Express) {
     });
   });
 
-  app.post("/api/login", passport.authenticate("local"), (req, res) => {
-    res.status(200).json(withoutPassword(req.user as SelectUser));
+  app.post("/api/login", (req, res, next) => {
+    const identifier = typeof req.body?.identifier === "string"
+      ? req.body.identifier.trim().toLowerCase() : "";
+    const lockKey = `pwd:${identifier}`;
+
+    if (identifier) {
+      const lockCheck = checkLockout(lockKey);
+      if (lockCheck.locked) {
+        const mins = Math.ceil(lockCheck.remainingMs / 60000);
+        return res.status(429).json({
+          error: `Too many failed attempts. Try again in ${mins} minute(s).`,
+        });
+      }
+    }
+
+    passport.authenticate("local", (err: any, user: any, info: any) => {
+      if (err) return next(err);
+      if (!user) {
+        if (identifier) recordFailure(lockKey);
+        return res.status(401).json({ error: info?.message || "Invalid credentials" });
+      }
+      if (identifier) clearFailures(lockKey);
+      req.login(user, (loginErr) => {
+        if (loginErr) return next(loginErr);
+        res.status(200).json(withoutPassword(user));
+      });
+    })(req, res, next);
   });
 
   app.post("/api/login/pin", async (req, res, next) => {
@@ -250,11 +310,21 @@ export function setupAuth(app: Express) {
       return res.status(400).json({ error: "PIN must be exactly 6 digits" });
     }
 
+    const lockCheck = checkLockout(`pin:${loginId}`);
+    if (lockCheck.locked) {
+      const mins = Math.ceil(lockCheck.remainingMs / 60000);
+      return res.status(429).json({
+        error: `Too many failed attempts. Try again in ${mins} minute(s).`,
+      });
+    }
+
     const user = await storage.getUserByLoginId(loginId);
     if (!user || !user.pinHash || !(await verifySecret(pin, user.pinHash))) {
+      recordFailure(`pin:${loginId}`);
       return res.status(401).json({ error: "Invalid Login ID or PIN" });
     }
 
+    clearFailures(`pin:${loginId}`);
     req.login(user, (err) => {
       if (err) return next(err);
       res.status(200).json(withoutPassword(user));

@@ -294,7 +294,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         hostToken,
         category,
         message: message.trim(),
-        appVersion: process.env.npm_package_version || undefined,
+        appVersion: process.env.OTTO_APP_VERSION || process.env.npm_package_version || undefined,
         platform: process.platform,
       });
       if (!result.ok) {
@@ -589,33 +589,58 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
       const office = allOffices[0];
 
+      // Check for existing pending request
+      const pendingRequest = await storage.getPendingAccountSignupRequestByLoginId(office.id, normalizedLoginId);
+      if (pendingRequest) {
+        return res.status(409).json({ error: "A request for this Login ID is already pending review." });
+      }
+
       // Pre-compute hashes
       const pinHash = await hashSecret(pin);
       const email = buildLocalAuthEmail(normalizedLoginId, office.id);
-      // Clients use PIN-only auth; generate a random
-      // unusable password so the NOT NULL column is satisfied.
       const passwordHash = await hashSecret(randomBytes(32).toString("hex"));
 
-      // Create user in transaction
-      const createdUser = await storage.createUser({
+      // Create pending account request (requires owner/manager approval)
+      const accountRequest = await storage.createAccountSignupRequest({
+        officeId: office.id,
+        email,
+        loginId: normalizedLoginId,
+        passwordHash,
+        pinHash,
         firstName,
         lastName,
-        loginId: normalizedLoginId,
-        email,
-        password: passwordHash,
-        pinHash,
-        role: "staff",
-        officeId: office.id,
+        requestedRole: "staff",
+        status: "pending",
+        requestMessage: null,
+        requestedByIp: req.socket.remoteAddress || null,
+        userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
       });
 
-      res.status(201).json({
+      // Notify owners/managers
+      const officeUsers = await storage.getUsersInOffice(office.id);
+      const approvers = officeUsers.filter((u) => u.role === "owner" || u.role === "manager");
+      try {
+        await Promise.all(
+          approvers.map((approver) =>
+            storage.createNotification({
+              userId: approver.id,
+              actorId: null,
+              type: "team_update",
+              title: "New account request",
+              message: `${firstName} ${lastName} requested access from a Client workstation (Login ID: ${normalizedLoginId}).`,
+              metadata: { accountRequestId: accountRequest.id, loginId: normalizedLoginId },
+              linkTo: "/dashboard/team",
+            }),
+          ),
+        );
+      } catch (notifyError) {
+        console.error("Failed to notify approvers about client registration:", notifyError);
+      }
+
+      res.status(202).json({
         ok: true,
-        user: {
-          id: createdUser.id,
-          loginId: createdUser.loginId,
-          firstName: createdUser.firstName,
-          lastName: createdUser.lastName,
-        },
+        pending: true,
+        message: "Your account request has been submitted. An owner or manager will approve it on the Host computer.",
       });
     } catch (error: any) {
       console.error("Client registration failed:", error);
@@ -1825,6 +1850,60 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
     },
   );
+
+  // ── Owner PIN recovery via portal credentials ──
+  // Allows an owner to reset their PIN by authenticating with their portal
+  // (ottojobtracker.com) email and password. This covers the case where the
+  // sole owner forgets their PIN and no other owner/manager exists to approve.
+  app.post("/api/pin-reset/portal", async (req, res) => {
+    try {
+      const loginId = normalizeLoginId(
+        typeof req.body?.loginId === "string" ? req.body.loginId : "",
+      );
+      const newPin = typeof req.body?.newPin === "string" ? req.body.newPin.trim() : "";
+      const portalEmail = typeof req.body?.portalEmail === "string" ? req.body.portalEmail.trim() : "";
+      const portalPassword = typeof req.body?.portalPassword === "string" ? req.body.portalPassword : "";
+
+      if (!loginId) return res.status(400).json({ error: "Login ID is required" });
+      if (!isValidSixDigitPin(newPin)) {
+        return res.status(400).json({ error: "New PIN must be exactly 6 digits" });
+      }
+      if (!portalEmail || !portalPassword) {
+        return res.status(400).json({ error: "Portal email and password are required" });
+      }
+
+      // Verify portal credentials
+      const authResult = await portalDesktopAuth({ email: portalEmail, password: portalPassword });
+      if (!authResult.ok) {
+        return res.status(401).json({ error: "Invalid portal credentials." });
+      }
+
+      // Check the portal user is an admin/owner for at least one office
+      const isAdmin = authResult.offices.some(
+        (o) => o.role === "admin" || o.role === "owner",
+      );
+      if (!isAdmin) {
+        return res.status(403).json({
+          error: "Only portal administrators can reset PINs this way.",
+        });
+      }
+
+      // Find the local user
+      const user = await storage.getUserByLoginId(loginId);
+      if (!user) {
+        return res.status(404).json({ error: "No account found with that Login ID." });
+      }
+
+      // Reset the PIN
+      const newPinHash = await hashSecret(newPin);
+      await storage.updateUser(user.id, { pinHash: newPinHash });
+
+      res.json({ ok: true, message: "PIN has been reset successfully. You can now sign in." });
+    } catch (error: any) {
+      console.error("Portal PIN reset failed:", error);
+      res.status(500).json({ error: "PIN reset failed. Please try again." });
+    }
+  });
 
   // User management routes
   app.put("/api/users/:id", requireOffice, requireRole(["owner", "manager"]), async (req, res) => {

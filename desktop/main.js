@@ -702,6 +702,7 @@ async function maybeStartHostServer() {
   if (!app.isPackaged) return;
 
   if (!process.env.NODE_ENV) process.env.NODE_ENV = "production";
+  process.env.OTTO_APP_VERSION = app.getVersion();
 
   const repoRoot = path.resolve(__dirname, "..");
   const serverEntry = path.join(repoRoot, "dist", "index.js");

@@ -80,7 +80,7 @@ export async function activateHostWithPortalToken(portalToken: string, officeId:
     officeId,
     installationId: current.installationId,
     hostFingerprint256: current.hostFingerprint256,
-    appVersion: process.env.npm_package_version,
+    appVersion: process.env.OTTO_APP_VERSION || process.env.npm_package_version,
     idempotencyKey,
   });
 
@@ -119,7 +119,7 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
     hostToken: current.hostToken,
     installationId: current.installationId,
     hostFingerprint256: current.hostFingerprint256,
-    appVersion: process.env.npm_package_version,
+    appVersion: process.env.OTTO_APP_VERSION || process.env.npm_package_version,
   };
 
   // Include connection info so the portal can assist client discovery
