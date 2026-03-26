@@ -9,7 +9,7 @@ import https from "https";
 import net from "net";
 import crypto from "crypto";
 import { fileURLToPath, pathToFileURL } from "url";
-import { initAutoUpdater, stopAutoUpdater } from "./lib/auto-updater.js";
+import { initAutoUpdater, stopAutoUpdater, checkForUpdatesManual, installUpdate as installUpdateRaw, getUpdateState, onUpdateStateChange, onUpdateReadyAtLaunch } from "./lib/auto-updater.js";
 
 // --- Module imports ---
 import {
@@ -349,7 +349,93 @@ function _setAppMenu(config) {
     createSetupWindow: _createSetupWindow,
     showDiagnostics: _showDiagnostics,
     exportSupportBundle: _exportSupportBundle,
+    checkForUpdates: _checkForUpdates,
+    installUpdate: _installUpdate,
+    getUpdateState,
   });
+}
+
+// --- Update menu handlers ---
+
+async function _checkForUpdates() {
+  const { dialog } = await import("electron");
+
+  if (!app.isPackaged) {
+    dialog.showMessageBox({
+      type: "info",
+      title: "Check for Updates",
+      message: "Updates are disabled in development mode.",
+      buttons: ["OK"],
+    });
+    return;
+  }
+
+  // Show a "checking" dialog
+  const result = await checkForUpdatesManual();
+
+  if (result.status === "ready") {
+    const { response } = await dialog.showMessageBox({
+      type: "info",
+      title: "Update Ready",
+      message: `Version ${result.version} is ready to install.`,
+      detail: "Would you like to install it now? Otto will restart.",
+      buttons: ["Install Now", "Later"],
+      defaultId: 0,
+    });
+    if (response === 0) _installUpdate();
+  } else if (result.status === "downloading") {
+    dialog.showMessageBox({
+      type: "info",
+      title: "Update Downloading",
+      message: `Version ${result.version} is downloading.`,
+      detail: "You'll be notified when it's ready to install.",
+      buttons: ["OK"],
+    });
+  } else if (result.status === "up-to-date") {
+    dialog.showMessageBox({
+      type: "info",
+      title: "No Updates Available",
+      message: `You're on the latest version (v${app.getVersion()}).`,
+      buttons: ["OK"],
+    });
+  } else if (result.status === "error") {
+    dialog.showMessageBox({
+      type: "warning",
+      title: "Update Check Failed",
+      message: "Could not check for updates.",
+      detail: result.error || "Please check your internet connection and try again.",
+      buttons: ["OK"],
+    });
+  }
+}
+
+async function _installUpdate() {
+  const { dialog } = await import("electron");
+  const state = getUpdateState();
+
+  if (state.status !== "ready") {
+    dialog.showMessageBox({
+      type: "info",
+      title: "No Update Ready",
+      message: "No update is downloaded yet. Use \"Check for Updates\" first.",
+      buttons: ["OK"],
+    });
+    return;
+  }
+
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    title: "Install Update",
+    message: `Install version ${state.version}?`,
+    detail: "Otto will close, install the update, and reopen. Make sure your work is saved.",
+    buttons: ["Install & Restart", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  if (response === 0) {
+    installUpdateRaw();
+  }
 }
 
 // --- Exception handlers ---
@@ -1762,6 +1848,49 @@ app.whenReady().then(async () => {
 
   // Start silent auto-update checks (no-ops in dev / unpackaged mode).
   initAutoUpdater();
+
+  // Rebuild menu when update state changes (e.g. "ready" enables the install button).
+  onUpdateStateChange(() => {
+    try {
+      const currentConfig = _readConfig();
+      _setAppMenu(currentConfig);
+    } catch {
+      // ignore — config may not exist during setup
+    }
+  });
+
+  // Auto-install on launch: if a previously-downloaded update is cached,
+  // electron-updater detects it immediately and fires "update-downloaded".
+  // Show a brief dialog and install without requiring user action.
+  onUpdateReadyAtLaunch(async (version) => {
+    const { dialog } = await import("electron");
+    console.log(`[auto-updater] Update v${version} ready at launch — auto-installing.`);
+
+    // Brief 2-second notification so the user knows what's happening,
+    // then install. Use a non-blocking approach: show the dialog and
+    // install after a short delay regardless of user interaction.
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const dialogOpts = {
+      type: "info",
+      title: "Installing Update",
+      message: `Installing Otto Tracker v${version}...`,
+      detail: "The app will restart in a moment.",
+      buttons: ["OK"],
+      noLink: true,
+    };
+
+    // Show dialog (non-blocking on purpose — install proceeds regardless)
+    if (win) {
+      dialog.showMessageBox(win, dialogOpts).catch(() => {});
+    } else {
+      dialog.showMessageBox(dialogOpts).catch(() => {});
+    }
+
+    // Give the dialog a moment to render, then install
+    setTimeout(() => {
+      installUpdateRaw();
+    }, 1500);
+  });
 });
 
 app.on("window-all-closed", () => {

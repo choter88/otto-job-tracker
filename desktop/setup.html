@@ -601,6 +601,10 @@
             <button class="btn-back" id="clientAccountBack">&larr; Back</button>
             <button class="btn-primary" id="clientAccountNext">Create Account &amp; Finish</button>
           </div>
+
+          <div style="text-align:center; margin-top:16px;">
+            <a href="#" id="clientSkipAccountLink" style="color:#6366f1; text-decoration:none; font-size:14px;">I already have an account &mdash; skip to sign in</a>
+          </div>
         </div>
       </div>
 
@@ -1231,6 +1235,39 @@
 
       document.getElementById("clientAccountBack").addEventListener("click", () => {
         showPanel("panelClientDiscover");
+      });
+
+      // "I already have an account" — save connection config and go straight to login
+      document.getElementById("clientSkipAccountLink").addEventListener("click", async (e) => {
+        e.preventDefault();
+        const statusEl = clientAccountStatus;
+
+        try {
+          setStatus(statusEl, "Saving connection\u2026");
+
+          const config = {
+            mode: "client",
+            hostUrl: clientHostUrl,
+            pairingCode: clientPairingCode,
+            trustedFingerprint256: clientTrustedFingerprint,
+          };
+
+          const saveResult = await window.otto.saveConfig(config);
+          if (saveResult?.ok === false) {
+            setStatus(statusEl, saveResult?.message || "Could not save configuration.", "err");
+            return;
+          }
+
+          document.getElementById("clientReadyTitle").textContent = "Connected!";
+          document.getElementById("clientReadySubtitle").textContent =
+            "This computer is now connected to your practice. Sign in with your existing login ID and PIN.";
+          const openBtn = document.getElementById("openOttoClientBtn");
+          if (openBtn) openBtn.textContent = "Open Otto Tracker";
+
+          showPanel("panelClientReady");
+        } catch {
+          setStatus(statusEl, "Could not save configuration.", "err");
+        }
       });
 
       function validateClientAccountForm() {

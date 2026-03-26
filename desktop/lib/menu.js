@@ -1,8 +1,13 @@
 import { Menu } from "electron";
 
-export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetworkBackupFolder, scheduleAutomaticBackups, runBackupToNetworkFolder, restoreDatabase, createSetupWindow, showDiagnostics, exportSupportBundle }) {
+export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetworkBackupFolder, scheduleAutomaticBackups, runBackupToNetworkFolder, restoreDatabase, createSetupWindow, showDiagnostics, exportSupportBundle, checkForUpdates, installUpdate, getUpdateState }) {
   const isHost = config.mode === "host";
   const isDev = !app.isPackaged || process.env.NODE_ENV === "development";
+
+  // Build the Help → update items based on current auto-updater state
+  const updateState = typeof getUpdateState === "function" ? getUpdateState() : { status: "idle" };
+  const isReady = updateState.status === "ready";
+  const versionLabel = `Version ${app.getVersion()}`;
 
   const template = [
     ...(process.platform === "darwin"
@@ -66,6 +71,46 @@ export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetwor
         { role: "copy" },
         { role: "paste" },
         { role: "selectAll" },
+      ],
+    },
+    {
+      label: "Help",
+      submenu: [
+        ...(process.platform !== "darwin"
+          ? [
+              {
+                label: "About Otto Tracker",
+                click: async () => {
+                  const { dialog } = await import("electron");
+                  dialog.showMessageBox({
+                    type: "info",
+                    title: "About Otto Tracker",
+                    message: "Otto Tracker",
+                    detail: `Version ${app.getVersion()}\n\nOptometry job tracking for your practice.`,
+                    buttons: ["OK"],
+                  });
+                },
+              },
+              { type: "separator" },
+            ]
+          : []),
+        {
+          label: "Check for Updates\u2026",
+          click: () => {
+            if (typeof checkForUpdates === "function") checkForUpdates();
+          },
+        },
+        {
+          label: isReady
+            ? `Install Update (v${updateState.version})\u2026`
+            : "Download & Install Update",
+          enabled: isReady,
+          click: () => {
+            if (typeof installUpdate === "function") installUpdate();
+          },
+        },
+        { type: "separator" },
+        { label: versionLabel, enabled: false },
       ],
     },
   ];

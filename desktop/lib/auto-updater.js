@@ -17,8 +17,51 @@ const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 let intervalId = null;
 
+// --- Update state (readable by the menu) ---
+
+/** @type {{ status: string, version: string|null, error: string|null }} */
+let updateState = { status: "idle", version: null, error: null };
+
+/** Callback invoked whenever updateState changes so the menu can refresh. */
+let onStateChange = null;
+
+/** Callback invoked once if an update is ready at launch (for auto-install). */
+let onReadyAtLaunch = null;
+let launchCheckDone = false;
+
+function setState(patch) {
+  updateState = { ...updateState, ...patch };
+  if (typeof onStateChange === "function") {
+    try { onStateChange(updateState); } catch { /* ignore */ }
+  }
+}
+
+/** Return a snapshot of the current update state. */
+export function getUpdateState() {
+  return { ...updateState };
+}
+
 /**
- * Initialize silent auto-updates.
+ * Register a callback that fires whenever the update state changes.
+ * Used by main.js to rebuild the menu (enable/disable "Install Update").
+ */
+export function onUpdateStateChange(cb) {
+  onStateChange = cb;
+}
+
+/**
+ * Register a one-shot callback for launch-time auto-install.
+ * If an update is already downloaded (cached from previous session), the
+ * initial checkForUpdates() will immediately emit "update-downloaded".
+ * This callback fires once with the version so main.js can show an
+ * "Updating..." screen and call installUpdate().
+ */
+export function onUpdateReadyAtLaunch(cb) {
+  onReadyAtLaunch = cb;
+}
+
+/**
+ * Initialize auto-updates with background download but NO auto-install.
  *
  * DEVELOPMENT SAFETY: Auto-update is completely disabled when the app is not
  * packaged (i.e. running via `electron .` or the `npm run desktop` dev
@@ -56,22 +99,29 @@ export function initAutoUpdater() {
     process.env.GH_TOKEN = UPDATE_TOKEN;
   }
 
-  // Silent operation: download updates in the background, install on quit.
+  // Download updates in the background, but do NOT auto-install on quit.
+  // Users install explicitly via Help → "Download & Install Update".
+  // This prevents the Windows NSIS race condition (sessions not cleaned up)
+  // and the Mac blank-screen issue (server not matching new version).
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
 
-  // --- Lifecycle logging (captured by Sentry in production) ---
+  // --- Lifecycle logging + state tracking ---
 
   autoUpdater.on("checking-for-update", () => {
     console.log("[auto-updater] Checking for update…");
+    setState({ status: "checking", error: null });
   });
 
   autoUpdater.on("update-available", (info) => {
     console.log(`[auto-updater] Update available: v${info.version}`);
+    setState({ status: "downloading", version: info.version });
   });
 
   autoUpdater.on("update-not-available", () => {
     console.log("[auto-updater] App is up to date.");
+    setState({ status: "up-to-date", version: null, error: null });
+    launchCheckDone = true; // no cached update — don't auto-install later downloads
   });
 
   autoUpdater.on("download-progress", (progress) => {
@@ -82,19 +132,27 @@ export function initAutoUpdater() {
 
   autoUpdater.on("update-downloaded", (info) => {
     console.log(
-      `[auto-updater] Update downloaded: v${info.version}. Will install on next restart.`,
+      `[auto-updater] Update downloaded: v${info.version}. Ready to install.`,
     );
+    setState({ status: "ready", version: info.version, error: null });
+
+    // If this is the first check (launch), notify main.js for auto-install.
+    if (!launchCheckDone && typeof onReadyAtLaunch === "function") {
+      launchCheckDone = true;
+      try { onReadyAtLaunch(info.version); } catch { /* ignore */ }
+      onReadyAtLaunch = null; // one-shot
+    }
   });
 
+
   autoUpdater.on("error", (err) => {
-    // Fail silently — log it but never show a dialog or interrupt the user.
     console.error("[auto-updater] Error:", err?.message || err);
+    setState({ status: "error", error: err?.message || "Unknown error" });
   });
 
   // --- Initial check + periodic schedule ---
 
   checkForUpdatesSilently();
-
   intervalId = setInterval(checkForUpdatesSilently, UPDATE_CHECK_INTERVAL_MS);
 }
 
@@ -116,4 +174,32 @@ function checkForUpdatesSilently() {
   autoUpdater.checkForUpdates().catch(() => {
     // Error is already handled by the "error" event listener above.
   });
+}
+
+/**
+ * Manually trigger an update check and return the result.
+ * Used by the Help → "Check for Updates…" menu item.
+ */
+export async function checkForUpdatesManual() {
+  if (!app.isPackaged) {
+    return { status: "dev", message: "Updates are disabled in development mode." };
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    // After the check, updateState is already updated by event handlers.
+    // Return current state for the dialog.
+    return { ...updateState };
+  } catch (err) {
+    return { status: "error", error: err?.message || "Check failed" };
+  }
+}
+
+/**
+ * Quit the app and install the downloaded update.
+ * Calls autoUpdater.quitAndInstall() which triggers before-quit (session cleanup)
+ * then runs the installer and relaunches the app.
+ */
+export function installUpdate() {
+  // isSilent=false (show installer progress), isForceRunAfter=true (relaunch after install)
+  autoUpdater.quitAndInstall(false, true);
 }

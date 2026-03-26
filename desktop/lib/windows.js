@@ -3,19 +3,28 @@ import { BrowserWindow, Menu, screen } from "electron";
 
 // Defense-in-depth CSP injection via Electron session (F-03).
 // This ensures CSP is enforced even if the Express server header is bypassed.
-const CSP_VALUE =
+//
+// Two policies: one for the main app (served by Express, no inline scripts)
+// and one for standalone HTML files (setup.html, boot.html) that use inline scripts.
+const CSP_APP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: blob:; font-src 'self' data:; " +
   "connect-src 'self' wss:; frame-ancestors 'none'; object-src 'none';";
 
-function injectCspOnSession(ses) {
+const CSP_LOCAL_HTML =
+  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data: blob:; font-src 'self' data:; " +
+  "connect-src 'self' wss:; frame-ancestors 'none'; object-src 'none';";
+
+function injectCspOnSession(ses, { allowInlineScripts = false } = {}) {
   if (!ses || ses.__ottoCspInjected) return;
   ses.__ottoCspInjected = true;
+  const policy = allowInlineScripts ? CSP_LOCAL_HTML : CSP_APP;
   ses.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [CSP_VALUE],
+        "Content-Security-Policy": [policy],
       },
     });
   });
@@ -205,7 +214,7 @@ export function createBootWindow({ __dirname: dirName, APP_DISPLAY_NAME, setupNo
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.loadFile(path.join(dirName, "boot.html"));
   setupNoInternetNetworkGuard(win.webContents.session);
-  injectCspOnSession(win.webContents.session);
+  injectCspOnSession(win.webContents.session, { allowInlineScripts: true });
   return win;
 }
 
@@ -234,7 +243,7 @@ export function createSetupWindow({ __dirname: dirName, APP_DISPLAY_NAME, getSet
   });
 
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  injectCspOnSession(win.webContents.session);
+  injectCspOnSession(win.webContents.session, { allowInlineScripts: true });
   win.loadFile(path.join(dirName, "setup.html"));
   setSetupWindow(win);
   win.on("closed", () => {
