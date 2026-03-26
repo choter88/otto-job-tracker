@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { randomBytes, X509Certificate } from "crypto";
 import selfsigned from "selfsigned";
+import { restrictToCurrentUser } from "./file-permissions.js";
 
 let cachedHostTlsInfo = null;
 
@@ -25,6 +26,7 @@ export function getHostTlsInfo(app) {
   const certPath = getTlsCertPath(app);
 
   fs.mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
+  restrictToCurrentUser(tlsDir, "dir");
 
   let keyPem = "";
   let certPem = "";
@@ -38,8 +40,8 @@ export function getHostTlsInfo(app) {
     const attrs = [{ name: "commonName", value: "Otto Tracker Host" }];
     const pems = selfsigned.generate(attrs, {
       algorithm: "sha256",
-      days: 3650,
-      keySize: 2048,
+      days: 825,    // Reduced from 3650 — aligns with Apple/browser max (F-15)
+      keySize: 4096, // Increased from 2048 — stronger for long-lived certs (F-15)
     });
 
     keyPem = pems.private;
@@ -47,6 +49,8 @@ export function getHostTlsInfo(app) {
 
     fs.writeFileSync(keyPath, keyPem, { mode: 0o600 });
     fs.writeFileSync(certPath, certPem, { mode: 0o600 });
+    restrictToCurrentUser(keyPath);
+    restrictToCurrentUser(certPath);
   }
 
   let fingerprint256 = "";
@@ -90,5 +94,6 @@ export function ensureSessionSecret(app) {
   const secret = randomBytes(32).toString("hex");
   fs.mkdirSync(path.dirname(secretPath), { recursive: true, mode: 0o700 });
   fs.writeFileSync(secretPath, secret, { mode: 0o600 });
+  restrictToCurrentUser(secretPath);
   process.env.SESSION_SECRET = secret;
 }

@@ -25,6 +25,14 @@ let intervalId = null;
  * command).  electron-updater will throw if it tries to update an unpackaged
  * app, and there is no valid build to compare versions against, so we bail
  * early.
+ *
+ * SECURITY NOTE (F-10): Windows builds are NOT code-signed yet.
+ * electron-updater does NOT verify code signatures on Windows by default.
+ * Until Windows code signing is implemented (EV certificate):
+ *   - A MITM on the update channel could deliver a trojanized update
+ *   - Mitigation: updates are fetched over HTTPS from a pinned GitHub repo
+ *   - TODO: Implement Windows EV code signing and set
+ *     verifyUpdateCodeSignature: true in electron-builder config
  */
 export function initAutoUpdater() {
   // Guard: never run in development / unpackaged mode.

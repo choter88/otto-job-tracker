@@ -1,4 +1,6 @@
 import fs from "fs";
+import path from "path";
+import os from "os";
 import { randomUUID } from "crypto";
 import { parse } from "csv-parse/sync";
 import { db } from "./db";
@@ -6,6 +8,46 @@ import { jobs, archivedJobs, jobStatusHistory } from "@shared/schema";
 import { desc, sql } from "drizzle-orm";
 import { normalizePatientNamePart } from "@shared/name-format";
 import type { OttoImportField, CsvParseResult, ImportExecuteResult } from "@shared/import-types";
+
+// ---------------------------------------------------------------------------
+// Path validation — prevents path traversal attacks (F-01)
+// ---------------------------------------------------------------------------
+
+const ALLOWED_EXTENSIONS = new Set([".csv", ".tsv", ".txt"]);
+
+function getBlockedPrefixes(): string[] {
+  const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+  return [
+    path.resolve(dataDir),
+    // Block access to common sensitive directories
+    ...(process.platform === "win32"
+      ? [path.resolve("C:\\Windows"), path.resolve("C:\\Program Files")]
+      : ["/etc", "/var", "/usr", "/private/etc"]),
+  ];
+}
+
+/**
+ * Validate that a file path is safe to read for CSV import.
+ * Blocks access to application data directories and non-CSV files.
+ */
+function validateImportPath(filePath: string): string {
+  const resolved = path.resolve(filePath);
+
+  // Must have a CSV-friendly extension
+  const ext = path.extname(resolved).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.has(ext)) {
+    throw new Error("Only .csv, .tsv, and .txt files are allowed for import");
+  }
+
+  // Block access to sensitive application directories
+  for (const blocked of getBlockedPrefixes()) {
+    if (resolved === blocked || resolved.startsWith(blocked + path.sep)) {
+      throw new Error("Access denied: cannot import from this directory");
+    }
+  }
+
+  return resolved;
+}
 
 // ---------------------------------------------------------------------------
 // CSV parsing
@@ -19,11 +61,12 @@ export function parseCsvFile(
   filePath: string,
   statusColumn?: string,
 ): CsvParseResult {
-  if (!fs.existsSync(filePath)) {
+  const safePath = validateImportPath(filePath);
+  if (!fs.existsSync(safePath)) {
     throw new Error("CSV file not found");
   }
 
-  const raw = fs.readFileSync(filePath, "utf-8")
+  const raw = fs.readFileSync(safePath, "utf-8")
     // Strip BOM (common in Windows-exported CSVs)
     .replace(/^\uFEFF/, "");
 
@@ -131,11 +174,12 @@ export function executeImport(
   officeId: string,
   userId: string,
 ): ImportExecuteResult {
-  if (!fs.existsSync(config.filePath)) {
+  const safePath = validateImportPath(config.filePath);
+  if (!fs.existsSync(safePath)) {
     throw new Error("CSV file not found");
   }
 
-  const raw = fs.readFileSync(config.filePath, "utf-8").replace(/^\uFEFF/, "");
+  const raw = fs.readFileSync(safePath, "utf-8").replace(/^\uFEFF/, "");
   const records: string[][] = parse(raw, {
     skip_empty_lines: true,
     relax_column_count: true,

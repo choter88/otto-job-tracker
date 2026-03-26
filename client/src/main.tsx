@@ -62,6 +62,14 @@ if (sentryDsn) {
     environment: import.meta.env.MODE || "production",
     sendDefaultPii: false,
     beforeSend(event) {
+      // Drop errors caused by Vite HMR / React Fast Refresh — these are transient
+      // mid-edit crashes that resolve on the next save and are not real bugs.
+      if (event.exception?.values?.some(v =>
+        v.stacktrace?.frames?.some(f => f.filename?.includes("@react-refresh"))
+      )) {
+        return null;
+      }
+
       // Strip user PII
       if (event.user) {
         delete event.user.email;

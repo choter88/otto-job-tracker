@@ -133,7 +133,7 @@ export function setupAuth(app: Express) {
     cookie: {
       httpOnly: true,
       maxAge: SESSION_TIMEOUT_MS,
-      sameSite: 'lax',
+      sameSite: 'strict',
       secure: cookieSecure,
     },
   };
@@ -262,9 +262,13 @@ export function setupAuth(app: Express) {
       await storage.acceptInvitation(inviteToken, user.id);
     }
 
-    req.login(user, (err) => {
-      if (err) return next(err);
-      res.status(201).json(withoutPassword(user));
+    // Regenerate session to prevent session fixation (F-04)
+    req.session.regenerate((regenErr) => {
+      if (regenErr) return next(regenErr);
+      req.login(user, (err) => {
+        if (err) return next(err);
+        res.status(201).json(withoutPassword(user));
+      });
     });
   });
 
@@ -290,9 +294,13 @@ export function setupAuth(app: Express) {
         return res.status(401).json({ error: info?.message || "Invalid credentials" });
       }
       if (identifier) clearFailures(lockKey);
-      req.login(user, (loginErr) => {
-        if (loginErr) return next(loginErr);
-        res.status(200).json(withoutPassword(user));
+      // Regenerate session to prevent session fixation (F-04)
+      req.session.regenerate((regenErr) => {
+        if (regenErr) return next(regenErr);
+        req.login(user, (loginErr) => {
+          if (loginErr) return next(loginErr);
+          res.status(200).json(withoutPassword(user));
+        });
       });
     })(req, res, next);
   });
@@ -325,9 +333,13 @@ export function setupAuth(app: Express) {
     }
 
     clearFailures(`pin:${loginId}`);
-    req.login(user, (err) => {
-      if (err) return next(err);
-      res.status(200).json(withoutPassword(user));
+    // Regenerate session to prevent session fixation (F-04)
+    req.session.regenerate((regenErr) => {
+      if (regenErr) return next(regenErr);
+      req.login(user, (err) => {
+        if (err) return next(err);
+        res.status(200).json(withoutPassword(user));
+      });
     });
   });
 

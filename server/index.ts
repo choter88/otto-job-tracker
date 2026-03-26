@@ -225,6 +225,49 @@ function getRequestIp(req: Request): string {
   return normalizeIp(remote);
 }
 
+// ── Security headers (F-03) ──
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "0");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: blob:; font-src 'self' data:; " +
+    "connect-src 'self' wss:; frame-ancestors 'none'; " +
+    "form-action 'self'; base-uri 'self'; object-src 'none';"
+  );
+  next();
+});
+
+// ── CORS (F-12) — restrict to same-origin only ──
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    const port = process.env.PORT || String(OTTO_DEFAULT_PORT);
+    const allowed = [
+      `https://127.0.0.1:${port}`,
+      `https://localhost:${port}`,
+    ];
+    // Also allow the machine's own hostname/IP (Clients connect via LAN IP)
+    const host = req.headers.host;
+    if (host) allowed.push(`https://${host}`);
+
+    if (allowed.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    }
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+  }
+  next();
+});
+
 // Default: only allow office LAN access (prevents accidental exposure to the public internet)
 app.use((req, res, next) => {
   if (process.env.OTTO_LAN_ONLY === "false") return next();

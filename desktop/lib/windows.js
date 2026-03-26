@@ -1,6 +1,26 @@
 import path from "path";
 import { BrowserWindow, Menu, screen } from "electron";
 
+// Defense-in-depth CSP injection via Electron session (F-03).
+// This ensures CSP is enforced even if the Express server header is bypassed.
+const CSP_VALUE =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data: blob:; font-src 'self' data:; " +
+  "connect-src 'self' wss:; frame-ancestors 'none'; object-src 'none';";
+
+function injectCspOnSession(ses) {
+  if (!ses || ses.__ottoCspInjected) return;
+  ses.__ottoCspInjected = true;
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [CSP_VALUE],
+      },
+    });
+  });
+}
+
 const MAIN_WINDOW_BASE_WIDTH = 1500;
 const MAIN_WINDOW_BASE_HEIGHT = 864;
 const MAIN_WINDOW_BASE_MIN_WIDTH = 1320;
@@ -161,6 +181,7 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
   registerTlsTrustForWindow(win, targetUrl, config);
   win.loadURL(targetUrl);
   setupNoInternetNetworkGuard(win.webContents.session, new URL(targetUrl).origin);
+  injectCspOnSession(win.webContents.session);
   return win;
 }
 
@@ -184,6 +205,7 @@ export function createBootWindow({ __dirname: dirName, APP_DISPLAY_NAME, setupNo
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.loadFile(path.join(dirName, "boot.html"));
   setupNoInternetNetworkGuard(win.webContents.session);
+  injectCspOnSession(win.webContents.session);
   return win;
 }
 
@@ -212,6 +234,7 @@ export function createSetupWindow({ __dirname: dirName, APP_DISPLAY_NAME, getSet
   });
 
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  injectCspOnSession(win.webContents.session);
   win.loadFile(path.join(dirName, "setup.html"));
   setSetupWindow(win);
   win.on("closed", () => {

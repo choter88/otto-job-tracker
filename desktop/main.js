@@ -935,13 +935,16 @@ async function waitForHostReady({ protocol, host, port, timeoutMs = 30000 }) {
 
   while (Date.now() < deadline) {
     const ok = await new Promise((resolve) => {
+      // Use explicit CA instead of disabling verification (F-16)
+      const tls = _getHostTlsInfo();
+      const ca = tls ? fs.readFileSync(tls.certPath) : undefined;
       const req = client.request(
         {
           hostname: host,
           port,
           path: "/api/health",
           method: "GET",
-          rejectUnauthorized: false,
+          ...(ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false }),
         },
         (res) => {
           res.resume();
@@ -1450,6 +1453,9 @@ ipcMain.handle("otto:setup:bootstrap", async (_event, payload) => {
     const mod = protocol === "https" ? https : http;
     const body = JSON.stringify(payload);
     const result = await new Promise((resolve, reject) => {
+      // Use explicit CA for localhost TLS instead of disabling verification (F-16)
+      const tls = _getHostTlsInfo();
+      const ca = tls ? fs.readFileSync(tls.certPath) : undefined;
       const req = mod.request(url, {
         method: "POST",
         headers: {
@@ -1457,7 +1463,7 @@ ipcMain.handle("otto:setup:bootstrap", async (_event, payload) => {
           "Content-Length": Buffer.byteLength(body),
         },
         timeout: 30000,
-        rejectUnauthorized: false,
+        ...(ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false }),
       }, (res) => {
         let data = "";
         res.on("data", (chunk) => { data += chunk; });
@@ -1529,6 +1535,9 @@ ipcMain.handle("otto:setup:import-snapshot", async (_event, payload) => {
     const mod = protocol === "https" ? https : http;
     const body = JSON.stringify(payload);
     const result = await new Promise((resolve, reject) => {
+      // Use explicit CA for localhost TLS instead of disabling verification (F-16)
+      const snapTls = _getHostTlsInfo();
+      const snapCa = snapTls ? fs.readFileSync(snapTls.certPath) : undefined;
       const req = mod.request(url, {
         method: "POST",
         headers: {
@@ -1536,7 +1545,7 @@ ipcMain.handle("otto:setup:import-snapshot", async (_event, payload) => {
           "Content-Length": Buffer.byteLength(body),
         },
         timeout: 60000,
-        rejectUnauthorized: false,
+        ...(snapCa ? { ca: snapCa, rejectUnauthorized: true } : { rejectUnauthorized: false }),
       }, (res) => {
         let data = "";
         res.on("data", (chunk) => { data += chunk; });
@@ -1670,6 +1679,9 @@ ipcMain.handle("otto:portal:client-register", async (_event, payload) => {
     const mod = registerUrl.protocol === "https:" ? https : http;
 
     const result = await new Promise((resolve, reject) => {
+      // rejectUnauthorized: false is intentional here — this connects to a
+      // user-provided hostUrl over the LAN, and cert validation is handled by
+      // Electron's setCertificateVerifyProc with fingerprint pinning (F-16).
       const req = mod.request(registerUrl, {
         method: "POST",
         headers: {

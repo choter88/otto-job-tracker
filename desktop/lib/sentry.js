@@ -143,6 +143,13 @@ export function initSentryMain({ appVersion, appMode } = {}) {
         delete event.user.id;
       }
 
+      // ── Scrub request URL path params (F-17) ──
+      if (event.request && event.request.url) {
+        event.request.url = event.request.url
+          .replace(/\/[0-9a-f]{8,}(-[0-9a-f]{4,}){0,4}/gi, "/[id]")
+          .replace(/\/\d{4,}/g, "/[id]");
+      }
+
       // ── Scrub request body ──
       if (event.request) {
         if (event.request.data) {
