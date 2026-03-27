@@ -195,6 +195,14 @@ export async function portalIssueAndConsume(payload: {
   return parseActivationPayload(json, "Issue-and-consume response was missing required fields.");
 }
 
+export type CheckinMetrics = {
+  activeJobs?: number;
+  archivedJobs?: number;
+  totalUsers?: number;
+  clientCount?: number;
+  platform?: string;
+};
+
 export async function portalCheckin(payload: {
   hostToken: string;
   installationId: string;
@@ -203,6 +211,7 @@ export async function portalCheckin(payload: {
   localAddresses?: string[];
   pairingCode?: string;
   tlsFingerprint256?: string;
+  metrics?: CheckinMetrics;
 }): Promise<LicenseCheckinResult | { ok: false; error: LicenseRequestError }> {
   const base = getLicenseBaseUrl();
   const url = new URL("/license/v1/checkin", base);

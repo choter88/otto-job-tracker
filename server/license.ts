@@ -4,7 +4,7 @@ import { OTTO_DEFAULT_PORT } from "@shared/constants";
 import type { LicenseSnapshot, LicenseState } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
 import { portalCheckin, portalActivate } from "./license-client";
-import type { LicenseActivateResult } from "./license-client";
+import type { LicenseActivateResult, CheckinMetrics } from "./license-client";
 
 let state: LicenseState | null = null;
 let checkinTimer: NodeJS.Timeout | null = null;
@@ -129,6 +129,25 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
   const pc = computePairingCode(current.hostFingerprint256);
   if (pc) checkinPayload.pairingCode = pc;
   if (current.hostFingerprint256) checkinPayload.tlsFingerprint256 = current.hostFingerprint256;
+
+  // Collect anonymous usage metrics (counts only, no PHI)
+  try {
+    const { storage } = await import("./storage");
+    const stats = await storage.getDashboardStats();
+    const { db } = await import("./db");
+    const { users } = await import("@shared/schema");
+    const { sql } = await import("drizzle-orm");
+    const [userCount] = db.select({ count: sql`count(*)` }).from(users).all();
+    checkinPayload.metrics = {
+      activeJobs: stats.activeJobs,
+      archivedJobs: stats.archivedJobs,
+      totalUsers: Number(userCount?.count) || 0,
+      clientCount: 0, // TODO: track connected WebSocket clients
+      platform: process.platform,
+    };
+  } catch {
+    // Non-critical — don't let metrics failure block check-in
+  }
 
   const result = await portalCheckin(checkinPayload);
 
