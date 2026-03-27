@@ -41,7 +41,7 @@ export function getHostTlsInfo(app) {
     const pems = selfsigned.generate(attrs, {
       algorithm: "sha256",
       days: 825,    // Reduced from 3650 — aligns with Apple/browser max (F-15)
-      keySize: 4096, // Increased from 2048 — stronger for long-lived certs (F-15)
+      keySize: 2048, // 2048-bit is sufficient for LAN-only self-signed certs through 2030 (NIST)
     });
 
     keyPem = pems.private;
