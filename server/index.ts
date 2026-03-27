@@ -421,8 +421,26 @@ app.use((req, res, next) => {
     }
   });
 
-  // Expose the server instance so Electron's before-quit handler can close it.
+  // Track open connections so we can force-close them on shutdown.
+  // Without this, keep-alive connections and WebSockets hold the port
+  // open after server.close(), causing EADDRINUSE on next launch.
+  const openConnections = new Set<import("net").Socket>();
+  server.on("connection", (socket) => {
+    openConnections.add(socket);
+    socket.on("close", () => openConnections.delete(socket));
+  });
+
+  // Expose the server instance and a force-shutdown helper so Electron's
+  // before-quit handler can close the port immediately.
   (globalThis as any).__ottoServer = server;
+  (globalThis as any).__ottoForceShutdown = () => {
+    // Destroy all open connections so the port is freed immediately.
+    for (const socket of openConnections) {
+      try { socket.destroy(); } catch { /* ignore */ }
+    }
+    openConnections.clear();
+    try { server.close(); } catch { /* ignore */ }
+  };
 
   server.listen({
     port,

@@ -1068,6 +1068,72 @@ async function isPortAvailable(port, host) {
   });
 }
 
+/**
+ * If port 5150 is held by a stale Otto process (e.g. crashed without running
+ * before-quit), find and kill it.  This prevents the "Server did not start in
+ * time" error that happens when the previous instance didn't release the port.
+ *
+ * Only kills processes named "Otto Tracker" or "otto-tracker" — never a
+ * random unrelated process.
+ */
+async function killStalePortHolder(port) {
+  const { execFile } = await import("child_process");
+  const { promisify } = await import("util");
+  const execFileAsync = promisify(execFile);
+
+  try {
+    let pid = null;
+
+    if (process.platform === "darwin" || process.platform === "linux") {
+      // lsof -i :5150 -t returns PIDs listening on the port
+      const { stdout } = await execFileAsync("lsof", ["-i", `:${port}`, "-t"], { timeout: 5000 }).catch(() => ({ stdout: "" }));
+      const pids = stdout.trim().split(/\n/).filter(Boolean).map(Number).filter(n => n > 0 && n !== process.pid);
+      if (pids.length === 0) return false;
+      pid = pids[0];
+
+      // Verify it's actually Otto before killing
+      const { stdout: psOut } = await execFileAsync("ps", ["-p", String(pid), "-o", "comm="], { timeout: 5000 }).catch(() => ({ stdout: "" }));
+      const comm = psOut.trim().toLowerCase();
+      if (!comm.includes("otto") && !comm.includes("electron")) {
+        console.log(`[port-cleanup] Port ${port} held by non-Otto process (${comm}, PID ${pid}) — not killing.`);
+        return false;
+      }
+    } else if (process.platform === "win32") {
+      // netstat to find PID, then tasklist to verify it's Otto
+      const { stdout } = await execFileAsync("netstat", ["-ano", "-p", "TCP"], { timeout: 5000 }).catch(() => ({ stdout: "" }));
+      const line = stdout.split(/\r?\n/).find(l => l.includes(`:${port}`) && l.includes("LISTENING"));
+      if (!line) return false;
+      const parts = line.trim().split(/\s+/);
+      pid = Number(parts[parts.length - 1]);
+      if (!pid || pid === process.pid) return false;
+
+      const { stdout: taskOut } = await execFileAsync("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], { timeout: 5000 }).catch(() => ({ stdout: "" }));
+      const taskName = taskOut.toLowerCase();
+      if (!taskName.includes("otto") && !taskName.includes("electron")) {
+        console.log(`[port-cleanup] Port ${port} held by non-Otto process (PID ${pid}) — not killing.`);
+        return false;
+      }
+    }
+
+    if (!pid) return false;
+
+    console.log(`[port-cleanup] Killing stale Otto process (PID ${pid}) holding port ${port}.`);
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // SIGTERM might not work on Windows, try SIGKILL
+      try { process.kill(pid, "SIGKILL"); } catch { /* ignore */ }
+    }
+
+    // Wait a moment for the port to be freed
+    await new Promise(r => setTimeout(r, 1500));
+    return true;
+  } catch (err) {
+    console.warn(`[port-cleanup] Could not check port ${port}:`, err?.message);
+    return false;
+  }
+}
+
 async function showHostStartFailureDialog() {
   const { response } = await dialog.showMessageBox({
     type: "error",
@@ -1113,7 +1179,14 @@ async function launchMainWindowForConfig(config, options = {}) {
 
     if (config.mode === "host") {
       const port = Number(process.env.PORT || "5150");
-      const available = await isPortAvailable(port, "0.0.0.0");
+      let available = await isPortAvailable(port, "0.0.0.0");
+      if (!available) {
+        // Try to kill a stale Otto process holding the port (e.g. crashed without before-quit)
+        const killed = await killStalePortHolder(port);
+        if (killed) {
+          available = await isPortAvailable(port, "0.0.0.0");
+        }
+      }
       if (!available) {
         await dialog.showMessageBox({
           type: "error",
@@ -1483,7 +1556,11 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
         }
 
         const numPort = Number(port);
-        const portFree = await isPortAvailable(numPort, "0.0.0.0");
+        let portFree = await isPortAvailable(numPort, "0.0.0.0");
+        if (!portFree) {
+          const killed = await killStalePortHolder(numPort);
+          if (killed) portFree = await isPortAvailable(numPort, "0.0.0.0");
+        }
         if (!portFree) {
           return {
             ok: false,
@@ -1900,11 +1977,21 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   stopAutoUpdater();
 
+  // Force-close the Express server and all open connections so port 5150
+  // is freed immediately.  Without this, keep-alive/WebSocket connections
+  // linger in TIME_WAIT and the port is unavailable on next launch.
   try {
-    const server = globalThis.__ottoServer;
-    if (server && typeof server.close === "function") {
-      server.close();
+    const forceShutdown = globalThis.__ottoForceShutdown;
+    if (typeof forceShutdown === "function") {
+      forceShutdown();
+      globalThis.__ottoForceShutdown = null;
       globalThis.__ottoServer = null;
+    } else {
+      const server = globalThis.__ottoServer;
+      if (server && typeof server.close === "function") {
+        server.close();
+        globalThis.__ottoServer = null;
+      }
     }
   } catch {
     // best-effort
