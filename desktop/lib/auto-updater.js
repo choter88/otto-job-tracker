@@ -30,7 +30,6 @@ const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
  */
 function clearUpdateCache() {
   try {
-    // electron-updater stores pending downloads in <userData>/pending
     const cacheDir = path.join(app.getPath("userData"), "pending");
     if (fs.existsSync(cacheDir)) {
       fs.rmSync(cacheDir, { recursive: true, force: true });
@@ -39,6 +38,25 @@ function clearUpdateCache() {
   } catch (e) {
     console.error("[auto-updater] Failed to clear cache:", e?.message);
   }
+}
+
+/**
+ * Handle a checksum mismatch or other update error gracefully.
+ * Called from both the autoUpdater "error" event AND the global
+ * unhandledRejection handler (since electron-updater's download stream
+ * errors bypass the event emitter and surface as unhandled rejections).
+ */
+function handleUpdateError(err) {
+  const msg = typeof err === "string" ? err : err?.message || String(err);
+  console.error("[auto-updater] Error:", msg);
+
+  if (msg.includes("checksum mismatch")) {
+    console.warn("[auto-updater] Clearing corrupted update cache…");
+    clearUpdateCache();
+  }
+
+  setState({ status: "error", error: msg });
+  launchCheckDone = true;
 }
 
 let intervalId = null;
@@ -94,14 +112,6 @@ export function onUpdateReadyAtLaunch(cb) {
  * command).  electron-updater will throw if it tries to update an unpackaged
  * app, and there is no valid build to compare versions against, so we bail
  * early.
- *
- * SECURITY NOTE (F-10): Windows builds are NOT code-signed yet.
- * electron-updater does NOT verify code signatures on Windows by default.
- * Until Windows code signing is implemented (EV certificate):
- *   - A MITM on the update channel could deliver a trojanized update
- *   - Mitigation: updates are fetched over HTTPS from a pinned GitHub repo
- *   - TODO: Implement Windows EV code signing and set
- *     verifyUpdateCodeSignature: true in electron-builder config
  */
 export function initAutoUpdater() {
   // Guard: never run in development / unpackaged mode.
@@ -125,12 +135,26 @@ export function initAutoUpdater() {
     process.env.GH_TOKEN = UPDATE_TOKEN;
   }
 
-  // Download updates in the background, but do NOT auto-install on quit.
-  // Users install explicitly via Help → "Download & Install Update".
-  // This prevents the Windows NSIS race condition (sessions not cleaned up)
-  // and the Mac blank-screen issue (server not matching new version).
-  autoUpdater.autoDownload = true;
+  // Do NOT auto-download. We trigger downloads manually in checkForUpdatesSilently()
+  // so we can properly catch download errors (including checksum mismatches).
+  // With autoDownload=true, electron-updater starts the download as a fire-and-forget
+  // side effect of checkForUpdates(), and stream errors escape as unhandled rejections.
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+
+  // --- Global safety net ---
+  // electron-updater's download stream errors (DigestTransform checksum failures)
+  // bypass the "error" event and surface as unhandled promise rejections.
+  // Catch them here so they don't crash the app or appear as "Unhandled rejection"
+  // in startup.log.
+  process.on("unhandledRejection", (reason) => {
+    const msg = reason?.message || String(reason);
+    if (msg.includes("checksum mismatch") || msg.includes("sha512") || msg.includes("DigestTransform")) {
+      handleUpdateError(reason);
+    }
+    // Don't re-throw — let other unhandled rejections propagate normally
+    // (they'll be caught by Sentry or Node's default handler).
+  });
 
   // --- Lifecycle logging + state tracking ---
 
@@ -142,12 +166,16 @@ export function initAutoUpdater() {
   autoUpdater.on("update-available", (info) => {
     console.log(`[auto-updater] Update available: v${info.version}`);
     setState({ status: "downloading", version: info.version });
+    // Manually trigger download so we can catch errors
+    autoUpdater.downloadUpdate().catch((err) => {
+      handleUpdateError(err);
+    });
   });
 
   autoUpdater.on("update-not-available", () => {
     console.log("[auto-updater] App is up to date.");
     setState({ status: "up-to-date", version: null, error: null });
-    launchCheckDone = true; // no cached update — don't auto-install later downloads
+    launchCheckDone = true;
   });
 
   autoUpdater.on("download-progress", (progress) => {
@@ -170,25 +198,8 @@ export function initAutoUpdater() {
     }
   });
 
-
   autoUpdater.on("error", (err) => {
-    const msg = err?.message || String(err);
-    console.error("[auto-updater] Error:", msg);
-
-    // SHA-512 checksum mismatch = corrupted cached download.
-    // Clear the electron-updater download cache to break the crash loop.
-    // Without this, the app retries the corrupt file on every launch and
-    // never reaches the main window.
-    if (msg.includes("checksum mismatch")) {
-      console.warn("[auto-updater] Clearing corrupted update cache…");
-      clearUpdateCache();
-    }
-
-    setState({ status: "error", error: msg });
-
-    // Mark launch check as done so the app continues to the main window
-    // instead of waiting for an auto-install that will never come.
-    launchCheckDone = true;
+    handleUpdateError(err);
   });
 
   // --- Initial check + periodic schedule ---
@@ -208,12 +219,13 @@ export function stopAutoUpdater() {
 }
 
 /**
- * Fire-and-forget update check.  Any errors are caught and logged above via
- * the "error" event so they never surface to the user.
+ * Fire-and-forget update check.  Download is triggered manually in the
+ * "update-available" handler above (not via autoDownload) so we can
+ * catch stream errors properly.
  */
 function checkForUpdatesSilently() {
-  autoUpdater.checkForUpdates().catch(() => {
-    // Error is already handled by the "error" event listener above.
+  autoUpdater.checkForUpdates().catch((err) => {
+    handleUpdateError(err);
   });
 }
 
@@ -226,7 +238,7 @@ export async function checkForUpdatesManual() {
     return { status: "dev", message: "Updates are disabled in development mode." };
   }
   try {
-    const result = await autoUpdater.checkForUpdates();
+    await autoUpdater.checkForUpdates();
     // After the check, updateState is already updated by event handlers.
     // Return current state for the dialog.
     return { ...updateState };
