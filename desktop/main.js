@@ -797,10 +797,14 @@ async function maybeStartHostServer() {
     throw new Error(`Server build not found at ${serverEntry}. Run \`npm run build\` first.`);
   }
 
+  _logStartup(`Starting host server from: ${serverEntry}`);
+
   hostServerStarted = true;
-  void import(pathToFileURL(serverEntry).href).catch(async (error) => {
+  void import(pathToFileURL(serverEntry).href).then(() => {
+    _logStartup("Host server module loaded successfully");
+  }).catch(async (error) => {
     hostServerStarted = false;
-    _logStartup("Host server failed to start", error);
+    _logStartup("Host server failed to start", error?.stack || error?.message || error);
     try {
       await dialog.showMessageBox({
         type: "error",

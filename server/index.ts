@@ -370,8 +370,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// Write startup progress to startup.log so it's visible in packaged Electron.
+function logStartupProgress(msg: string) {
+  console.log(`[server-init] ${msg}`);
+  try {
+    const os = require("os");
+    const fss = require("fs");
+    const pathMod = require("path");
+    const dataDir = process.env.OTTO_DATA_DIR || pathMod.join(os.homedir(), ".otto-job-tracker");
+    const logPath = pathMod.join(dataDir, "startup.log");
+    fss.appendFileSync(logPath, `[${new Date().toISOString()}] [server-init] ${msg}\n`);
+  } catch { /* best-effort */ }
+}
+
 (async () => {
+  logStartupProgress("Registering routes...");
   const { server, sessionMiddleware } = await registerRoutes(app);
+  logStartupProgress("Routes registered");
 
   setupSyncWebSocket(server as any, sessionMiddleware);
 
@@ -442,10 +457,12 @@ app.use((req, res, next) => {
     try { server.close(); } catch { /* ignore */ }
   };
 
+  logStartupProgress(`Binding to ${host}:${port}...`);
   server.listen({
     port,
     host,
   }, () => {
+    logStartupProgress(`Server listening on ${host}:${port}`);
     log(`serving on ${host}:${port}`);
     if (process.env.OTTO_ENABLE_BACKGROUND_JOBS !== "false") {
       void import("./background-jobs")
@@ -456,7 +473,18 @@ app.use((req, res, next) => {
     }
   });
 })().catch((err) => {
-  console.error("Server failed to start:", process.env.OTTO_DEBUG === "true" ? err : err?.message);
+  const msg = `Server failed to start: ${err?.stack || err?.message || err}`;
+  console.error(msg);
+  // In packaged Electron, console.error goes nowhere visible.
+  // Write to startup.log so the error is diagnosable.
+  try {
+    const os = require("os");
+    const fs = require("fs");
+    const path = require("path");
+    const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+    const logPath = path.join(dataDir, "startup.log");
+    fs.appendFileSync(logPath, `\n[${new Date().toISOString()}] ${msg}\n`);
+  } catch { /* best-effort */ }
   // When embedded in Electron, let the readiness probe handle the failure.
   if (!process.versions.electron) {
     process.exit(1);
