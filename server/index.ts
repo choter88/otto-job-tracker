@@ -370,22 +370,44 @@ app.use((req, res, next) => {
   next();
 });
 
-// Write startup progress to startup.log so it's visible in packaged Electron.
+// Write startup progress to the SAME startup.log that Electron's main process uses.
+// On packaged builds, this is <userData>/startup.log (NOT <OTTO_DATA_DIR>/startup.log).
+// The main process shows this path in error dialogs, so it must be the same file.
+function getStartupLogPath(): string {
+  try {
+    const os = require("os");
+    const pathMod = require("path");
+    // Electron sets OTTO_STARTUP_LOG_PATH so the server writes to the same file.
+    if (process.env.OTTO_STARTUP_LOG_PATH) return process.env.OTTO_STARTUP_LOG_PATH;
+    // Fallback: userData is typically <AppData>/Roaming/Otto Tracker on Windows,
+    // ~/Library/Application Support/Otto Tracker on Mac.
+    // process.resourcesPath points to <install>/resources — go up one level for the app name.
+    const dataDir = process.env.OTTO_DATA_DIR || pathMod.join(os.homedir(), ".otto-job-tracker");
+    return pathMod.join(dataDir, "startup.log");
+  } catch {
+    return "startup.log";
+  }
+}
+
 function logStartupProgress(msg: string) {
   console.log(`[server-init] ${msg}`);
   try {
-    const os = require("os");
     const fss = require("fs");
-    const pathMod = require("path");
-    const dataDir = process.env.OTTO_DATA_DIR || pathMod.join(os.homedir(), ".otto-job-tracker");
-    const logPath = pathMod.join(dataDir, "startup.log");
+    const logPath = getStartupLogPath();
     fss.appendFileSync(logPath, `[${new Date().toISOString()}] [server-init] ${msg}\n`);
   } catch { /* best-effort */ }
 }
 
 (async () => {
   logStartupProgress("Registering routes...");
-  const { server, sessionMiddleware } = await registerRoutes(app);
+  let server: any;
+  let sessionMiddleware: any;
+  try {
+    ({ server, sessionMiddleware } = await registerRoutes(app));
+  } catch (routeErr: any) {
+    logStartupProgress(`FATAL: registerRoutes failed: ${routeErr?.stack || routeErr?.message || routeErr}`);
+    throw routeErr;
+  }
   logStartupProgress("Routes registered");
 
   setupSyncWebSocket(server as any, sessionMiddleware);
@@ -475,16 +497,7 @@ function logStartupProgress(msg: string) {
 })().catch((err) => {
   const msg = `Server failed to start: ${err?.stack || err?.message || err}`;
   console.error(msg);
-  // In packaged Electron, console.error goes nowhere visible.
-  // Write to startup.log so the error is diagnosable.
-  try {
-    const os = require("os");
-    const fs = require("fs");
-    const path = require("path");
-    const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
-    const logPath = path.join(dataDir, "startup.log");
-    fs.appendFileSync(logPath, `\n[${new Date().toISOString()}] ${msg}\n`);
-  } catch { /* best-effort */ }
+  logStartupProgress(`FATAL: ${msg}`);
   // When embedded in Electron, let the readiness probe handle the failure.
   if (!process.versions.electron) {
     process.exit(1);

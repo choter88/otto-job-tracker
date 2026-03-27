@@ -1893,6 +1893,11 @@ app.whenReady().then(async () => {
   migrateLegacyUserDataDir(app);
   applyOfflineDefaultsRaw(app);
   ensureSessionSecret(app);
+  // Tell the embedded Express server to write to the same startup.log file
+  // that the main process uses.  Without this, server progress/errors go to
+  // OTTO_DATA_DIR/startup.log (the data/ subdirectory) while the main process
+  // writes to userData/startup.log — making server errors invisible.
+  process.env.OTTO_STARTUP_LOG_PATH = getStartupLogPath(app);
   maybeRestoreDatabaseFromArgs();
   _logStartup("App starting");
 
