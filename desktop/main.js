@@ -1216,6 +1216,7 @@ async function launchMainWindowForConfig(config, options = {}) {
       });
 
       while (!readiness.ok) {
+        _logStartup(`waitForHostReady failed: ${readiness.error?.message || readiness.error || "unknown"}`);
         const action = await showHostStartFailureDialog();
         if (action !== 0) {
           return false;
@@ -1576,6 +1577,7 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
         await maybeStartHostServer();
         const readiness = await waitForHostReady({ protocol, host: "127.0.0.1", port, timeoutMs: 45000 });
         if (!readiness.ok) {
+          _logStartup(`waitForHostReady failed: ${readiness.error?.message || readiness.error || "unknown"}`);
           return { ok: false, relaunched: false, message: "Server did not start in time. Please close Otto and try again." };
         }
       } catch (err) {
