@@ -142,6 +142,19 @@ export function initAutoUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
 
+  // Release channels:
+  //   Production (default): only sees stable releases (non-prerelease on GitHub)
+  //   Beta (OTTO_UPDATE_CHANNEL=beta): also sees GitHub pre-releases
+  //
+  // Workflow:
+  //   v1.3.0  → GitHub Release (stable)      → all users get it
+  //   v1.3.1+ → GitHub Release (pre-release)  → only beta testers get it
+  const channel = process.env.OTTO_UPDATE_CHANNEL || "";
+  autoUpdater.allowPrerelease = channel === "beta";
+  if (autoUpdater.allowPrerelease) {
+    console.log("[auto-updater] Beta channel enabled — will include pre-releases.");
+  }
+
   // --- Global safety net ---
   // electron-updater's download stream errors (DigestTransform checksum failures)
   // bypass the "error" event and surface as unhandled promise rejections.
