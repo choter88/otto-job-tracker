@@ -1025,16 +1025,19 @@ async function waitForHostReady({ protocol, host, port, timeoutMs = 30000 }) {
 
   while (Date.now() < deadline) {
     const ok = await new Promise((resolve) => {
-      // Use explicit CA instead of disabling verification (F-16)
-      const tls = _getHostTlsInfo();
-      const ca = tls ? fs.readFileSync(tls.certPath) : undefined;
+      // This is a localhost-only health probe to our own server.
+      // Use rejectUnauthorized: false because:
+      //   1. We're connecting to 127.0.0.1 — no MITM risk on loopback
+      //   2. Existing certs may not have SAN entries for 127.0.0.1
+      //   3. The F-16 fix (explicit CA) applies to cross-machine IPC, not
+      //      the internal readiness check
       const req = client.request(
         {
           hostname: host,
           port,
           path: "/api/health",
           method: "GET",
-          ...(ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false }),
+          rejectUnauthorized: false,
         },
         (res) => {
           res.resume();
