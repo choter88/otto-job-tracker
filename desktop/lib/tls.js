@@ -40,18 +40,8 @@ export function getHostTlsInfo(app) {
     const attrs = [{ name: "commonName", value: "Otto Tracker Host" }];
     const pems = selfsigned.generate(attrs, {
       algorithm: "sha256",
-      days: 825,    // Reduced from 3650 — aligns with Apple/browser max (F-15)
-      keySize: 2048, // 2048-bit is sufficient for LAN-only self-signed certs through 2030 (NIST)
-      extensions: [
-        {
-          name: "subjectAltName",
-          altNames: [
-            { type: 2, value: "localhost" },       // DNS
-            { type: 7, ip: "127.0.0.1" },          // IP
-            { type: 7, ip: "0.0.0.0" },            // IP (bind address)
-          ],
-        },
-      ],
+      days: 825,
+      keySize: 2048,
     });
 
     keyPem = pems.private;

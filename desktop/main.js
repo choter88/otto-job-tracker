@@ -1625,9 +1625,6 @@ ipcMain.handle("otto:setup:bootstrap", async (_event, payload) => {
     const mod = protocol === "https" ? https : http;
     const body = JSON.stringify(payload);
     const result = await new Promise((resolve, reject) => {
-      // Use explicit CA for localhost TLS instead of disabling verification (F-16)
-      const tls = _getHostTlsInfo();
-      const ca = tls ? fs.readFileSync(tls.certPath) : undefined;
       const req = mod.request(url, {
         method: "POST",
         headers: {
@@ -1635,7 +1632,7 @@ ipcMain.handle("otto:setup:bootstrap", async (_event, payload) => {
           "Content-Length": Buffer.byteLength(body),
         },
         timeout: 30000,
-        ...(ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false }),
+        rejectUnauthorized: false,
       }, (res) => {
         let data = "";
         res.on("data", (chunk) => { data += chunk; });
@@ -1707,9 +1704,6 @@ ipcMain.handle("otto:setup:import-snapshot", async (_event, payload) => {
     const mod = protocol === "https" ? https : http;
     const body = JSON.stringify(payload);
     const result = await new Promise((resolve, reject) => {
-      // Use explicit CA for localhost TLS instead of disabling verification (F-16)
-      const snapTls = _getHostTlsInfo();
-      const snapCa = snapTls ? fs.readFileSync(snapTls.certPath) : undefined;
       const req = mod.request(url, {
         method: "POST",
         headers: {
@@ -1717,7 +1711,7 @@ ipcMain.handle("otto:setup:import-snapshot", async (_event, payload) => {
           "Content-Length": Buffer.byteLength(body),
         },
         timeout: 60000,
-        ...(snapCa ? { ca: snapCa, rejectUnauthorized: true } : { rejectUnauthorized: false }),
+        rejectUnauthorized: false,
       }, (res) => {
         let data = "";
         res.on("data", (chunk) => { data += chunk; });
