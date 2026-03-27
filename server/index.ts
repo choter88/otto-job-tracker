@@ -371,30 +371,25 @@ app.use((req, res, next) => {
 });
 
 // Write startup progress to the SAME startup.log that Electron's main process uses.
-// On packaged builds, this is <userData>/startup.log (NOT <OTTO_DATA_DIR>/startup.log).
-// The main process shows this path in error dialogs, so it must be the same file.
+// IMPORTANT: Use already-imported modules (fs, path, os) instead of require().
+// Vite compiles require() to __require which throws in ESM bundles, silently
+// breaking all logging inside try/catch blocks — making server crashes invisible.
+import fsStartup from "fs";
+import pathStartup from "path";
+import osStartup from "os";
+
 function getStartupLogPath(): string {
-  try {
-    const os = require("os");
-    const pathMod = require("path");
-    // Electron sets OTTO_STARTUP_LOG_PATH so the server writes to the same file.
-    if (process.env.OTTO_STARTUP_LOG_PATH) return process.env.OTTO_STARTUP_LOG_PATH;
-    // Fallback: userData is typically <AppData>/Roaming/Otto Tracker on Windows,
-    // ~/Library/Application Support/Otto Tracker on Mac.
-    // process.resourcesPath points to <install>/resources — go up one level for the app name.
-    const dataDir = process.env.OTTO_DATA_DIR || pathMod.join(os.homedir(), ".otto-job-tracker");
-    return pathMod.join(dataDir, "startup.log");
-  } catch {
-    return "startup.log";
-  }
+  // Electron sets OTTO_STARTUP_LOG_PATH so the server writes to the same file.
+  if (process.env.OTTO_STARTUP_LOG_PATH) return process.env.OTTO_STARTUP_LOG_PATH;
+  const dataDir = process.env.OTTO_DATA_DIR || pathStartup.join(osStartup.homedir(), ".otto-job-tracker");
+  return pathStartup.join(dataDir, "startup.log");
 }
 
 function logStartupProgress(msg: string) {
   console.log(`[server-init] ${msg}`);
   try {
-    const fss = require("fs");
     const logPath = getStartupLogPath();
-    fss.appendFileSync(logPath, `[${new Date().toISOString()}] [server-init] ${msg}\n`);
+    fsStartup.appendFileSync(logPath, `[${new Date().toISOString()}] [server-init] ${msg}\n`);
   } catch { /* best-effort */ }
 }
 
