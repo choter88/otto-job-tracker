@@ -943,12 +943,43 @@
               showActivationError("Your Otto account needs a subscription to get started. Visit ottojobtracker.com/portal/billing.", true);
               return;
             }
-            if (status === 409 && (errorCode === "HOST_ALREADY_ACTIVATED" || errorCode === "host_already_active")) {
-              showActivationError("This practice already has Otto set up on another computer. If you're replacing that computer, visit ottojobtracker.com/portal to use the Replace Host option.", true);
+            if (status === 409 && (errorCode === "HOST_ALREADY_ACTIVATED" || errorCode === "host_already_active" || errorCode === "HOST_ALREADY_ACTIVE")) {
+              // Ask the user to confirm host replacement
+              const proceed = confirm(
+                "This practice already has Otto running on another computer.\n\n" +
+                "Setting up this computer as the new Host will deactivate the existing one. " +
+                "Only do this if you are replacing the old computer.\n\n" +
+                "Continue and replace the existing Host?"
+              );
+              if (!proceed) {
+                showActivationError("Setup cancelled. Your existing Host was not affected.");
+                return;
+              }
+              // Retry with forceReplace=true
+              setActivatingText("Replacing existing Host...");
+              let retryResult;
+              if (isImport) {
+                retryResult = await window.otto.setupImportSnapshot({
+                  ...basePayload,
+                  forceReplace: true,
+                  snapshot: pendingImportSnapshot,
+                });
+              } else {
+                retryResult = await window.otto.setupBootstrap({
+                  ...basePayload,
+                  forceReplace: true,
+                });
+              }
+              if (!retryResult.ok) {
+                showActivationError(retryResult.error || "Host replacement failed.");
+                return;
+              }
+              bootstrapResult = retryResult;
+              // Fall through to success handling below
+            } else {
+              showActivationError(errorMsg);
               return;
             }
-            showActivationError(errorMsg);
-            return;
           }
 
           // Success!

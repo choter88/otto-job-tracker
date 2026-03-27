@@ -378,6 +378,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
       const selectedOfficeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
+      const forceReplace = req.body?.forceReplace === true;
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
 
@@ -439,7 +440,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       let licenseSnapshot = getLicenseSnapshot();
       let activateResult: import("./license-client").LicenseActivateResult | null = null;
       try {
-        const activation = await activateHostWithPortalToken(portalToken, selectedOfficeId);
+        const activation = await activateHostWithPortalToken(portalToken, selectedOfficeId, { forceReplace });
         licenseSnapshot = activation.snapshot;
         activateResult = activation.activateResult;
       } catch (error: any) {
@@ -660,6 +661,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     try {
       const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
       const selectedOfficeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
+      const forceReplaceImport = req.body?.forceReplace === true;
       const snapshot = req.body?.snapshot;
       const officeBody = req.body?.office || {};
       const adminBody = req.body?.admin || {};
@@ -740,7 +742,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       let licenseSnapshot = getLicenseSnapshot();
       try {
-        const activation = await activateHostWithPortalToken(portalToken, selectedOfficeId);
+        const activation = await activateHostWithPortalToken(portalToken, selectedOfficeId, { forceReplace: forceReplaceImport });
         licenseSnapshot = activation.snapshot;
       } catch (error: any) {
         const failure = parseSetupActivationFailure(error);

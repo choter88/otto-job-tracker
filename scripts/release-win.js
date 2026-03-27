@@ -86,15 +86,71 @@ if (!existsSync(EXPECTED_EXE)) {
 
 const ymlFound = existsSync(EXPECTED_YML);
 
+// ── Post-signing hash fixup ──────────────────────────────────────────────
+// electron-builder computes the sha512 hash for latest.yml BEFORE the
+// installer is code-signed.  If you sign the .exe after building (e.g. with
+// signtool, AzureSignTool, or an EV certificate), the hash in latest.yml
+// will NOT match the signed binary — causing a "sha512 checksum mismatch"
+// error on every auto-update attempt.
+//
+// This step recomputes the hash from the final .exe and patches latest.yml.
+// Run this AFTER code signing and BEFORE uploading to GitHub Releases.
+// If the installer was not signed (local/dev builds), this is a no-op that
+// updates the hash to match the current file.
+import { createHash } from "crypto";
+import { createReadStream, statSync } from "fs";
+
+async function rehashInstaller() {
+  if (!existsSync(EXPECTED_EXE) || !existsSync(EXPECTED_YML)) return;
+
+  console.log("");
+  console.log("=== Recomputing latest.yml sha512 hash ===");
+
+  // Compute SHA-512 of the final (possibly signed) .exe
+  const hash = createHash("sha512");
+  await new Promise((resolve, reject) => {
+    const stream = createReadStream(EXPECTED_EXE);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", resolve);
+    stream.on("error", reject);
+  });
+  const newHash = hash.digest("base64");
+  const newSize = statSync(EXPECTED_EXE).size;
+
+  // Patch latest.yml in-place using regex — avoids needing a YAML library.
+  // The file has a simple structure with sha512 and size fields at both
+  // top level and inside each files[] entry.
+  let yml = readFileSync(EXPECTED_YML, "utf-8");
+  const oldHashMatch = yml.match(/^sha512:\s*(.+)$/m);
+  const oldHash = oldHashMatch ? oldHashMatch[1].trim() : null;
+
+  // Replace all sha512 values that match the old hash
+  if (oldHash) {
+    yml = yml.replace(new RegExp(oldHash.replace(/[+/=]/g, "\\$&"), "g"), newHash);
+  }
+
+  // Update all size fields (top-level and in files[]) to match the actual file size.
+  // latest.yml has "size: <number>" lines — update them all.
+  yml = yml.replace(/^(\s*size:\s*)\d+$/gm, `$1${newSize}`);
+
+  writeFileSync(EXPECTED_YML, yml, "utf-8");
+
+  if (oldHash && oldHash !== newHash) {
+    console.log(`  Old hash: ${oldHash.slice(0, 24)}…`);
+    console.log(`  New hash: ${newHash.slice(0, 24)}…`);
+    console.log(`  New size: ${newSize} bytes`);
+    console.log("  ✓ latest.yml updated to match signed installer");
+  } else {
+    console.log("  Hash unchanged — installer was not modified after build.");
+  }
+}
+
+await rehashInstaller();
+
 console.log("");
 console.log("=== Release complete ===");
 console.log(`  Installer: ${EXPECTED_EXE}`);
 if (ymlFound) console.log(`  Update manifest: ${EXPECTED_YML}`);
-console.log("");
-console.log(
-  "Note: For production releases, sign the installer with signtool or",
-);
-console.log("an EV code-signing certificate before distribution.");
 console.log("");
 console.log("To upload to GitHub Release:");
 console.log("  npm run release:upload");

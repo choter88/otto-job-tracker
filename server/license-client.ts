@@ -166,6 +166,7 @@ export async function portalActivate(payload: {
   hostFingerprint256: string;
   appVersion?: string;
   idempotencyKey?: string;
+  forceReplace?: boolean;
 }): Promise<LicenseActivateResult | { ok: false; error: LicenseRequestError }> {
   const base = getLicenseBaseUrl();
   const url = new URL("/portal/api/desktop/activate", base);

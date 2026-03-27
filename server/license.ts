@@ -67,7 +67,7 @@ export type ActivateHostResult = {
   activateResult: LicenseActivateResult;
 };
 
-export async function activateHostWithPortalToken(portalToken: string, officeId: string): Promise<ActivateHostResult> {
+export async function activateHostWithPortalToken(portalToken: string, officeId: string, opts?: { forceReplace?: boolean }): Promise<ActivateHostResult> {
   if (!portalToken) throw new Error("Portal token is required");
   if (!officeId) throw new Error("Office ID is required");
 
@@ -82,6 +82,7 @@ export async function activateHostWithPortalToken(portalToken: string, officeId:
     hostFingerprint256: current.hostFingerprint256,
     appVersion: process.env.OTTO_APP_VERSION || process.env.npm_package_version,
     idempotencyKey,
+    forceReplace: opts?.forceReplace,
   });
 
   if (!result.ok) {

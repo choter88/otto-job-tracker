@@ -1,4 +1,6 @@
 import { app } from "electron";
+import fs from "fs";
+import path from "path";
 import electronUpdater from "electron-updater";
 const { autoUpdater } = electronUpdater;
 
@@ -14,6 +16,30 @@ try {
 }
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/**
+ * Clear the electron-updater download cache to recover from corrupted downloads.
+ *
+ * electron-updater caches downloaded updates in a "pending" directory inside
+ * the app's userData path.  If the cached file is corrupted (e.g., code signing
+ * changed the binary after the manifest hash was computed), the updater will
+ * fail with a "sha512 checksum mismatch" error on every launch — creating
+ * a crash loop.
+ *
+ * Deleting the cache directory forces a fresh download on the next check.
+ */
+function clearUpdateCache() {
+  try {
+    // electron-updater stores pending downloads in <userData>/pending
+    const cacheDir = path.join(app.getPath("userData"), "pending");
+    if (fs.existsSync(cacheDir)) {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+      console.log("[auto-updater] Cleared cache directory:", cacheDir);
+    }
+  } catch (e) {
+    console.error("[auto-updater] Failed to clear cache:", e?.message);
+  }
+}
 
 let intervalId = null;
 
@@ -146,8 +172,23 @@ export function initAutoUpdater() {
 
 
   autoUpdater.on("error", (err) => {
-    console.error("[auto-updater] Error:", err?.message || err);
-    setState({ status: "error", error: err?.message || "Unknown error" });
+    const msg = err?.message || String(err);
+    console.error("[auto-updater] Error:", msg);
+
+    // SHA-512 checksum mismatch = corrupted cached download.
+    // Clear the electron-updater download cache to break the crash loop.
+    // Without this, the app retries the corrupt file on every launch and
+    // never reaches the main window.
+    if (msg.includes("checksum mismatch")) {
+      console.warn("[auto-updater] Clearing corrupted update cache…");
+      clearUpdateCache();
+    }
+
+    setState({ status: "error", error: msg });
+
+    // Mark launch check as done so the app continues to the main window
+    // instead of waiting for an auto-install that will never come.
+    launchCheckDone = true;
   });
 
   // --- Initial check + periodic schedule ---
