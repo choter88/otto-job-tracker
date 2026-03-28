@@ -356,7 +356,7 @@ export default function AuthPage() {
               <CardHeader className="space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
-                    <CardTitle>{showSignup ? "Request account access" : "Sign in"}</CardTitle>
+                    <CardTitle>{showSignup ? "Request a new account" : "Sign in"}</CardTitle>
                     <p className="text-sm text-muted-foreground">
                       {showSignup
                         ? "Submit your details for owner/manager approval on the Host computer."
@@ -373,7 +373,7 @@ export default function AuthPage() {
                       data-testid="button-toggle-signup"
                     >
                       <UserPlus className="mr-2 h-4 w-4" />
-                      {showSignup ? "Back to sign in" : "Request access"}
+                      {showSignup ? "Back to sign in" : "Request a new account"}
                     </Button>
                   )}
                 </div>
