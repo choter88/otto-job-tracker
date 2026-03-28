@@ -15,12 +15,12 @@
   --secondary-foreground: hsl(222.2, 47.4%, 11.2%);
   --muted: hsl(210, 40%, 96.1%);
   --muted-foreground: hsl(215.4, 16.3%, 46.9%);
-  --accent: hsl(210, 40%, 96.1%);
+  --accent: hsl(213, 60%, 93%);
   --accent-foreground: hsl(222.2, 47.4%, 11.2%);
   --destructive: hsl(0, 84.2%, 60.2%);
   --destructive-foreground: hsl(210, 40%, 98%);
   --border: hsl(214.3, 31.8%, 91.4%);
-  --input: hsl(214.3, 25%, 71%);
+  --input: hsl(214.3, 31.8%, 82%);
   --ring: hsl(221.2, 83.2%, 53.3%);
   --success: hsl(142, 71%, 45%);
   --warning: hsl(38, 92%, 50%);
@@ -47,7 +47,7 @@
   --secondary-foreground: hsl(210, 25%, 7.8431%);
   --muted: hsl(0, 0%, 9.4118%);
   --muted-foreground: hsl(210, 3.3898%, 46.2745%);
-  --accent: hsl(205.7143, 70%, 7.8431%);
+  --accent: hsl(210, 50%, 12%);
   --accent-foreground: hsl(203.7736, 87.6033%, 52.5490%);
   --destructive: hsl(356.3033, 90.5579%, 54.3137%);
   --destructive-foreground: hsl(0, 0%, 100%);
@@ -136,9 +136,9 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-muted-foreground rounded;
+  @apply bg-border rounded;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-foreground;
+  @apply bg-muted-foreground;
 }

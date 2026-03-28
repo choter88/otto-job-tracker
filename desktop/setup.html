@@ -371,12 +371,22 @@
 
           <div class="choice-grid">
             <div class="choice-card" id="choiceHost">
-              <p class="choice-title">Set up a new practice</p>
-              <p class="choice-desc">This computer will be the main hub for your office.</p>
+              <div style="display:flex; align-items:flex-start; gap:14px;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:2px;"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+                <div>
+                  <p class="choice-title">Set up a new practice</p>
+                  <p class="choice-desc">This computer will be the main hub for your office.</p>
+                </div>
+              </div>
             </div>
             <div class="choice-card" id="choiceClient">
-              <p class="choice-title">Join an existing practice</p>
-              <p class="choice-desc">Your practice is already set up on another computer.</p>
+              <div style="display:flex; align-items:flex-start; gap:14px;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:2px;"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/><path d="M17 17h5v-5"/><path d="M22 17l-5-5"/></svg>
+                <div>
+                  <p class="choice-title">Join an existing practice</p>
+                  <p class="choice-desc">Your practice is already set up on another computer.</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -469,12 +479,12 @@
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
             <div class="field" style="margin-top:0;">
               <label for="adminPin">6-digit PIN <span style="color:var(--destructive);">*</span></label>
-              <input id="adminPin" type="password" placeholder="------" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+              <input id="adminPin" type="password" placeholder="••••••" maxlength="6" inputmode="numeric" autocomplete="new-password" />
               <div class="field-error" id="adminPinError"></div>
             </div>
             <div class="field" style="margin-top:0;">
               <label for="adminPinConfirm">Confirm PIN <span style="color:var(--destructive);">*</span></label>
-              <input id="adminPinConfirm" type="password" placeholder="------" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+              <input id="adminPinConfirm" type="password" placeholder="••••••" maxlength="6" inputmode="numeric" autocomplete="new-password" />
               <div class="field-error" id="adminPinConfirmError"></div>
             </div>
           </div>
@@ -490,9 +500,9 @@
 
       <!-- ============== PANEL: Host Step 4 — Activating ============== -->
       <div id="panelHostActivating" class="panel">
-        <div class="card" style="text-align:center; padding: 40px 28px;">
-          <div class="spinner"></div>
-          <h2 class="card-title" style="font-size:20px; display:inline-block; vertical-align:middle;">Setting up Otto...</h2>
+        <div class="card" style="text-align:center; padding: 48px 28px;">
+          <div class="spinner" style="margin: 0 auto 16px;"></div>
+          <h2 class="card-title" style="font-size:20px;">Setting up Otto...</h2>
           <p id="activatingText" class="activating-text">Saving configuration...</p>
         </div>
       </div>
@@ -500,7 +510,7 @@
       <!-- ============== PANEL: Host Step 5 — Ready ============== -->
       <div id="panelHostReady" class="panel">
         <div class="card">
-          <div class="ready-icon">&#10003;</div>
+          <div class="ready-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
           <h2 class="ready-title" id="readyTitle">Otto is ready!</h2>
           <p class="ready-subtitle" id="readySubtitle">Your practice is set up and ready to use.</p>
 
@@ -587,11 +597,11 @@
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
             <div class="field" style="margin-top:0;">
               <label for="clientPin">6-digit PIN <span style="color:var(--destructive);">*</span></label>
-              <input id="clientPin" type="password" placeholder="------" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+              <input id="clientPin" type="password" placeholder="••••••" maxlength="6" inputmode="numeric" autocomplete="new-password" />
             </div>
             <div class="field" style="margin-top:0;">
               <label for="clientPinConfirm">Confirm PIN <span style="color:var(--destructive);">*</span></label>
-              <input id="clientPinConfirm" type="password" placeholder="------" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+              <input id="clientPinConfirm" type="password" placeholder="••••••" maxlength="6" inputmode="numeric" autocomplete="new-password" />
             </div>
           </div>
 
@@ -611,7 +621,7 @@
       <!-- ============== PANEL: Client Ready ============== -->
       <div id="panelClientReady" class="panel">
         <div class="card">
-          <div class="ready-icon">&#10003;</div>
+          <div class="ready-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
           <h2 class="ready-title" id="clientReadyTitle">You're all set!</h2>
           <p class="ready-subtitle" id="clientReadySubtitle">Your account has been created. You can now sign in.</p>
           <div class="actions" style="justify-content:center">

@@ -352,7 +352,7 @@ export default function AuthPage() {
           </section>
 
           <section className="space-y-4">
-            <Card className="flex h-[620px] flex-col">
+            <Card className="flex min-h-[480px] flex-col">
               <CardHeader className="space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">

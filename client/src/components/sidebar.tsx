@@ -119,52 +119,53 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
   return (
     <aside
       className={cn(
-        "bg-card border-r border-border flex flex-col pb-16 transition-[width] duration-200 overflow-hidden",
+        "bg-card border-r border-border flex flex-col pb-4 transition-[width] duration-200 overflow-hidden",
         collapsed ? ICON_COL : EXPANDED_W,
       )}
       data-testid="sidebar"
     >
       {/* Office Header */}
       <div className="border-b border-border">
-        {/* Logo row — icon in the same fixed column as nav items */}
+        {/* Logo row — icon + office info + collapse toggle */}
         <div className="flex items-center h-14">
-          <span className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
+          <span
+            className={cn("flex items-center justify-center shrink-0", ICON_COL, collapsed && "cursor-pointer")}
+            onClick={collapsed ? () => setCollapsed(false) : undefined}
+            title={collapsed ? "Expand sidebar" : undefined}
+          >
             <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-              <Glasses className="h-4 w-4 text-primary-foreground" />
+              <Glasses className="h-5 w-5 text-primary-foreground" />
             </div>
           </span>
           {!collapsed && (
-            <div className="flex-1 min-w-0 pr-4">
-              <h2 className="font-semibold text-foreground truncate" data-testid="text-office-name">
-                {office?.name || "Loading..."}
-              </h2>
-              <p className="text-xs text-muted-foreground capitalize" data-testid="text-user-role">
-                {user?.role || "Staff"}
-              </p>
+            <div className="flex-1 min-w-0 flex items-center gap-2 pr-2">
+              <div className="flex-1 min-w-0">
+                <h2 className="font-semibold text-foreground truncate" data-testid="text-office-name">
+                  {office?.name || "Loading..."}
+                </h2>
+                <p className="text-xs text-muted-foreground capitalize" data-testid="text-user-role">
+                  {user?.role || "Staff"}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={() => setCollapsed((prev) => !prev)}
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+                data-testid="button-toggle-sidebar"
+              >
+                <PanelLeft className="h-4 w-4" />
+              </Button>
             </div>
           )}
-        </div>
-        {/* Toggle row — icon in the same fixed column as nav items */}
-        <div className="flex items-center h-10 mb-1">
-          <span className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setCollapsed((prev) => !prev)}
-              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              data-testid="button-toggle-sidebar"
-            >
-              <PanelLeft className="h-4 w-4" />
-            </Button>
-          </span>
         </div>
       </div>
 
       {/* Main Navigation */}
-      <nav className="flex-1 py-4 space-y-1">
+      <nav className="flex-1 py-4 space-y-0.5 px-2">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id || (item.id === "all" && activeTab === "all");
@@ -174,11 +175,11 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
               key={`${item.id}-${item.label}`}
               type="button"
               className={cn(
-                "w-full flex items-center h-10 text-sm font-medium rounded-none",
+                "w-full flex items-center h-10 text-sm font-medium rounded-md",
                 "hover:bg-accent hover:text-accent-foreground",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                isActive && "bg-accent text-accent-foreground",
-                !isActive && "text-muted-foreground",
+                isActive && "bg-accent text-accent-foreground border-l-[3px] border-l-primary",
+                !isActive && "text-muted-foreground border-l-[3px] border-l-transparent",
               )}
               onClick={() => onTabChange(item.id)}
               title={collapsed ? item.label : undefined}
@@ -186,12 +187,12 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
               data-testid={`nav-${item.id}`}
             >
               {/* Fixed-width icon area — never moves */}
-              <span className={cn("flex items-center justify-center shrink-0 relative", ICON_COL)}>
+              <span className={cn("flex items-center justify-center shrink-0 relative", collapsed ? "w-full" : "w-16")}>
                 <Icon className="h-4 w-4" />
                 {item.badge !== null && collapsed && (
                   <Badge
                     variant={(item as any).variant || "secondary"}
-                    className="absolute -top-0.5 right-2 h-4 min-w-4 px-1 text-[10px] leading-none flex items-center justify-center z-10"
+                    className="absolute -top-0.5 right-1 h-4 min-w-4 px-1 text-[10px] leading-none flex items-center justify-center z-10"
                     data-testid={`badge-${item.id}`}
                   >
                     {item.badge}
@@ -200,7 +201,7 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
               </span>
               {/* Text + badge area — only visible when expanded */}
               {!collapsed && (
-                <span className="flex items-center justify-between flex-1 pr-4">
+                <span className="flex items-center justify-between flex-1 pr-3">
                   <span>{item.label}</span>
                   {item.badge !== null && (
                     <Badge
@@ -218,27 +219,28 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
         })}
 
         {/* Divider */}
-        <div className="pt-4 border-t border-border mt-4 mx-4">
+        <div className="pt-4 mt-4 border-t border-border">
           {bottomMenuItems.map((item) => {
             const Icon = item.icon;
+            const isActive = activeTab === item.id;
 
             return (
               <button
                 key={item.id}
                 type="button"
                 className={cn(
-                  "w-full flex items-center h-10 text-sm font-medium rounded-none -mx-4",
+                  "w-full flex items-center h-10 text-sm font-medium rounded-md",
                   "hover:bg-accent hover:text-accent-foreground",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  activeTab === item.id && "bg-accent text-accent-foreground",
-                  activeTab !== item.id && "text-muted-foreground",
+                  isActive && "bg-accent text-accent-foreground border-l-[3px] border-l-primary",
+                  !isActive && "text-muted-foreground border-l-[3px] border-l-transparent",
                 )}
                 onClick={() => onTabChange(item.id)}
                 title={collapsed ? item.label : undefined}
                 aria-label={item.label}
                 data-testid={`nav-${item.id}`}
               >
-                <span className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
+                <span className={cn("flex items-center justify-center shrink-0", collapsed ? "w-full" : "w-16")}>
                   <Icon className="h-4 w-4" />
                 </span>
                 {!collapsed && (
@@ -251,13 +253,13 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
       </nav>
 
       {/* Help & Feedback — pinned to bottom */}
-      <div className="border-t border-border py-2">
+      <div className="border-t border-border py-2 px-2">
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
               className={cn(
-                "w-full flex items-center h-10 text-sm font-medium rounded-none",
+                "w-full flex items-center h-10 text-sm font-medium rounded-md",
                 "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
@@ -265,7 +267,7 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
               aria-label="Help & Feedback"
               data-testid="nav-feedback"
             >
-              <span className={cn("flex items-center justify-center shrink-0", ICON_COL)}>
+              <span className={cn("flex items-center justify-center shrink-0", collapsed ? "w-full" : "w-16")}>
                 <MessageCircleQuestion className="h-4 w-4" />
               </span>
               {!collapsed && (

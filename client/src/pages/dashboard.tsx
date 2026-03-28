@@ -151,36 +151,17 @@ export default function Dashboard() {
               {activeTab === "team" && "Team"}
               {activeTab === "settings" && "Settings"}
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {activeTab === "important" && "Jobs starred by you or your team for extra attention"}
-              {activeTab === "all" && "Active jobs your team is working on"}
-              {activeTab === "past" && "View archived completed and cancelled jobs"}
-              {activeTab === "overdue" && "Jobs that need immediate attention"}
-              {activeTab === "analytics" && "Track performance and insights"}
-              {activeTab === "team" && "Manage office members and pending account requests"}
-              {activeTab === "settings" && "Configure notification rules and preferences"}
-            </p>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {/* Notifications */}
             <NotificationBell />
-
-            {/* Settings */}
-            <Button 
-              variant="ghost" 
-              size="icon"
-              onClick={() => setSettingsOpen(true)}
-              data-testid="button-open-settings"
-            >
-              <Settings className="h-5 w-5" />
-            </Button>
 
             {/* User Menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="flex items-center gap-2" data-testid="button-user-menu">
-                  <div className="w-8 h-8 bg-primary/20 rounded-full flex items-center justify-center text-primary font-semibold text-sm">
+                  <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-primary-foreground font-semibold text-sm">
                     {user?.firstName?.[0]}{user?.lastName?.[0]}
                   </div>
                   <ChevronDown className="h-4 w-4" />
@@ -214,7 +195,7 @@ export default function Dashboard() {
         </header>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 pb-16">
+        <div className="flex-1 overflow-y-auto p-6 pb-8">
           {/* Tab Content */}
           {renderTabContent()}
         </div>

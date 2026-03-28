@@ -1946,12 +1946,27 @@ app.whenReady().then(async () => {
   initAutoUpdater();
 
   // Rebuild menu when update state changes (e.g. "ready" enables the install button).
-  onUpdateStateChange(() => {
+  // Also show a notification dialog when a background download finishes.
+  onUpdateStateChange((state) => {
     try {
       const currentConfig = _readConfig();
       _setAppMenu(currentConfig);
     } catch {
       // ignore — config may not exist during setup
+    }
+
+    // Notify user when a background download completes
+    if (state.status === "ready" && state.version) {
+      dialog.showMessageBox({
+        type: "info",
+        title: "Update Ready",
+        message: `Version ${state.version} is ready to install.`,
+        detail: "Would you like to install it now? Otto will restart.",
+        buttons: ["Install Now", "Later"],
+        defaultId: 0,
+      }).then(({ response }) => {
+        if (response === 0) _installUpdate();
+      }).catch(() => {});
     }
   });
 

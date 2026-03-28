@@ -16,7 +16,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
 import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
@@ -824,7 +825,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         {/* Jobs Table */}
         <div ref={tableViewportRef} className="overflow-x-auto">
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
-            <TableHeader>
+            <TableHeader className="bg-muted/50">
               <TableRow>
                 {/* Bulk selection hidden until bulk operations are implemented */}
                 <TableHead className="w-10 hidden">
@@ -909,6 +910,36 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {loading && filteredJobs.length === 0 && (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <TableRow key={`skeleton-${i}`}>
+                    <TableCell className="hidden"><Skeleton className="h-4 w-4" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-4 mx-auto" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-6 mx-auto" /></TableCell>
+                  </TableRow>
+                ))
+              )}
+              {!loading && filteredJobs.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={99} className="h-48">
+                    <div className="flex flex-col items-center justify-center text-center py-8">
+                      <Briefcase className="h-10 w-10 text-muted-foreground/40 mb-3" />
+                      <p className="text-sm font-medium text-muted-foreground">No jobs found</p>
+                      <p className="text-xs text-muted-foreground/70 mt-1">
+                        {searchQuery || statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all"
+                          ? "Try adjusting your filters"
+                          : "Create your first job to get started"}
+                      </p>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
               {filteredJobs.map((job, index) => (
                 <TableRow 
                   key={job.id} 
