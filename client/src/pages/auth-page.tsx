@@ -123,6 +123,32 @@ export default function AuthPage() {
     };
   }, []);
 
+  // Auto-login from setup: if the URL hash contains autoLogin params,
+  // parse them and submit the PIN login form automatically.
+  // Hash fragments are never sent to the server (safe from logging).
+  const [autoLoginAttempted, setAutoLoginAttempted] = useState(false);
+  useEffect(() => {
+    if (autoLoginAttempted || isLoading || user) return;
+    const hash = window.location.hash;
+    if (!hash.includes("autoLogin=")) return;
+
+    try {
+      const raw = hash.split("autoLogin=")[1];
+      const params = new URLSearchParams(raw);
+      const loginId = params.get("loginId");
+      const pin = params.get("pin");
+
+      if (loginId && pin) {
+        setAutoLoginAttempted(true);
+        // Clear the hash so credentials aren't visible in the URL bar
+        window.history.replaceState(null, "", window.location.pathname);
+        pinLoginMutation.mutate({ loginId, pin });
+      }
+    } catch {
+      // Malformed hash — ignore, user will see the normal login form
+    }
+  }, [autoLoginAttempted, isLoading, user, pinLoginMutation]);
+
   const effectiveMode: "host" | "client" = useMemo(() => {
     if (desktopMode === "host" || desktopMode === "client") return desktopMode;
     return isLocalHost ? "host" : "client";

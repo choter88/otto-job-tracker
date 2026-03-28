@@ -1741,10 +1741,21 @@ ipcMain.handle("otto:setup:import-snapshot", async (_event, payload) => {
   }
 });
 
-ipcMain.handle("otto:setup:complete", async () => {
+ipcMain.handle("otto:setup:complete", async (_event, payload) => {
   const config = _readConfig();
   _setAppMenu(config);
-  const targetUrl = _getTargetUrlForConfig(config);
+
+  // Auto-login support: if setup passes credentials, append them as a hash
+  // fragment so the auth page can auto-submit on first load.
+  // Hash fragments are never sent to the server (safe from logging).
+  let targetUrl = _getTargetUrlForConfig(config);
+  const loginId = payload?.autoLoginId;
+  const pin = payload?.autoLoginPin;
+  if (loginId && pin) {
+    const params = new URLSearchParams({ loginId, pin });
+    targetUrl += `/auth#autoLogin=${params.toString()}`;
+  }
+
   _createWindow(targetUrl, config);
 
   if (config.mode === "host") {

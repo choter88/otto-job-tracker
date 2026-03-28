@@ -444,37 +444,37 @@
         <div class="card">
           <div class="step-label">Step 3 of 3 &middot; Create your admin account</div>
           <h2 class="card-title" style="font-size:22px">Your Admin Account</h2>
-          <p class="card-subtitle" style="margin-bottom:16px;">This will be the owner account for your practice.</p>
+          <p class="card-subtitle" style="margin-bottom:18px;">This will be the owner account for your practice. All fields are required.</p>
 
-          <div class="row">
-            <div class="field">
-              <label for="adminFirstName">First name</label>
-              <input id="adminFirstName" type="text" placeholder="First name" autocomplete="given-name" />
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div class="field" style="margin-top:0;">
+              <label for="adminFirstName">First name <span style="color:var(--destructive);">*</span></label>
+              <input id="adminFirstName" type="text" placeholder="Jane" autocomplete="given-name" />
               <div class="field-error" id="adminFirstNameError"></div>
             </div>
-            <div class="field">
-              <label for="adminLastName">Last name</label>
-              <input id="adminLastName" type="text" placeholder="Last name" autocomplete="family-name" />
+            <div class="field" style="margin-top:0;">
+              <label for="adminLastName">Last name <span style="color:var(--destructive);">*</span></label>
+              <input id="adminLastName" type="text" placeholder="Smith" autocomplete="family-name" />
               <div class="field-error" id="adminLastNameError"></div>
             </div>
           </div>
 
           <div class="field">
-            <label for="adminLoginId">Login ID</label>
-            <input id="adminLoginId" type="text" placeholder="e.g. drsmith" autocomplete="username" />
+            <label for="adminLoginId">Login ID <span style="color:var(--destructive);">*</span></label>
+            <input id="adminLoginId" type="text" placeholder="Enter first and last name above" autocomplete="username" />
             <div class="field-error" id="adminLoginIdError"></div>
-            <div class="hint">Short username for daily sign-in. Letters, numbers, periods, hyphens.</div>
+            <div class="hint">This is your daily sign-in username. Letters, numbers, periods, hyphens.</div>
           </div>
 
-          <div class="row">
-            <div class="field">
-              <label for="adminPin">6-digit PIN</label>
-              <input id="adminPin" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
+            <div class="field" style="margin-top:0;">
+              <label for="adminPin">6-digit PIN <span style="color:var(--destructive);">*</span></label>
+              <input id="adminPin" type="password" placeholder="------" maxlength="6" inputmode="numeric" autocomplete="new-password" />
               <div class="field-error" id="adminPinError"></div>
             </div>
-            <div class="field">
-              <label for="adminPinConfirm">Confirm PIN</label>
-              <input id="adminPinConfirm" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+            <div class="field" style="margin-top:0;">
+              <label for="adminPinConfirm">Confirm PIN <span style="color:var(--destructive);">*</span></label>
+              <input id="adminPinConfirm" type="password" placeholder="------" maxlength="6" inputmode="numeric" autocomplete="new-password" />
               <div class="field-error" id="adminPinConfirmError"></div>
             </div>
           </div>
@@ -565,33 +565,33 @@
         <div class="card">
           <div class="step-label">Step 2 of 2 &middot; Create your account</div>
           <h2 class="card-title" style="font-size:22px">Your Account</h2>
-          <p class="card-subtitle">Create your login for <span id="accountOfficeName">your practice</span>.</p>
+          <p class="card-subtitle">Create your login for <span id="accountOfficeName">your practice</span>. All fields are required.</p>
 
-          <div class="row">
-            <div class="field">
-              <label for="clientFirstName">First name</label>
-              <input id="clientFirstName" type="text" placeholder="First name" autocomplete="given-name" />
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div class="field" style="margin-top:0;">
+              <label for="clientFirstName">First name <span style="color:var(--destructive);">*</span></label>
+              <input id="clientFirstName" type="text" placeholder="Jane" autocomplete="given-name" />
             </div>
-            <div class="field">
-              <label for="clientLastName">Last name</label>
-              <input id="clientLastName" type="text" placeholder="Last name" autocomplete="family-name" />
+            <div class="field" style="margin-top:0;">
+              <label for="clientLastName">Last name <span style="color:var(--destructive);">*</span></label>
+              <input id="clientLastName" type="text" placeholder="Smith" autocomplete="family-name" />
             </div>
           </div>
 
           <div class="field">
-            <label for="clientLoginId">Login ID</label>
-            <input id="clientLoginId" type="text" placeholder="e.g. drsmith" autocomplete="username" />
-            <div class="hint">Short username for daily sign-in. Letters, numbers, periods, hyphens.</div>
+            <label for="clientLoginId">Login ID <span style="color:var(--destructive);">*</span></label>
+            <input id="clientLoginId" type="text" placeholder="Enter first and last name above" autocomplete="username" />
+            <div class="hint">This is your daily sign-in username. Letters, numbers, periods, hyphens.</div>
           </div>
 
-          <div class="row">
-            <div class="field">
-              <label for="clientPin">6-digit PIN</label>
-              <input id="clientPin" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
+            <div class="field" style="margin-top:0;">
+              <label for="clientPin">6-digit PIN <span style="color:var(--destructive);">*</span></label>
+              <input id="clientPin" type="password" placeholder="------" maxlength="6" inputmode="numeric" autocomplete="new-password" />
             </div>
-            <div class="field">
-              <label for="clientPinConfirm">Confirm PIN</label>
-              <input id="clientPinConfirm" type="password" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="new-password" />
+            <div class="field" style="margin-top:0;">
+              <label for="clientPinConfirm">Confirm PIN <span style="color:var(--destructive);">*</span></label>
+              <input id="clientPinConfirm" type="password" placeholder="------" maxlength="6" inputmode="numeric" autocomplete="new-password" />
             </div>
           </div>
 
@@ -655,6 +655,10 @@
         showPanel("panelChoice");
       });
 
+      // Enter key submits the sign-in form
+      portalEmailInput.addEventListener("keydown", (e) => { if (e.key === "Enter") hostSignInNext.click(); });
+      portalPasswordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") hostSignInNext.click(); });
+
       document.getElementById("forgotPasswordLink").addEventListener("click", () => {
         if (window.otto && window.otto.openExternal) {
           window.otto.openExternal("https://ottojobtracker.com/portal/reset");
@@ -694,14 +698,10 @@
           portalToken = result.token;
           portalOffices = result.offices || [];
 
-          // Pre-fill admin name from portal user data
+          // Pre-fill admin name from portal user data (Login ID will auto-suggest)
           if (result.firstName && adminFirstName) adminFirstName.value = result.firstName;
           if (result.lastName && adminLastName) adminLastName.value = result.lastName;
-          if (result.email) {
-            const emailLocal = result.email.split("@")[0] || "";
-            const sanitized = emailLocal.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 32);
-            if (sanitized.length >= 3 && adminLoginId) adminLoginId.value = sanitized;
-          }
+          suggestLoginId();
 
           // Filter to only activatable offices (active or trialing subscription)
           const activatable = portalOffices.filter(
@@ -799,6 +799,35 @@
       const adminPinConfirm = document.getElementById("adminPinConfirm");
       const adminStatus = document.getElementById("adminStatus");
       const hostAdminNext = document.getElementById("hostAdminNext");
+      let loginIdManuallyEdited = false;
+
+      // Auto-suggest Login ID as "firstname.lastname" when name fields change
+      function suggestLoginId() {
+        if (loginIdManuallyEdited) return;
+        const first = (adminFirstName.value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const last = (adminLastName.value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (first && last) {
+          adminLoginId.value = `${first}.${last}`.slice(0, 32);
+        } else {
+          adminLoginId.value = "";
+        }
+      }
+
+      adminFirstName.addEventListener("input", suggestLoginId);
+      adminLastName.addEventListener("input", suggestLoginId);
+      adminLoginId.addEventListener("input", () => {
+        // Once the user manually edits the Login ID, stop auto-suggesting
+        loginIdManuallyEdited = adminLoginId.value.trim().length > 0;
+      });
+      adminLoginId.addEventListener("focus", () => {
+        // If they clear it and re-focus, allow auto-suggest again
+        if (!adminLoginId.value.trim()) loginIdManuallyEdited = false;
+      });
+
+      // Enter key submits step 3
+      [adminFirstName, adminLastName, adminLoginId, adminPin, adminPinConfirm].forEach((el) => {
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") hostAdminNext.click(); });
+      });
 
       document.getElementById("hostAdminBack").addEventListener("click", () => {
         showPanel("panelHostOffice");
@@ -944,50 +973,32 @@
               return;
             }
             if (status === 409 && (errorCode === "HOST_ALREADY_ACTIVATED" || errorCode === "host_already_active" || errorCode === "HOST_ALREADY_ACTIVE")) {
-              // Ask the user to confirm host replacement
-              const proceed = confirm(
-                "This practice already has Otto running on another computer.\n\n" +
-                "Setting up this computer as the new Host will deactivate the existing one. " +
-                "Only do this if you are replacing the old computer.\n\n" +
-                "Continue and replace the existing Host?"
+              showActivationError(
+                "This practice already has an active Host computer. " +
+                "To replace it, go to ottojobtracker.com/portal and use the Replace Host option, " +
+                "then try setting up this computer again.",
+                true,
               );
-              if (!proceed) {
-                showActivationError("Setup cancelled. Your existing Host was not affected.");
-                return;
-              }
-              // Retry with forceReplace=true
-              setActivatingText("Replacing existing Host...");
-              let retryResult;
-              if (isImport) {
-                retryResult = await window.otto.setupImportSnapshot({
-                  ...basePayload,
-                  forceReplace: true,
-                  snapshot: pendingImportSnapshot,
-                });
-              } else {
-                retryResult = await window.otto.setupBootstrap({
-                  ...basePayload,
-                  forceReplace: true,
-                });
-              }
-              if (!retryResult.ok) {
-                showActivationError(retryResult.error || "Host replacement failed.");
-                return;
-              }
-              bootstrapResult = retryResult;
-              // Fall through to success handling below
+              return;
             } else {
               showActivationError(errorMsg);
               return;
             }
           }
 
-          // Success!
-          const bootstrapData = bootstrapResult.data;
-          setActivatingText("Setup complete!");
-          const officeName = bootstrapData?.office?.name || selectedOffice?.officeName || "your practice";
-
-          showReady(officeName, bootstrapData?.license);
+          // Success — go straight to the app (skip the Ready screen)
+          setActivatingText("Opening Otto Tracker...");
+          try {
+            await window.otto.setupComplete({
+              autoLoginId: adminLoginId.value.trim(),
+              autoLoginPin: adminPin.value.trim(),
+            });
+          } catch {
+            // Fallback: show the Ready panel if setupComplete fails
+            const bootstrapData = bootstrapResult.data;
+            const officeName = bootstrapData?.office?.name || selectedOffice?.officeName || "your practice";
+            showReady(officeName, bootstrapData?.license);
+          }
         } catch (err) {
           showActivationError("Setup failed. Please close Otto Tracker and try again.");
         }
@@ -1255,7 +1266,7 @@
         }
       });
 
-      // --- Step 3: Create account ---
+      // --- Step 2: Create account ---
       const clientFirstName = document.getElementById("clientFirstName");
       const clientLastName = document.getElementById("clientLastName");
       const clientLoginId = document.getElementById("clientLoginId");
@@ -1263,6 +1274,32 @@
       const clientPinConfirm = document.getElementById("clientPinConfirm");
       const clientAccountStatus = document.getElementById("clientAccountStatus");
       const clientAccountNext = document.getElementById("clientAccountNext");
+      let clientLoginIdManuallyEdited = false;
+
+      function suggestClientLoginId() {
+        if (clientLoginIdManuallyEdited) return;
+        const first = (clientFirstName.value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const last = (clientLastName.value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (first && last) {
+          clientLoginId.value = `${first}.${last}`.slice(0, 32);
+        } else {
+          clientLoginId.value = "";
+        }
+      }
+
+      clientFirstName.addEventListener("input", suggestClientLoginId);
+      clientLastName.addEventListener("input", suggestClientLoginId);
+      clientLoginId.addEventListener("input", () => {
+        clientLoginIdManuallyEdited = clientLoginId.value.trim().length > 0;
+      });
+      clientLoginId.addEventListener("focus", () => {
+        if (!clientLoginId.value.trim()) clientLoginIdManuallyEdited = false;
+      });
+
+      // Enter key submits client account form
+      [clientFirstName, clientLastName, clientLoginId, clientPin, clientPinConfirm].forEach((el) => {
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") clientAccountNext.click(); });
+      });
 
       document.getElementById("clientAccountBack").addEventListener("click", () => {
         showPanel("panelClientDiscover");
@@ -1363,7 +1400,6 @@
 
           // Show success or pending approval
           const isPending = registerData?.pending === true;
-          const loginId = registerData?.user?.loginId || clientLoginId.value.trim();
 
           if (isPending) {
             document.getElementById("clientReadyTitle").textContent = "Request Submitted";
@@ -1371,13 +1407,23 @@
               registerData.message || "Your account request has been submitted. An owner or manager will approve it on the Host computer.";
             const openBtn = document.getElementById("openOttoClientBtn");
             if (openBtn) openBtn.textContent = "Close Setup";
+            showPanel("panelClientReady");
           } else {
-            document.getElementById("clientReadyTitle").textContent = "You're all set!";
-            document.getElementById("clientReadySubtitle").textContent =
-              `Your account has been created. Sign in with login ID "${loginId}" and your PIN.`;
+            // Account created — go straight to the app with auto-login
+            try {
+              await window.otto.setupComplete({
+                autoLoginId: clientLoginId.value.trim(),
+                autoLoginPin: clientPin.value.trim(),
+              });
+            } catch {
+              // Fallback to ready screen
+              const loginId = registerData?.user?.loginId || clientLoginId.value.trim();
+              document.getElementById("clientReadyTitle").textContent = "You're all set!";
+              document.getElementById("clientReadySubtitle").textContent =
+                `Your account has been created. Sign in with login ID "${loginId}" and your PIN.`;
+              showPanel("panelClientReady");
+            }
           }
-
-          showPanel("panelClientReady");
         } catch {
           setStatus(clientAccountStatus, "Could not reach the Host computer. Make sure it's running.", "err");
         } finally {
