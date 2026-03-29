@@ -593,7 +593,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
               <TabsList className="h-auto w-full justify-start bg-transparent p-2 md:flex-col md:items-stretch md:gap-1 overflow-x-auto md:overflow-visible">
                 <TabsTrigger
                   value="general"
-                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
                   data-testid="tab-general"
                 >
                   <Settings className="h-4 w-4" />
@@ -601,7 +601,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 </TabsTrigger>
                 <TabsTrigger
                   value="statuses"
-                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
                   data-testid="tab-statuses"
                 >
                   <ListTodo className="h-4 w-4" />
@@ -609,7 +609,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 </TabsTrigger>
                 <TabsTrigger
                   value="types"
-                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
                   data-testid="tab-types"
                 >
                   <Tag className="h-4 w-4" />
@@ -617,7 +617,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 </TabsTrigger>
                 <TabsTrigger
                   value="destinations"
-                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
                   data-testid="tab-destinations"
                 >
                   <Building className="h-4 w-4" />
@@ -625,7 +625,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 </TabsTrigger>
                 <TabsTrigger
                   value="customColumns"
-                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
                   data-testid="tab-custom-columns"
                 >
                   <Columns className="h-4 w-4" />
@@ -633,7 +633,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 </TabsTrigger>
                 <TabsTrigger
                   value="notifications"
-                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
                   data-testid="tab-notifications"
                 >
                   <Bell className="h-4 w-4" />
@@ -641,7 +641,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 </TabsTrigger>
                 <TabsTrigger
                   value="messages"
-                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
                   data-testid="tab-messages"
                 >
                   <MessageSquare className="h-4 w-4" />
@@ -650,7 +650,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 {user?.role === "owner" && (
                   <TabsTrigger
                     value="inviteCode"
-                    className="shrink-0 justify-start gap-2 md:w-full md:justify-start"
+                    className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
                     data-testid="tab-invite-code"
                   >
                     <KeyRound className="h-4 w-4" />

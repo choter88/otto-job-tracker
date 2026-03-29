@@ -12,6 +12,7 @@ import {
   Users,
   Star,
   PanelLeft,
+  ChevronRight,
   MessageCircleQuestion,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -252,8 +253,29 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
         </div>
       </nav>
 
+      {/* Expand button — only visible when collapsed */}
+      {collapsed && (
+        <div className="px-2 pb-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="w-full flex items-center justify-center h-8 text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors"
+                onClick={() => setCollapsed(false)}
+                aria-label="Expand sidebar"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" align="center">
+              <p>Expand sidebar</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
+
       {/* Help & Feedback — pinned to bottom */}
-      <div className="border-t border-border py-2 px-2">
+      <div className="border-t border-border py-3 px-2">
         <Tooltip>
           <TooltipTrigger asChild>
             <button

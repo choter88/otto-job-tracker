@@ -140,7 +140,7 @@ export default function Dashboard() {
       
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="bg-card border-b border-border px-6 py-4 flex items-center justify-between">
+        <header className="bg-card border-b border-border px-6 h-14 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-foreground" data-testid="text-dashboard-title">
               {activeTab === "important" && "Important Jobs"}

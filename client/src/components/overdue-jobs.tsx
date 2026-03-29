@@ -1,16 +1,18 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { AlertTriangle, FileText } from "lucide-react";
-import { format } from "date-fns";
-import { useState } from "react";
+import { FileText, Info, CheckCircle2 } from "lucide-react";
+import { useState, useMemo } from "react";
+import { cn } from "@/lib/utils";
 import type { Office, NotificationRule } from "@shared/schema";
 
 interface OverdueJobsProps {
@@ -18,11 +20,30 @@ interface OverdueJobsProps {
   searchQuery?: string;
 }
 
+const SEVERITY_CONFIG = {
+  critical: { color: "text-red-600", bg: "bg-red-50", border: "border-red-200", dot: "bg-red-500", label: "Critical", range: "7+ days" },
+  high: { color: "text-orange-600", bg: "bg-orange-50", border: "border-orange-200", dot: "bg-orange-500", label: "High", range: "3–7 days" },
+  medium: { color: "text-blue-600", bg: "bg-blue-50", border: "border-blue-200", dot: "bg-blue-500", label: "Medium", range: "1–3 days" },
+  low: { color: "text-green-600", bg: "bg-green-50", border: "border-green-200", dot: "bg-green-500", label: "Low", range: "< 1 day" },
+} as const;
+
+type Severity = keyof typeof SEVERITY_CONFIG;
+
+function getLabelFromSettings(list: any[], value: string): string {
+  if (!value) return "";
+  if (!Array.isArray(list) || list.length === 0) return value;
+  const byId = list.find((item) => item?.id === value);
+  if (byId?.label) return String(byId.label);
+  const byLabel = list.find((item) => item?.label === value);
+  if (byLabel?.label) return String(byLabel.label);
+  return value;
+}
+
 export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [priorityFilter, setPriorityFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState<string>("all");
 
   const { data: office } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
@@ -34,6 +55,9 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
     enabled: !!user?.officeId,
   });
 
+  const customStatuses = useMemo(() => (office?.settings as any)?.customStatuses || [], [office]);
+  const customOrderDestinations = useMemo(() => (office?.settings as any)?.customOrderDestinations || [], [office]);
+
   const updateJobMutation = useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: any }) => {
       const res = await apiRequest("PUT", `/api/jobs/${id}`, updates);
@@ -42,17 +66,10 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs/overdue"] });
-      toast({
-        title: "Success",
-        description: "Job status updated successfully.",
-      });
+      toast({ title: "Status updated", description: "Job status has been changed." });
     },
     onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
@@ -70,40 +87,41 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
-      toast({
-        title: "Note Added",
-        description: "Your note has been added to this job.",
-      });
+      toast({ title: "Note added", description: "Your note has been saved." });
       setNoteDialogOpen(false);
       setNoteContent("");
       setSelectedJobId(null);
     },
     onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
-  const filteredJobs = jobs.filter(job => {
-    const matchesSearch = searchQuery === "" || 
-      job.patientFirstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      job.patientLastName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      job.orderId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      job.phone?.includes(searchQuery.replace(/\D/g, ''));
-    
-    const matchesPriority = priorityFilter === "all" || job.severity === priorityFilter;
-    
-    return matchesSearch && matchesPriority;
-  });
+  // Filter
+  const filteredJobs = useMemo(() => {
+    return jobs.filter((job) => {
+      const matchesSearch =
+        searchQuery === "" ||
+        job.patientFirstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        job.patientLastName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        job.orderId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        job.phone?.includes(searchQuery.replace(/\D/g, ""));
+      const matchesPriority = priorityFilter === "all" || job.severity === priorityFilter;
+      return matchesSearch && matchesPriority;
+    });
+  }, [jobs, searchQuery, priorityFilter]);
+
+  // Counts by severity (always from full jobs list, not filtered)
+  const counts = useMemo(() => {
+    const c = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const job of jobs) {
+      if (job.severity in c) c[job.severity as Severity]++;
+    }
+    return c;
+  }, [jobs]);
 
   const handleStatusChange = (jobId: string, newStatus: string) => {
-    updateJobMutation.mutate({ 
-      id: jobId, 
-      updates: { status: newStatus } 
-    });
+    updateJobMutation.mutate({ id: jobId, updates: { status: newStatus } });
   };
 
   const handleAddNote = (jobId: string) => {
@@ -117,182 +135,185 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
     }
   };
 
-  const getSeverityBadge = (severity: string) => {
-    const severityConfig = {
-      critical: { class: "priority-critical", label: "CRITICAL", icon: "🔴" },
-      high: { class: "priority-high", label: "HIGH", icon: "🟠" },
-      medium: { class: "priority-medium", label: "MEDIUM", icon: "🔵" },
-      low: { class: "priority-low", label: "LOW", icon: "🟢" },
-    };
-
-    const config = severityConfig[severity as keyof typeof severityConfig];
-    if (!config) return null;
-
+  // Empty state
+  if (jobs.length === 0) {
     return (
-      <Badge className={`status-badge ${config.class}`}>
-        <AlertTriangle className="h-3 w-3 mr-1" />
-        {config.label} - {severity === 'critical' ? '7+' : severity === 'high' ? '3-7' : severity === 'medium' ? '1-3' : '0-1'} days overdue
-      </Badge>
-    );
-  };
-
-  const customStatuses = (office?.settings as any)?.customStatuses || [];
-
-  if (filteredJobs.length === 0) {
-    return (
-      <Card>
-        <CardContent className="p-8 text-center">
-          <div className="space-y-4">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-success/10 rounded-full">
-              <span className="text-2xl">✓</span>
-            </div>
-            <h3 className="text-lg font-semibold">No Overdue Jobs!</h3>
-            <p className="text-muted-foreground">
-              Great work! All jobs are on track and within their expected timeframes.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col items-center justify-center py-16 text-center" data-testid="overdue-jobs-empty">
+        <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mb-4">
+          <CheckCircle2 className="h-7 w-7 text-green-600" />
+        </div>
+        <h3 className="text-lg font-semibold mb-1">All caught up!</h3>
+        <p className="text-sm text-muted-foreground max-w-sm">
+          No overdue jobs right now. All jobs are within their expected timeframes.
+        </p>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-6" data-testid="overdue-jobs">
-      {/* Priority Filter */}
-      <div className="flex gap-2">
-        <Button
-          variant={priorityFilter === "critical" ? "destructive" : "outline"}
-          onClick={() => setPriorityFilter(priorityFilter === "critical" ? "all" : "critical")}
-          className="font-medium"
-        >
-          Critical ({filteredJobs.filter(j => j.severity === "critical").length})
-        </Button>
-        <Button
-          variant={priorityFilter === "high" ? "secondary" : "outline"}
-          onClick={() => setPriorityFilter(priorityFilter === "high" ? "all" : "high")}
-        >
-          High ({filteredJobs.filter(j => j.severity === "high").length})
-        </Button>
-        <Button
-          variant={priorityFilter === "medium" ? "secondary" : "outline"}
-          onClick={() => setPriorityFilter(priorityFilter === "medium" ? "all" : "medium")}
-        >
-          Medium ({filteredJobs.filter(j => j.severity === "medium").length})
-        </Button>
-        <Button
-          variant={priorityFilter === "low" ? "secondary" : "outline"}
-          onClick={() => setPriorityFilter(priorityFilter === "low" ? "all" : "low")}
-        >
-          Low ({filteredJobs.filter(j => j.severity === "low").length})
-        </Button>
+    <div className="space-y-5" data-testid="overdue-jobs">
+      {/* Summary Stat Cards */}
+      <div className="grid grid-cols-4 gap-3">
+        {(["critical", "high", "medium", "low"] as Severity[]).map((severity) => {
+          const config = SEVERITY_CONFIG[severity];
+          const count = counts[severity];
+          const isActive = priorityFilter === severity;
+
+          return (
+            <button
+              key={severity}
+              type="button"
+              onClick={() => setPriorityFilter(priorityFilter === severity ? "all" : severity)}
+              className={cn(
+                "rounded-lg border-l-4 p-3 text-left transition-all",
+                "border bg-card hover:shadow-sm",
+                config.border,
+                isActive && `${config.bg} ring-1 ring-inset`,
+                isActive && severity === "critical" && "ring-red-300",
+                isActive && severity === "high" && "ring-orange-300",
+                isActive && severity === "medium" && "ring-blue-300",
+                isActive && severity === "low" && "ring-green-300",
+              )}
+              data-testid={`stat-${severity}`}
+            >
+              <p className={cn("text-2xl font-bold tabular-nums", config.color)}>{count}</p>
+              <p className="text-sm font-medium text-foreground">{config.label}</p>
+              <p className="text-xs text-muted-foreground">{config.range}</p>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Overdue Jobs List */}
-      <div className="space-y-4">
-        {filteredJobs.map((job) => (
-          <Card 
-            key={job.id} 
-            className={`border-2 ${
-              job.severity === 'critical' ? 'border-red-200 bg-red-50/50' :
-              job.severity === 'high' ? 'border-orange-200 bg-orange-50/50' :
-              job.severity === 'medium' ? 'border-blue-200 bg-blue-50/50' :
-              'border-green-200 bg-green-50/50'
-            }`}
-            data-testid={`overdue-job-${job.id}`}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="font-mono text-sm font-medium text-primary">
-                      {job.orderId}
-                    </span>
-                    {getSeverityBadge(job.severity)}
-                  </div>
-                  <h3 className="text-lg font-semibold">
-                    {`${job.patientFirstName} ${job.patientLastName}`.trim()} - {job.jobType}
-                  </h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Current Status: <span className="font-medium">
-                      {customStatuses.find((s: any) => s.id === job.status)?.label || 
-                       job.status?.replace('_', ' ').split(' ').map((word: string) => 
-                         word.charAt(0).toUpperCase() + word.slice(1)
-                       ).join(' ')}
-                    </span> | 
-                    Order Destination: <span className="font-medium">{job.orderDestination}</span>
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-muted-foreground">Created</p>
-                  <p className="font-medium">{format(new Date(job.createdAt), 'MMM d, yyyy')}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {job.daysOverdue} days overdue
-                  </p>
-                </div>
-              </div>
+      {/* Overdue Rules — inline summary */}
+      {notificationRules.length > 0 && (
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-1 cursor-help">
+                <Info className="h-3.5 w-3.5" />
+                Thresholds:
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Jobs are flagged overdue when they stay in a status longer than the configured threshold.</p>
+            </TooltipContent>
+          </Tooltip>
+          {notificationRules.slice(0, 4).map((rule: any) => (
+            <span key={rule.id} className="inline-flex items-center gap-1">
+              <span className="font-medium text-foreground">{getLabelFromSettings(customStatuses, rule.status)}</span>
+              <span>({rule.maxDays}d)</span>
+            </span>
+          ))}
+        </div>
+      )}
 
-              <div className="flex items-center gap-3 mt-4 pt-4 border-t border-border">
-                <Select
-                  value={job.status}
-                  onValueChange={(newStatus) => handleStatusChange(job.id, newStatus)}
-                >
-                  <SelectTrigger className="w-48" data-testid={`select-status-${job.id}`}>
-                    <SelectValue placeholder="Update Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customStatuses.length > 0 ? (
-                      customStatuses.map((status: any) => (
-                        <SelectItem key={status.id} value={status.id}>
-                          {status.label}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <>
-                        <SelectItem value="in_progress">In Progress</SelectItem>
-                        <SelectItem value="quality_check">Quality Check</SelectItem>
-                        <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
-                      </>
-                    )}
-                  </SelectContent>
-                </Select>
-
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => handleAddNote(job.id)}
-                  data-testid={`button-note-${job.id}`}
-                >
-                  <FileText className="mr-2 h-4 w-4" />
-                  Add Note
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Notification Rules Summary */}
+      {/* Jobs Table */}
       <Card>
-        <CardContent className="p-4">
-          <h4 className="font-semibold mb-2 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            Overdue Rules
-          </h4>
-          <p className="text-sm text-muted-foreground mb-3">
-            Overdue thresholds are based on your overdue rules.
-          </p>
-          <div className="grid grid-cols-3 gap-3 text-sm">
-            {notificationRules.slice(0, 3).map((rule: any) => (
-              <div key={rule.id} className="p-2 bg-card rounded border border-border">
-                <p className="font-medium">
-                  {customStatuses.find((s: any) => s.id === rule.status)?.label || rule.status}
-                </p>
-                <p className="text-muted-foreground">Max: {rule.maxDays} days</p>
-              </div>
-            ))}
-          </div>
-        </CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50">
+              <TableHead className="w-10"></TableHead>
+              <TableHead>Patient</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Destination</TableHead>
+              <TableHead className="text-right">Days Overdue</TableHead>
+              <TableHead className="w-10"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filteredJobs.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                  No jobs match the selected filter.
+                </TableCell>
+              </TableRow>
+            ) : (
+              filteredJobs.map((job) => {
+                const config = SEVERITY_CONFIG[job.severity as Severity] || SEVERITY_CONFIG.low;
+                const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim();
+                const destinationLabel = getLabelFromSettings(customOrderDestinations, job.orderDestination);
+                const statusLabel = getLabelFromSettings(customStatuses, job.status);
+
+                return (
+                  <TableRow key={job.id} data-testid={`overdue-job-${job.id}`}>
+                    {/* Severity dot */}
+                    <TableCell>
+                      <span className={cn("inline-block w-2.5 h-2.5 rounded-full", config.dot)} title={config.label} />
+                    </TableCell>
+
+                    {/* Patient */}
+                    <TableCell>
+                      <p className="font-medium text-sm">{patientName}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{job.orderId}</p>
+                    </TableCell>
+
+                    {/* Job Type */}
+                    <TableCell>
+                      <Badge variant="secondary" className="text-xs font-normal">
+                        {job.jobType}
+                      </Badge>
+                    </TableCell>
+
+                    {/* Status dropdown */}
+                    <TableCell>
+                      <Select
+                        value={job.status}
+                        onValueChange={(newStatus) => handleStatusChange(job.id, newStatus)}
+                      >
+                        <SelectTrigger className="h-8 w-40 text-xs" data-testid={`select-status-${job.id}`}>
+                          <SelectValue>{statusLabel}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {customStatuses.length > 0 ? (
+                            customStatuses.map((status: any) => (
+                              <SelectItem key={status.id} value={status.id}>
+                                {status.label}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <>
+                              <SelectItem value="in_progress">In Progress</SelectItem>
+                              <SelectItem value="quality_check">Quality Check</SelectItem>
+                              <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
+                              <SelectItem value="completed">Completed</SelectItem>
+                            </>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+
+                    {/* Destination */}
+                    <TableCell>
+                      <span className="text-sm">{destinationLabel}</span>
+                    </TableCell>
+
+                    {/* Days Overdue */}
+                    <TableCell className="text-right">
+                      <span className={cn("text-sm font-bold tabular-nums", config.color)}>
+                        {job.daysOverdue}d
+                      </span>
+                    </TableCell>
+
+                    {/* Add Note */}
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleAddNote(job.id)}
+                        title="Add note"
+                        data-testid={`button-note-${job.id}`}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
       </Card>
 
       {/* Add Note Dialog */}
