@@ -133,15 +133,11 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
   // Collect anonymous usage metrics (counts only, no PHI)
   try {
     const { storage } = await import("./storage");
-    const stats = await storage.getDashboardStats();
-    const { db } = await import("./db");
-    const { users } = await import("@shared/schema");
-    const { sql } = await import("drizzle-orm");
-    const [userCount] = db.select({ count: sql`count(*)` }).from(users).all();
+    const stats = await storage.getPlatformStats();
     checkinPayload.metrics = {
       activeJobs: stats.activeJobs,
       archivedJobs: stats.archivedJobs,
-      totalUsers: Number(userCount?.count) || 0,
+      totalUsers: stats.totalUsers,
       clientCount: 0, // TODO: track connected WebSocket clients
       platform: process.platform,
     };
