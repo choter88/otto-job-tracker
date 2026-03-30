@@ -57,6 +57,8 @@
       "dist/**",
       "!dist/**/*.map",
       "desktop/**",
+      "!desktop/lib/update-token.js",
+      "desktop/lib/update-token.js",
       "node_modules/**",
       "package.json"
     ],
