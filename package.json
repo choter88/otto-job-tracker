@@ -31,8 +31,7 @@
     "publish": {
       "provider": "github",
       "owner": "choter88",
-      "repo": "otto-job-tracker",
-      "private": true
+      "repo": "otto-job-tracker"
     },
     "protocols": [
       {
