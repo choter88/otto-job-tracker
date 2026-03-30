@@ -407,14 +407,12 @@ async function _checkForUpdates() {
       buttons: ["OK"],
     });
   } else {
-    // Fallback for unexpected states (e.g. "checking", "idle")
+    // Fallback for unexpected states — show diagnostic info
     dialog.showMessageBox({
       type: "info",
       title: "Check for Updates",
       message: `Current version: v${app.getVersion()}`,
-      detail: result.status === "checking"
-        ? "Still checking... try again in a moment."
-        : "No update information available.",
+      detail: `Status: ${result.status}\nVersion: ${result.version || "none"}\nError: ${result.error || "none"}`,
       buttons: ["OK"],
     });
   }

@@ -242,28 +242,40 @@ export async function checkForUpdatesManual() {
     return { status: "dev", message: "Updates are disabled in development mode." };
   }
   try {
+    console.log("[auto-updater] Manual check starting. Current state:", updateState.status);
     const result = await autoUpdater.checkForUpdates();
+    console.log("[auto-updater] checkForUpdates resolved. Result:", JSON.stringify({
+      updateAvailable: result?.updateInfo?.version,
+      currentVersion: app.getVersion(),
+      resultIsNull: result == null,
+    }));
 
     // checkForUpdates() resolves when the check completes, but the
     // event handlers (update-available, update-not-available) fire
     // asynchronously. Wait briefly for them to settle.
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 1000));
 
-    // If the result says there's an update but autoDownload is false,
-    // the "update-available" handler triggers downloadUpdate() manually.
-    // The state might be "downloading" at this point. If there's no
-    // update, the state will be "up-to-date".
-    //
-    // If the state is still "checking" (events haven't fired yet),
+    console.log("[auto-updater] After wait. State:", updateState.status, "Version:", updateState.version);
+
+    // If the state is still "checking" or "idle" (events haven't fired),
     // derive the answer from the result object directly.
-    if (updateState.status === "checking" && result?.updateInfo) {
+    if ((updateState.status === "checking" || updateState.status === "idle") && result?.updateInfo) {
       const current = app.getVersion();
       const available = result.updateInfo.version;
+      console.log("[auto-updater] Deriving from result. Current:", current, "Available:", available);
       if (available && available !== current) {
         setState({ status: "downloading", version: available });
+        // Also trigger the download since the event handler might not have fired
+        autoUpdater.downloadUpdate().catch((err) => handleUpdateError(err));
       } else {
         setState({ status: "up-to-date", version: null, error: null });
       }
+    }
+
+    // Final fallback: if state is still idle/checking and no result, mark as up-to-date
+    if (updateState.status === "checking" || updateState.status === "idle") {
+      console.log("[auto-updater] State still unsettled, defaulting to up-to-date");
+      setState({ status: "up-to-date", version: null, error: null });
     }
 
     return { ...updateState };
