@@ -74,6 +74,8 @@ export default function ImportWizard({ open, onOpenChange }: ImportWizardProps) 
         jobType,
         fieldMappings,
         statusMappings,
+        notesFromColumns: selectedTemplate?.notesFromColumns,
+        destinationFallbackColumn: selectedTemplate?.destinationFallbackColumn,
       });
       return res.json() as Promise<ImportExecuteResult>;
     },
@@ -97,6 +99,8 @@ export default function ImportWizard({ open, onOpenChange }: ImportWizardProps) 
         fieldMappings,
         statusMappings,
         derivedFrom: selectedTemplate?.type === "built-in" ? selectedTemplate.id : undefined,
+        notesFromColumns: selectedTemplate?.notesFromColumns,
+        destinationFallbackColumn: selectedTemplate?.destinationFallbackColumn,
       });
     },
     onSuccess: () => {
@@ -301,6 +305,8 @@ export default function ImportWizard({ open, onOpenChange }: ImportWizardProps) 
               customStatuses={customStatuses}
               customJobTypes={customJobTypes}
               templateName={selectedTemplate?.name}
+              notesFromColumns={selectedTemplate?.notesFromColumns}
+              destinationFallbackColumn={selectedTemplate?.destinationFallbackColumn}
             />
 
             {/* Save as template */}

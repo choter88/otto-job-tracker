@@ -167,6 +167,8 @@ interface ImportConfig {
   jobType: string;
   fieldMappings: Record<string, OttoImportField | null>;
   statusMappings: Record<string, string | null>;
+  notesFromColumns?: string[];
+  destinationFallbackColumn?: string;
 }
 
 export function executeImport(
@@ -201,12 +203,27 @@ export function executeImport(
     }
   }
 
+  // Build column index lookup for notesFromColumns
+  const notesColIndices: { header: string; idx: number }[] = [];
+  if (Array.isArray(config.notesFromColumns)) {
+    for (const col of config.notesFromColumns) {
+      const idx = headers.indexOf(col);
+      if (idx >= 0) notesColIndices.push({ header: col, idx });
+    }
+  }
+
+  // Destination fallback column index
+  const destFallbackIdx = config.destinationFallbackColumn
+    ? headers.indexOf(config.destinationFallbackColumn)
+    : -1;
+
   // Prepare rows for insertion
   type PreparedRow = {
     firstName: string;
     lastName: string;
     status: string;
     destination: string;
+    notes: string;
     createdDate: Date | null;
     updatedDate: Date | null;
   };
@@ -266,14 +283,33 @@ export function executeImport(
       status = mappedStatus;
     }
 
-    // Resolve destination
-    const destination = getVal("destination") || "Other";
+    // Resolve destination (with fallback column support)
+    let destination = getVal("destination");
+    if (!destination && destFallbackIdx >= 0) {
+      destination = (row[destFallbackIdx] || "").trim();
+    }
+    if (!destination) destination = "Other";
+
+    // Resolve notes
+    let notes = "";
+    if (notesColIndices.length > 0) {
+      // Combine multiple columns into notes with labels
+      const parts: string[] = [];
+      for (const { header, idx } of notesColIndices) {
+        const val = (row[idx] || "").trim();
+        if (val) parts.push(`${header}: ${val}`);
+      }
+      notes = parts.join(" | ");
+    } else {
+      // Single column mapped to notes
+      notes = getVal("notes");
+    }
 
     // Resolve dates
     const createdDate = tryParseDate(getVal("createdDate"));
     const updatedDate = tryParseDate(getVal("updatedDate"));
 
-    prepared.push({ firstName, lastName, status, destination, createdDate, updatedDate });
+    prepared.push({ firstName, lastName, status, destination, notes, createdDate, updatedDate });
   }
 
   if (prepared.length === 0) {
@@ -336,6 +372,7 @@ export function executeImport(
           jobType: config.jobType,
           status: row.status,
           orderDestination: row.destination,
+          notes: row.notes || null,
           officeId,
           createdBy: userId,
           statusChangedAt: row.createdDate || now,

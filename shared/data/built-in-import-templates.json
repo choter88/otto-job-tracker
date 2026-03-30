@@ -1,1 +1,68 @@
-[]
+[
+  {
+    "id": "crystalpm-frames",
+    "name": "CrystalPM - Frames",
+    "ehrSystem": "CrystalPM",
+    "type": "built-in",
+    "jobType": "glasses",
+    "fieldMappings": {
+      "Patient": "patientNameCombined",
+      "Date": "createdDate",
+      "Status": "status",
+      "Lab/Vendor": "destination",
+      "Expected": null,
+      "Dispensed": null,
+      "Order Type": null,
+      "Optician": null,
+      "Frame UPC": null,
+      "F Man.": null,
+      "F Series": null,
+      "F Name": null,
+      "F Color": null
+    },
+    "statusMappings": {
+      "Created": "job_created",
+      "Cancelled": "cancelled",
+      "Mailed": "completed",
+      "Dispensed": "completed",
+      "On Hold": null,
+      "Patient Called": null,
+      "Patient Texted": null,
+      "Did Not Pick-Up": null,
+      "Returned": null
+    },
+    "notesFromColumns": ["Frame UPC", "F Man.", "F Series", "F Name", "F Color"]
+  },
+  {
+    "id": "crystalpm-contacts",
+    "name": "CrystalPM - Contacts",
+    "ehrSystem": "CrystalPM",
+    "type": "built-in",
+    "jobType": "contacts",
+    "fieldMappings": {
+      "Patient": "patientNameCombined",
+      "Create Date": "createdDate",
+      "Lab": "destination",
+      "Prescription": "notes",
+      "Manufacturer": null,
+      "Order Date": null,
+      "Due Date": null,
+      "Quantity": null,
+      "Technician": null,
+      "Reorder Date": null,
+      "Dispensed Date": null
+    },
+    "statusMappings": {
+      "Ordered": "ordered",
+      "Mailed": "completed",
+      "Dispensed": "completed",
+      "Cancelled": "cancelled",
+      "Pending": null,
+      "Texted": null,
+      "Called": null,
+      "Never Pick-Up": null
+    },
+    "notesFromColumns": ["Prescription", "Quantity"],
+    "destinationFallbackColumn": "Manufacturer"
+  }
+]

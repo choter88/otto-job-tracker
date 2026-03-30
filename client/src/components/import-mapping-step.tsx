@@ -18,6 +18,8 @@ interface ImportMappingStepProps {
   customStatuses: { id: string; label: string }[];
   customJobTypes: { id: string; label: string }[];
   templateName?: string;
+  notesFromColumns?: string[];
+  destinationFallbackColumn?: string;
 }
 
 const DEFAULT_STATUSES = [
@@ -48,6 +50,8 @@ export default function ImportMappingStep({
   customStatuses,
   customJobTypes,
   templateName,
+  notesFromColumns,
+  destinationFallbackColumn,
 }: ImportMappingStepProps) {
   const statuses = customStatuses.length > 0 ? customStatuses : DEFAULT_STATUSES;
   const jobTypes = customJobTypes.length > 0 ? customJobTypes : DEFAULT_JOB_TYPES;
@@ -184,6 +188,32 @@ export default function ImportMappingStep({
           </Table>
         </div>
       </div>
+
+      {/* Notes combination info */}
+      {notesFromColumns && notesFromColumns.length > 0 && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
+          <span className="font-medium text-blue-700">Notes:</span>{" "}
+          <span className="text-blue-600">
+            The following columns will be combined into the Notes field:{" "}
+            {notesFromColumns.map((col, i) => (
+              <span key={col}>
+                <span className="font-medium">{col}</span>
+                {i < notesFromColumns.length - 1 ? ", " : ""}
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
+
+      {/* Destination fallback info */}
+      {destinationFallbackColumn && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
+          <span className="font-medium text-blue-700">Destination fallback:</span>{" "}
+          <span className="text-blue-600">
+            If the destination column is empty, <span className="font-medium">{destinationFallbackColumn}</span> will be used instead.
+          </span>
+        </div>
+      )}
 
       {/* Status sub-mapping (only when a column is mapped to status) */}
       {statusColumn && csvData.uniqueStatusValues.length > 0 && (

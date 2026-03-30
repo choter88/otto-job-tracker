@@ -2627,8 +2627,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const user = getOfficeUser(req);
+      const { notesFromColumns, destinationFallbackColumn } = req.body || {};
       const result = executeImport(
-        { filePath, jobType, fieldMappings: fieldMappings || {}, statusMappings: statusMappings || {} },
+        {
+          filePath,
+          jobType,
+          fieldMappings: fieldMappings || {},
+          statusMappings: statusMappings || {},
+          notesFromColumns: Array.isArray(notesFromColumns) ? notesFromColumns : undefined,
+          destinationFallbackColumn: typeof destinationFallbackColumn === "string" ? destinationFallbackColumn : undefined,
+        },
         user.officeId,
         user.id,
       );
