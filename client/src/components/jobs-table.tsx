@@ -727,43 +727,37 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     <>
       <Card data-testid="card-jobs-table">
         {/* Table Header with Actions */}
-        <div className="flex items-center justify-between p-6 pb-4 border-b border-border">
-          <h2 className="text-lg font-semibold">Worklist</h2>
-          
-          <div className="flex items-center gap-3">
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder={useTrayNumber ? "Search trays" : "Search patients"}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 w-64"
-                data-testid="input-search"
-              />
-            </div>
-            
-            {/* Import from EHR */}
-            <Button variant="outline" onClick={() => setImportWizardOpen(true)} data-testid="button-import-ehr">
-              <Upload className="mr-2 h-4 w-4" />
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder={useTrayNumber ? "Search trays" : "Search patients"}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 h-8 w-56 text-sm"
+              data-testid="input-search"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setImportWizardOpen(true)} data-testid="button-import-ehr">
+              <Upload className="mr-1.5 h-3.5 w-3.5" />
               Import from EHR
             </Button>
-
-            {/* New Job Button */}
-            <Button onClick={() => {
+            <Button size="sm" className="h-8 text-xs" onClick={() => {
               setEditingJob(undefined);
               setJobDialogOpen(true);
             }} data-testid="button-new-job">
-              <Plus className="mr-2 h-4 w-4" />
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
               New Job
             </Button>
           </div>
         </div>
 
         {/* Filters Row */}
-        <div className="flex flex-wrap gap-3 p-6 pb-4">
+        <div className="flex flex-wrap items-center gap-2 px-5 py-2.5">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-auto min-w-[150px]" data-testid="select-status-filter">
+            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
               <SelectValue placeholder="All Statuses" />
             </SelectTrigger>
             <SelectContent>
@@ -786,7 +780,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </Select>
 
           <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="w-auto min-w-[150px]" data-testid="select-type-filter">
+            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-type-filter">
               <SelectValue placeholder="All Types" />
             </SelectTrigger>
             <SelectContent>
@@ -808,7 +802,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </Select>
 
           <Select value={destinationFilter} onValueChange={setDestinationFilter}>
-            <SelectTrigger className="w-auto min-w-[150px]" data-testid="select-destination-filter">
+            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-destination-filter">
               <SelectValue placeholder="All Destinations" />
             </SelectTrigger>
             <SelectContent>
@@ -835,7 +829,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               onCheckedChange={(checked) => setOverdueOnly(!!checked)}
               data-testid="checkbox-overdue-only"
             />
-            <span className="text-sm">Overdue Only</span>
+            <span className="text-xs">Overdue Only</span>
           </label>
 
           {customColumns
@@ -1226,9 +1220,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </Table>
         </div>
 
-        {/* Pagination */}
-        <div className="flex items-center justify-between p-6 pt-4 border-t border-border">
-          <p className="text-sm text-muted-foreground">
+        {/* Footer */}
+        <div className="flex items-center justify-between px-5 py-2 border-t border-border">
+          <p className="text-xs text-muted-foreground">
             Showing {filteredJobs.length} of {jobs.length} jobs
           </p>
         </div>
