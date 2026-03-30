@@ -232,15 +232,40 @@ function checkForUpdatesSilently() {
 /**
  * Manually trigger an update check and return the result.
  * Used by the Help → "Check for Updates…" menu item.
+ *
+ * We wait for the state to settle (event handlers fire asynchronously
+ * after checkForUpdates() resolves) before returning, so the caller
+ * gets an accurate status for the dialog.
  */
 export async function checkForUpdatesManual() {
   if (!app.isPackaged) {
     return { status: "dev", message: "Updates are disabled in development mode." };
   }
   try {
-    await autoUpdater.checkForUpdates();
-    // After the check, updateState is already updated by event handlers.
-    // Return current state for the dialog.
+    const result = await autoUpdater.checkForUpdates();
+
+    // checkForUpdates() resolves when the check completes, but the
+    // event handlers (update-available, update-not-available) fire
+    // asynchronously. Wait briefly for them to settle.
+    await new Promise((r) => setTimeout(r, 500));
+
+    // If the result says there's an update but autoDownload is false,
+    // the "update-available" handler triggers downloadUpdate() manually.
+    // The state might be "downloading" at this point. If there's no
+    // update, the state will be "up-to-date".
+    //
+    // If the state is still "checking" (events haven't fired yet),
+    // derive the answer from the result object directly.
+    if (updateState.status === "checking" && result?.updateInfo) {
+      const current = app.getVersion();
+      const available = result.updateInfo.version;
+      if (available && available !== current) {
+        setState({ status: "downloading", version: available });
+      } else {
+        setState({ status: "up-to-date", version: null, error: null });
+      }
+    }
+
     return { ...updateState };
   } catch (err) {
     return { status: "error", error: err?.message || "Check failed" };

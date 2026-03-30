@@ -406,6 +406,17 @@ async function _checkForUpdates() {
       detail: result.error || "Please check your internet connection and try again.",
       buttons: ["OK"],
     });
+  } else {
+    // Fallback for unexpected states (e.g. "checking", "idle")
+    dialog.showMessageBox({
+      type: "info",
+      title: "Check for Updates",
+      message: `Current version: v${app.getVersion()}`,
+      detail: result.status === "checking"
+        ? "Still checking... try again in a moment."
+        : "No update information available.",
+      buttons: ["OK"],
+    });
   }
 }
 
