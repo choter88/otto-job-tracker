@@ -39,6 +39,17 @@ if [[ "$CHOICE" != "4" ]]; then
 else
   echo ""
   echo "Keeping v${CURRENT}"
+
+  TAG="v${CURRENT}"
+  # Clean up existing tag so we can re-tag at the current commit
+  if git rev-parse "${TAG}" >/dev/null 2>&1; then
+    echo "  Deleting existing local tag ${TAG}..."
+    git tag -d "${TAG}" > /dev/null
+  fi
+  if git ls-remote --tags origin "${TAG}" 2>/dev/null | grep -q "${TAG}"; then
+    echo "  Deleting existing remote tag ${TAG}..."
+    git push origin ":refs/tags/${TAG}" > /dev/null 2>&1 || true
+  fi
 fi
 
 TAG="v${NEW_VERSION}"
