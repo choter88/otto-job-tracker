@@ -68,10 +68,13 @@ case "$RELEASE_CHOICE" in
     echo "Creating tag ${TAG} and pushing..."
     git tag "${TAG}"
     git push origin main --tags
-    echo "  ✓ Tag ${TAG} pushed — GitHub Actions will build and publish the release."
+    echo "  ✓ Tag ${TAG} pushed — GitHub Actions will build a DRAFT release."
     echo ""
     echo "Monitor the workflow at:"
     echo "  https://github.com/choter88/otto-job-tracker/actions"
+    echo ""
+    echo "Once the build finishes and you've tested, publish it with:"
+    echo "  gh release edit ${TAG} --draft=false --latest"
     ;;
   [Bb])
     echo ""

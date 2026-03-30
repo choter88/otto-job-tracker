@@ -90,11 +90,13 @@ jobs:
 
           echo "Found ${#FILES[@]} file(s): ${FILES[*]}"
 
-          # Create the release if it doesn't exist yet, then upload
+          # Create the release as a DRAFT so it's invisible to the auto-updater
+          # and portal until manually promoted via:
+          #   gh release edit "$TAG" --draft=false --latest
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${FILES[@]}" --clobber
           else
-            gh release create "$TAG" "${FILES[@]}" --title "$TAG" --generate-notes
+            gh release create "$TAG" "${FILES[@]}" --title "$TAG" --generate-notes --draft
           fi
 
   # ─── Windows x64 ────────────────────────────────────────────
@@ -267,5 +269,5 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @files --clobber
           } else {
-            gh release create $tag @files --title $tag --generate-notes
+            gh release create $tag @files --title $tag --generate-notes --draft
           }

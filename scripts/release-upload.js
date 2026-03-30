@@ -50,8 +50,11 @@ try {
   console.log(`Uploading ${found.length} file(s) to existing release ${TAG}...`);
   execSync(`gh release upload ${TAG} ${files} --clobber`, { stdio: "inherit" });
 } catch {
-  console.log(`Creating GitHub Release ${TAG} with ${found.length} file(s)...`);
-  execSync(`gh release create ${TAG} ${files} --generate-notes`, { stdio: "inherit" });
+  console.log(`Creating DRAFT release ${TAG} with ${found.length} file(s)...`);
+  execSync(`gh release create ${TAG} ${files} --generate-notes --draft`, { stdio: "inherit" });
 }
 
 console.log("  ✓ Done");
+console.log("");
+console.log("  Release is a DRAFT — invisible to users until promoted.");
+console.log(`  To publish:  gh release edit ${TAG} --draft=false --latest`);
