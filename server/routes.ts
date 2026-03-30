@@ -1039,6 +1039,86 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  // ── Bulk operations ──────────────────────────────────────────────────
+  app.post("/api/jobs/bulk-update", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const { jobIds, updates } = req.body || {};
+      if (!Array.isArray(jobIds) || jobIds.length === 0) {
+        return res.status(400).json({ error: "jobIds array is required" });
+      }
+      if (!updates || typeof updates !== "object") {
+        return res.status(400).json({ error: "updates object is required" });
+      }
+      if (jobIds.length > 500) {
+        return res.status(400).json({ error: "Maximum 500 jobs per batch" });
+      }
+
+      const officeId = getOfficeUser(req).officeId;
+      let updated = 0;
+      let archived = 0;
+
+      for (const jobId of jobIds) {
+        if (typeof jobId !== "string") continue;
+        const job = await storage.getJob(jobId);
+        if (!job || job.officeId !== officeId) continue;
+
+        await storage.updateJob(jobId, updates);
+        updated++;
+
+        // Auto-archive if status changed to completed/cancelled
+        if (updates.status === "completed" || updates.status === "cancelled") {
+          const updatedJob = await storage.getJob(jobId);
+          if (updatedJob) {
+            await storage.archiveJob(updatedJob);
+            await storage.deleteJob(jobId);
+            archived++;
+          }
+        }
+      }
+
+      await logPhiAccess(req, "update", "patient_list", "bulk-update", undefined, {
+        jobCount: updated,
+        archived,
+        status: updates.status,
+      });
+
+      broadcastToOffice(officeId, { type: "office_updated", ts: Date.now(), source: "bulk_update" });
+      res.json({ updated, archived });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/jobs/bulk-delete", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const { jobIds } = req.body || {};
+      if (!Array.isArray(jobIds) || jobIds.length === 0) {
+        return res.status(400).json({ error: "jobIds array is required" });
+      }
+      if (jobIds.length > 500) {
+        return res.status(400).json({ error: "Maximum 500 jobs per batch" });
+      }
+
+      const officeId = getOfficeUser(req).officeId;
+      let deleted = 0;
+
+      for (const jobId of jobIds) {
+        if (typeof jobId !== "string") continue;
+        const job = await storage.getJob(jobId);
+        if (!job || job.officeId !== officeId) continue;
+
+        await logPhiAccess(req, "delete", "job", job.id, job.orderId);
+        await storage.deleteJob(jobId);
+        deleted++;
+      }
+
+      broadcastToOffice(officeId, { type: "office_updated", ts: Date.now(), source: "bulk_delete" });
+      res.json({ deleted });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.post("/api/jobs/:id/archive", requireOffice, requireNotViewOnly, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.id);

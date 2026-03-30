@@ -355,51 +355,82 @@ export function executeImport(
     const maxArchivedNum = extractOrderNum(maxArchivedResult[0]?.orderId || null);
     let nextOrderNum = Math.max(maxActiveNum, maxArchivedNum) + 1;
 
-    let count = 0;
+    let activeCount = 0;
+    let archivedCount = 0;
+    const isTerminalStatus = (s: string) => s === "completed" || s === "cancelled";
+
     for (const row of prepared) {
       const orderId = `ORD-${today}-${String(nextOrderNum).padStart(4, "0")}`;
       nextOrderNum++;
 
       const jobId = randomUUID();
       const now = new Date();
+      const createdAt = row.createdDate || now;
+      const updatedAt = row.updatedDate || row.createdDate || now;
 
-      tx.insert(jobs)
-        .values({
-          id: jobId,
-          orderId,
-          patientFirstName: row.firstName,
-          patientLastName: row.lastName,
-          jobType: config.jobType,
-          status: row.status,
-          orderDestination: row.destination,
-          notes: row.notes || null,
-          officeId,
-          createdBy: userId,
-          statusChangedAt: row.createdDate || now,
-          createdAt: row.createdDate || now,
-          updatedAt: row.updatedDate || row.createdDate || now,
-        })
-        .run();
+      if (isTerminalStatus(row.status)) {
+        // Completed/cancelled jobs go straight to archive (Past Jobs)
+        tx.insert(archivedJobs)
+          .values({
+            id: randomUUID(),
+            orderId,
+            patientFirstName: row.firstName,
+            patientLastName: row.lastName,
+            jobType: config.jobType,
+            finalStatus: row.status,
+            previousStatus: null,
+            orderDestination: row.destination,
+            notes: row.notes || null,
+            officeId,
+            createdBy: userId,
+            originalCreatedAt: createdAt,
+            customColumnValues: {},
+            isRedoJob: false,
+            originalJobId: null,
+          })
+          .run();
+        archivedCount++;
+      } else {
+        // Active jobs go to the worklist
+        tx.insert(jobs)
+          .values({
+            id: jobId,
+            orderId,
+            patientFirstName: row.firstName,
+            patientLastName: row.lastName,
+            jobType: config.jobType,
+            status: row.status,
+            orderDestination: row.destination,
+            notes: row.notes || null,
+            officeId,
+            createdBy: userId,
+            statusChangedAt: createdAt,
+            createdAt,
+            updatedAt,
+          })
+          .run();
 
-      tx.insert(jobStatusHistory)
-        .values({
-          id: randomUUID(),
-          jobId,
-          oldStatus: null,
-          newStatus: row.status,
-          changedBy: userId,
-        })
-        .run();
-
-      count++;
+        tx.insert(jobStatusHistory)
+          .values({
+            id: randomUUID(),
+            jobId,
+            oldStatus: null,
+            newStatus: row.status,
+            changedBy: userId,
+          })
+          .run();
+        activeCount++;
+      }
     }
 
-    return count;
+    return { activeCount, archivedCount };
   });
 
+  const totalProcessed = imported.activeCount + imported.archivedCount;
   return {
-    imported,
-    skipped: dataRows.length - imported,
+    imported: imported.activeCount,
+    archived: imported.archivedCount,
+    skipped: dataRows.length - totalProcessed,
     skipReasons: Object.entries(skipReasonCounts).map(([reason, count]) => ({ reason, count })),
   };
 }

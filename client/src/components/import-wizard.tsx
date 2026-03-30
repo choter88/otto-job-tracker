@@ -383,9 +383,17 @@ export default function ImportWizard({ open, onOpenChange }: ImportWizardProps) 
             <div className="rounded-lg border p-6 space-y-4">
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="h-6 w-6 text-green-600" />
-                <p className="text-lg font-medium">
-                  Successfully imported {importResult.imported} job{importResult.imported !== 1 ? "s" : ""}
-                </p>
+                <div>
+                  <p className="text-lg font-medium">
+                    Import complete
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {importResult.imported} active job{importResult.imported !== 1 ? "s" : ""} added to Worklist
+                    {(importResult as any).archived > 0 && (
+                      <> · {(importResult as any).archived} completed/cancelled job{(importResult as any).archived !== 1 ? "s" : ""} archived to Past Jobs</>
+                    )}
+                  </p>
+                </div>
               </div>
 
               {importResult.skipped > 0 && (

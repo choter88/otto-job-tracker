@@ -189,6 +189,44 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     },
   });
 
+  const bulkUpdateMutation = useMutation({
+    mutationFn: async ({ jobIds, updates }: { jobIds: string[]; updates: Partial<Job> }) => {
+      const res = await apiRequest("POST", "/api/jobs/bulk-update", { jobIds, updates });
+      return res.json();
+    },
+    onSuccess: (result) => {
+      setSelectedJobs([]);
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/archived"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/overdue"] });
+      toast({
+        title: "Bulk Update",
+        description: `Updated ${result.updated} job${result.updated !== 1 ? "s" : ""}${result.archived > 0 ? ` (${result.archived} archived)` : ""}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (jobIds: string[]) => {
+      const res = await apiRequest("POST", "/api/jobs/bulk-delete", { jobIds });
+      return res.json();
+    },
+    onSuccess: (result) => {
+      setSelectedJobs([]);
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      toast({
+        title: "Bulk Delete",
+        description: `Deleted ${result.deleted} job${result.deleted !== 1 ? "s" : ""}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
   const flagJobMutation = useMutation({
     mutationFn: async (jobId: string) => {
       const res = await apiRequest("POST", `/api/jobs/${jobId}/flag`, {});
@@ -827,8 +865,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
             <TableHeader className="bg-muted/50">
               <TableRow>
-                {/* Bulk selection hidden until bulk operations are implemented */}
-                <TableHead className="w-10 hidden">
+                <TableHead className="w-10">
                   <Checkbox
                     className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
                     checked={filteredJobs.length > 0 && selectedJobs.length === filteredJobs.length}
@@ -950,8 +987,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   onClick={() => handleOpenJobDetails(job, "overview")}
                   data-testid={`row-job-${job.id}`}
                 >
-                  {/* Bulk selection hidden until bulk operations are implemented */}
-                  <TableCell className="hidden" onClick={(e) => e.stopPropagation()}>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
                       checked={selectedJobs.includes(job.id)}
@@ -1197,20 +1233,57 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </p>
         </div>
 
-        {/* Bulk Actions - hidden until bulk operations are implemented */}
-        {false && selectedJobs.length > 0 && (
-          <div className="p-4 bg-muted border-t border-border">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium">
-                {selectedJobs.length} job{selectedJobs.length === 1 ? "" : "s"} selected
-              </p>
-              <button
-                type="button"
-                className="text-xs text-muted-foreground underline hover:text-foreground"
+        {/* Bulk Actions Bar */}
+        {selectedJobs.length > 0 && (
+          <div className="px-4 py-3 bg-primary/5 border-t border-primary/20 flex items-center gap-3">
+            <p className="text-sm font-medium">
+              {selectedJobs.length} job{selectedJobs.length !== 1 ? "s" : ""} selected
+            </p>
+            <div className="flex items-center gap-2 ml-auto">
+              <Select
+                value=""
+                onValueChange={(newStatus) => {
+                  if (!newStatus) return;
+                  bulkUpdateMutation.mutate({ jobIds: selectedJobs, updates: { status: newStatus } });
+                }}
+              >
+                <SelectTrigger className="h-8 w-40 text-xs">
+                  <SelectValue placeholder="Update Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(customStatuses.length > 0 ? customStatuses : [
+                    { id: "job_created", label: "Job Created" },
+                    { id: "ordered", label: "Ordered" },
+                    { id: "in_progress", label: "In Progress" },
+                    { id: "quality_check", label: "Quality Check" },
+                    { id: "ready_for_pickup", label: "Ready for Pickup" },
+                    { id: "completed", label: "Completed" },
+                    { id: "cancelled", label: "Cancelled" },
+                  ]).map((s: any) => (
+                    <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => {
+                  if (confirm(`Delete ${selectedJobs.length} job${selectedJobs.length !== 1 ? "s" : ""}? This cannot be undone.`)) {
+                    bulkDeleteMutation.mutate(selectedJobs);
+                  }
+                }}
+              >
+                Delete Selected
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
                 onClick={() => setSelectedJobs([])}
               >
-                Clear selection
-              </button>
+                Clear
+              </Button>
             </div>
           </div>
         )}

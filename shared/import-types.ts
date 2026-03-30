@@ -55,6 +55,7 @@ export interface CsvParseResult {
 /** Result from executing a CSV import */
 export interface ImportExecuteResult {
   imported: number;
+  archived: number;
   skipped: number;
   skipReasons: { reason: string; count: number }[];
 }

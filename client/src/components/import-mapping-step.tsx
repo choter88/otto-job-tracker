@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Info } from "lucide-react";
 import { OTTO_IMPORT_FIELDS, OTTO_IMPORT_FIELD_LABELS } from "@shared/import-types";
 import type { OttoImportField, CsvParseResult } from "@shared/import-types";
 
@@ -56,7 +57,6 @@ export default function ImportMappingStep({
   const statuses = customStatuses.length > 0 ? customStatuses : DEFAULT_STATUSES;
   const jobTypes = customJobTypes.length > 0 ? customJobTypes : DEFAULT_JOB_TYPES;
 
-  // Find which column is mapped to "status" to show status sub-mapping
   const statusColumn = useMemo(() => {
     for (const [col, field] of Object.entries(fieldMappings)) {
       if (field === "status") return col;
@@ -64,7 +64,6 @@ export default function ImportMappingStep({
     return null;
   }, [fieldMappings]);
 
-  // Already-used Otto fields (to prevent double-mapping)
   const usedFields = useMemo(() => {
     const used = new Set<string>();
     for (const field of Object.values(fieldMappings)) {
@@ -73,7 +72,6 @@ export default function ImportMappingStep({
     return used;
   }, [fieldMappings]);
 
-  // Sample values for each column (from preview data)
   const sampleValues = useMemo(() => {
     const result: Record<string, string[]> = {};
     for (let colIdx = 0; colIdx < csvData.headers.length; colIdx++) {
@@ -86,6 +84,14 @@ export default function ImportMappingStep({
     }
     return result;
   }, [csvData]);
+
+  // Estimate how many rows will be skipped based on status mappings
+  const skippedStatusCount = useMemo(() => {
+    if (!statusColumn) return 0;
+    return csvData.uniqueStatusValues.filter(
+      (v) => statusMappings[v] === null || statusMappings[v] === undefined,
+    ).length;
+  }, [statusColumn, statusMappings, csvData.uniqueStatusValues]);
 
   const handleFieldChange = (csvColumn: string, value: string) => {
     const next = { ...fieldMappings };
@@ -108,44 +114,50 @@ export default function ImportMappingStep({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Template badge */}
       {templateName && (
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Based on:</span>
-          <Badge variant="secondary">{templateName}</Badge>
+          <span className="text-xs text-muted-foreground">Template:</span>
+          <Badge variant="secondary" className="text-xs">{templateName}</Badge>
         </div>
       )}
 
-      {/* Job type selector */}
+      {/* ── Step 1: Job Type ── */}
       <div>
-        <label className="text-sm font-medium mb-2 block">
-          Job Type <span className="text-muted-foreground">(applies to all imported rows)</span>
-        </label>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[11px] font-bold">1</span>
+          <h3 className="text-sm font-semibold">What type of jobs are these?</h3>
+        </div>
         <Select value={jobType} onValueChange={onJobTypeChange}>
-          <SelectTrigger className="w-64">
+          <SelectTrigger className="w-56">
             <SelectValue placeholder="Select job type" />
           </SelectTrigger>
           <SelectContent>
             {jobTypes.map((t) => (
-              <SelectItem key={t.id} value={t.id}>
-                {t.label}
-              </SelectItem>
+              <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
 
-      {/* Column mapping */}
+      {/* ── Step 2: Column Mapping ── */}
       <div>
-        <h3 className="text-sm font-medium mb-3">Map CSV Columns to Otto Fields</h3>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[11px] font-bold">2</span>
+          <h3 className="text-sm font-semibold">Match CSV columns to Otto fields</h3>
+        </div>
+        <p className="text-xs text-muted-foreground mb-3 ml-7">
+          Columns set to &ldquo;Skip&rdquo; will not be imported.
+        </p>
+
         <div className="border rounded-lg overflow-hidden">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead className="w-[200px]">CSV Column</TableHead>
-                <TableHead className="w-[200px]">Sample Values</TableHead>
-                <TableHead className="w-[250px]">Maps To</TableHead>
+              <TableRow className="bg-muted/50">
+                <TableHead className="text-xs">CSV Column</TableHead>
+                <TableHead className="text-xs">Sample Data</TableHead>
+                <TableHead className="text-xs w-[180px]">Maps To</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -153,22 +165,22 @@ export default function ImportMappingStep({
                 const currentMapping = fieldMappings[header];
                 return (
                   <TableRow key={header}>
-                    <TableCell className="font-medium">{header}</TableCell>
-                    <TableCell>
-                      <span className="text-sm text-muted-foreground">
+                    <TableCell className="font-medium text-xs py-1.5">{header}</TableCell>
+                    <TableCell className="py-1.5">
+                      <span className="text-xs text-muted-foreground truncate block max-w-[200px]">
                         {(sampleValues[header] || []).join(", ") || "—"}
                       </span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="py-1.5">
                       <Select
                         value={currentMapping === null ? SKIP_VALUE : currentMapping || SKIP_VALUE}
                         onValueChange={(v) => handleFieldChange(header, v)}
                       >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Skip (don't import)" />
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Skip" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value={SKIP_VALUE}>Skip (don&apos;t import)</SelectItem>
+                          <SelectItem value={SKIP_VALUE}>Skip</SelectItem>
                           {OTTO_IMPORT_FIELDS.map((field) => (
                             <SelectItem
                               key={field}
@@ -189,47 +201,41 @@ export default function ImportMappingStep({
         </div>
       </div>
 
-      {/* Notes combination info */}
+      {/* Info banners */}
       {notesFromColumns && notesFromColumns.length > 0 && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
-          <span className="font-medium text-blue-700">Notes:</span>{" "}
-          <span className="text-blue-600">
-            The following columns will be combined into the Notes field:{" "}
-            {notesFromColumns.map((col, i) => (
-              <span key={col}>
-                <span className="font-medium">{col}</span>
-                {i < notesFromColumns.length - 1 ? ", " : ""}
-              </span>
-            ))}
+        <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
+          <Info className="h-3.5 w-3.5 text-blue-600 mt-0.5 shrink-0" />
+          <span className="text-blue-700">
+            <span className="font-medium">Notes:</span> {notesFromColumns.join(", ")} will be combined into the Notes field.
           </span>
         </div>
       )}
-
-      {/* Destination fallback info */}
       {destinationFallbackColumn && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
-          <span className="font-medium text-blue-700">Destination fallback:</span>{" "}
-          <span className="text-blue-600">
-            If the destination column is empty, <span className="font-medium">{destinationFallbackColumn}</span> will be used instead.
+        <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
+          <Info className="h-3.5 w-3.5 text-blue-600 mt-0.5 shrink-0" />
+          <span className="text-blue-700">
+            <span className="font-medium">Destination fallback:</span> If empty, <span className="font-medium">{destinationFallbackColumn}</span> will be used.
           </span>
         </div>
       )}
 
-      {/* Status sub-mapping (only when a column is mapped to status) */}
+      {/* ── Step 3: Status Mapping ── */}
       {statusColumn && csvData.uniqueStatusValues.length > 0 && (
         <div>
-          <h3 className="text-sm font-medium mb-3">
-            Map Status Values
-            <span className="font-normal text-muted-foreground ml-2">
-              (from column &ldquo;{statusColumn}&rdquo;)
-            </span>
-          </h3>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-[11px] font-bold">3</span>
+            <h3 className="text-sm font-semibold">Map status values</h3>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3 ml-7">
+            Rows with &ldquo;Skip&rdquo; status will not be imported.
+          </p>
+
           <div className="border rounded-lg overflow-hidden">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[250px]">CSV Status Value</TableHead>
-                  <TableHead className="w-[250px]">Maps To</TableHead>
+                <TableRow className="bg-muted/50">
+                  <TableHead className="text-xs">CSV Status</TableHead>
+                  <TableHead className="text-xs w-[180px]">Maps To</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -237,21 +243,19 @@ export default function ImportMappingStep({
                   const currentMapping = statusMappings[csvValue];
                   return (
                     <TableRow key={csvValue}>
-                      <TableCell className="font-medium">{csvValue}</TableCell>
-                      <TableCell>
+                      <TableCell className="font-medium text-xs py-1.5">{csvValue}</TableCell>
+                      <TableCell className="py-1.5">
                         <Select
                           value={currentMapping === null ? SKIP_VALUE : currentMapping || SKIP_VALUE}
                           onValueChange={(v) => handleStatusMappingChange(csvValue, v)}
                         >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Skip rows with this status" />
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Skip" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value={SKIP_VALUE}>Skip rows with this status</SelectItem>
+                            <SelectItem value={SKIP_VALUE}>Skip rows</SelectItem>
                             {statuses.map((s) => (
-                              <SelectItem key={s.id} value={s.id}>
-                                {s.label}
-                              </SelectItem>
+                              <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -265,38 +269,19 @@ export default function ImportMappingStep({
         </div>
       )}
 
-      {/* CSV preview */}
-      <div>
-        <h3 className="text-sm font-medium mb-3">
-          CSV Preview
-          <span className="font-normal text-muted-foreground ml-2">
-            (first {csvData.preview.length} of {csvData.totalRows} rows)
-          </span>
-        </h3>
-        <div className="border rounded-lg overflow-auto max-h-48">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {csvData.headers.map((h) => (
-                  <TableHead key={h} className="whitespace-nowrap text-xs">
-                    {h}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {csvData.preview.map((row, i) => (
-                <TableRow key={i}>
-                  {csvData.headers.map((_, colIdx) => (
-                    <TableCell key={colIdx} className="text-xs whitespace-nowrap">
-                      {row[colIdx] || ""}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+      {/* Summary bar */}
+      <div className="rounded-lg bg-muted/50 border px-4 py-3 flex items-center justify-between">
+        <span className="text-sm">
+          <span className="font-medium">{csvData.totalRows}</span> rows in file
+          {skippedStatusCount > 0 && (
+            <span className="text-muted-foreground">
+              {" "}· {skippedStatusCount} status value{skippedStatusCount !== 1 ? "s" : ""} will be skipped
+            </span>
+          )}
+        </span>
+        <Badge variant="secondary" className="text-xs">
+          {jobTypes.find((t) => t.id === jobType)?.label || jobType}
+        </Badge>
       </div>
     </div>
   );
