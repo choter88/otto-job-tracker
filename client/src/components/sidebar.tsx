@@ -120,7 +120,7 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
   return (
     <aside
       className={cn(
-        "bg-card border-r border-border flex flex-col pb-10 transition-[width] duration-200 overflow-hidden",
+        "bg-card border-r border-border flex flex-col pb-3 transition-[width] duration-200 overflow-hidden",
         collapsed ? ICON_COL : EXPANDED_W,
       )}
       data-testid="sidebar"

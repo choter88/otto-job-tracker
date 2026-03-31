@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, SlidersHorizontal, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
@@ -60,6 +60,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [destinationFilter, setDestinationFilter] = useState("all");
@@ -754,8 +755,40 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </div>
         </div>
 
-        {/* Filters Row */}
-        <div className="flex flex-wrap items-center gap-2 px-5 py-2.5">
+        {/* Filter toggle + collapsible filters */}
+        <div className="flex items-center gap-2 px-5 py-2">
+          <Button
+            variant={filtersOpen ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 text-xs gap-1.5"
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Filters
+            {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
+              <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
+                {[statusFilter !== "all", typeFilter !== "all", destinationFilter !== "all", overdueOnly].filter(Boolean).length}
+              </span>
+            )}
+          </Button>
+          {filtersOpen && (statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              onClick={() => {
+                setStatusFilter("all");
+                setTypeFilter("all");
+                setDestinationFilter("all");
+                setOverdueOnly(false);
+                setCustomColumnFilters({});
+              }}
+            >
+              <X className="h-3 w-3" />
+              Clear all
+            </button>
+          )}
+        </div>
+        {filtersOpen && <div className="flex flex-wrap items-center gap-2 px-5 pb-2.5">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
               <SelectValue placeholder="All Statuses" />
@@ -849,10 +882,10 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   }}
                   data-testid={`checkbox-filter-custom-${column.id}`}
                 />
-                <span className="text-sm">{column.name} (unchecked only)</span>
+                <span className="text-xs">{column.name} (unchecked only)</span>
               </label>
             ))}
-        </div>
+        </div>}
 
         {/* Jobs Table */}
         <div ref={tableViewportRef} className="overflow-x-auto">

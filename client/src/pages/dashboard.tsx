@@ -135,7 +135,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-screen bg-background pb-[33px]">
       <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onFeedbackClick={() => setFeedbackOpen(true)} />
       
       <main className="flex-1 flex flex-col overflow-hidden">
