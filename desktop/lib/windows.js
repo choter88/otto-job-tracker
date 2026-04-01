@@ -127,20 +127,35 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
     }
   });
 
+  // Auto-reconnect: silently retry on the first 2 failures before showing
+  // an error dialog. This makes brief Host restarts invisible to Clients.
+  let loadFailCount = 0;
   let showingLoadError = false;
+  const SILENT_RETRY_DELAYS = [3000, 5000]; // ms to wait before silent retries
+
   win.webContents.on(
     "did-fail-load",
     async (_event, _errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame) return;
       if (showingLoadError) return;
-      showingLoadError = true;
 
+      loadFailCount++;
+
+      // Silent retries for first 2 failures — no dialog, just wait and retry
+      if (loadFailCount <= SILENT_RETRY_DELAYS.length && !win.isDestroyed()) {
+        const delay = SILENT_RETRY_DELAYS[loadFailCount - 1];
+        console.log(`[reconnect] Load failed (attempt ${loadFailCount}), silent retry in ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+        if (!win.isDestroyed()) {
+          try { win.loadURL(targetUrl); } catch { /* ignore */ }
+        }
+        return;
+      }
+
+      // Third+ failure — show the dialog
+      showingLoadError = true;
       const { dialog } = await import("electron");
       try {
-        const isCertError =
-          typeof errorDescription === "string" &&
-          (errorDescription.includes("ERR_CERT") || errorDescription.toLowerCase().includes("certificate"));
-
         const buttons = isClient ? ["Retry", "Change Connection\u2026", "Close"] : ["Retry", "Close"];
         const messageBoxOpts = {
           type: "error",
@@ -167,25 +182,21 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
         if (win.isDestroyed()) return;
 
         if (result.response === 0) {
-          try {
-            win.loadURL(targetUrl);
-          } catch {
-            // ignore
-          }
+          loadFailCount = 0; // Reset counter so manual Retry gets silent retries again
+          try { win.loadURL(targetUrl); } catch { /* ignore */ }
         } else if (isClient && result.response === 1) {
           createSetupWindow();
         } else {
-          try {
-            win.close();
-          } catch {
-            // ignore
-          }
+          try { win.close(); } catch { /* ignore */ }
         }
       } finally {
         showingLoadError = false;
       }
     },
   );
+
+  // Reset fail counter on successful load
+  win.webContents.on("did-finish-load", () => { loadFailCount = 0; });
 
   registerTlsTrustForWindow(win, targetUrl, config);
   win.loadURL(targetUrl);
