@@ -2,6 +2,59 @@ import { Request, Response, NextFunction } from "express";
 
 type UserRole = "owner" | "manager" | "staff" | "view_only" | "super_admin";
 
+// ── Idempotency cache for offline outbox retries ──
+// Prevents duplicate job creation when the Client queues a request,
+// the server processes it, but the response is lost (network drop).
+// On retry, the outbox sends the same Idempotency-Key header and gets
+// the cached response instead of creating a duplicate.
+const idempotencyCache = new Map<string, { status: number; body: string; expiresAt: number }>();
+const IDEMPOTENCY_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+// Prune expired entries every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of idempotencyCache) {
+    if (entry.expiresAt < now) idempotencyCache.delete(key);
+  }
+}, 10 * 60 * 1000);
+
+/**
+ * Middleware: checks Idempotency-Key header on mutating requests.
+ * If the key was already processed, returns the cached response.
+ * Otherwise, wraps res.json to capture and cache the response.
+ */
+export function idempotencyGuard(req: Request, res: Response, next: NextFunction) {
+  const key = req.headers["idempotency-key"];
+  if (!key || typeof key !== "string") return next();
+
+  const method = req.method.toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+
+  // Check cache
+  const cached = idempotencyCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    res.status(cached.status).setHeader("Content-Type", "application/json").end(cached.body);
+    return;
+  }
+
+  // Wrap res.json to capture the response
+  const originalJson = res.json.bind(res);
+  res.json = function (body: any) {
+    const status = res.statusCode || 200;
+    try {
+      const bodyStr = JSON.stringify(body);
+      idempotencyCache.set(key, {
+        status,
+        body: bodyStr,
+        expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
+      });
+    } catch { /* ignore serialization errors */ }
+    return originalJson(body);
+  };
+
+  next();
+}
+
 function getUser(req: Request) {
   return req.user as (Express.User & { role?: UserRole; officeId?: string | null }) | undefined;
 }

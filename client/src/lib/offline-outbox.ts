@@ -2,6 +2,7 @@ type MaybePromise<T> = T | Promise<T>;
 
 export type OutboxItem = {
   id: string;
+  idempotencyKey: string;
   origin: string;
   method: string;
   url: string;
@@ -84,8 +85,9 @@ async function load(force = false): Promise<OutboxItem[]> {
 
     const raw = await bridge.outboxGet();
     const items = Array.isArray(raw) ? raw.filter(isLikelyItem) : [];
-    cache = items.map((item) => ({
+    cache = items.map((item: any) => ({
       id: item.id,
+      idempotencyKey: typeof item.idempotencyKey === "string" ? item.idempotencyKey : item.id,
       origin: item.origin,
       method: item.method,
       url: item.url,
@@ -129,6 +131,7 @@ export function subscribeOutbox(listener: (items: OutboxItem[]) => void): () => 
 
 export async function enqueueOutboxItem(input: {
   id: string;
+  idempotencyKey?: string;
   origin: string;
   method: string;
   url: string;
@@ -144,6 +147,7 @@ export async function enqueueOutboxItem(input: {
     ...existing,
     {
       id: input.id,
+      idempotencyKey: input.idempotencyKey || input.id,
       origin: input.origin,
       method: input.method,
       url: input.url,
@@ -177,59 +181,58 @@ export async function flushOutbox(origin: string): Promise<OutboxFlushResult> {
     return { flushed: 0, remaining: items.length, blockedByAuth: false, lastError: null };
   }
 
+  const MAX_ATTEMPTS = 10;
   const remaining: OutboxItem[] = [];
   let flushed = 0;
   let blockedByAuth = false;
   let lastError: string | null = null;
 
   for (const item of matching) {
+    // Drop items that have exceeded max retry attempts
+    if (item.attempts >= MAX_ATTEMPTS) {
+      console.warn(`[outbox] Dropping item ${item.id} after ${item.attempts} failed attempts: ${item.lastError}`);
+      continue; // silently remove from queue
+    }
+
     try {
+      const headers: Record<string, string> = {};
+      if (item.body) headers["Content-Type"] = "application/json";
+      if (item.idempotencyKey) headers["Idempotency-Key"] = item.idempotencyKey;
+
       const res = await fetch(withApiBase(item.url), {
         method: item.method,
-        headers: item.body ? { "Content-Type": "application/json" } : {},
+        headers,
         body: item.body ? JSON.stringify(item.body) : undefined,
         credentials: "include",
       });
 
       if (res.status === 401) {
+        // Auth failure affects ALL remaining items — stop and keep everything queued
         blockedByAuth = true;
         lastError = "Please sign in to sync offline changes.";
-        remaining.push({
-          ...item,
-          attempts: item.attempts + 1,
-          lastError,
-        });
-        // Stop here; later items likely need auth too.
+        remaining.push({ ...item, attempts: item.attempts + 1, lastError });
+        // Push all remaining items without attempting them
+        for (const rest of matching.slice(matching.indexOf(item) + 1)) {
+          if (rest.attempts < MAX_ATTEMPTS) remaining.push(rest);
+        }
         break;
       }
 
       if (!res.ok) {
+        // Non-auth failure: skip this item but CONTINUE with the next
         const text = (await res.text().catch(() => "")) || res.statusText || "Request failed";
         lastError = `${res.status}: ${text}`.slice(0, 500);
-        remaining.push({
-          ...item,
-          attempts: item.attempts + 1,
-          lastError,
-        });
-        break;
+        remaining.push({ ...item, attempts: item.attempts + 1, lastError });
+        continue; // ← key change: continue instead of break
       }
 
       flushed += 1;
     } catch (error: any) {
+      // Network error: skip this item but continue (Host might be partially available)
       lastError = String(error?.message || "Network error").slice(0, 500);
-      remaining.push({
-        ...item,
-        attempts: item.attempts + 1,
-        lastError,
-      });
-      break;
+      remaining.push({ ...item, attempts: item.attempts + 1, lastError });
+      continue; // ← key change: continue instead of break
     }
-  }
-
-  // Keep any items we didn't get to yet (after first failure).
-  const indexOfFirstRemaining = flushed;
-  for (let i = indexOfFirstRemaining + remaining.length; i < matching.length; i++) {
-    remaining.push(matching[i]);
   }
 
   await save([...other, ...remaining]);

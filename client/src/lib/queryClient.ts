@@ -118,9 +118,11 @@ export async function apiRequest(
     }
 
     const outboxId = randomId();
+    const idempotencyKey = `outbox-${outboxId}`;
     try {
       await enqueueOutboxItem({
         id: outboxId,
+        idempotencyKey,
         origin: window.location.origin,
         method: String(method || "POST").toUpperCase(),
         url,

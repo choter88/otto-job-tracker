@@ -41,6 +41,19 @@ export default function SyncManager() {
     if (pendingCountRef.current <= 0) return;
     if (typeof navigator !== "undefined" && navigator.onLine === false) return;
 
+    // Auth pre-check: verify session is valid before flushing.
+    // This prevents wasting time sending items that will all 401.
+    try {
+      const authCheck = await fetch("/api/user", { credentials: "include" });
+      if (authCheck.status === 401) {
+        setSyncError("Please sign in to sync offline changes.");
+        return;
+      }
+    } catch {
+      // Host unreachable — skip flush, will retry on next interval
+      return;
+    }
+
     setSyncing(true);
     try {
       const result = await flushOutbox(window.location.origin);

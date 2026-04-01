@@ -259,7 +259,7 @@ app.use((req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Idempotency-Key");
     }
     if (req.method === "OPTIONS") {
       return res.sendStatus(204);
@@ -298,6 +298,11 @@ app.use(express.json({
   }
 }));
 app.use(express.urlencoded({ extended: false }));
+
+// Idempotency guard: prevents duplicate writes from outbox retries.
+// Must be after body parsing but before route handlers.
+import { idempotencyGuard } from "./middleware";
+app.use(idempotencyGuard);
 
 app.use((req, res, next) => {
   const start = Date.now();
