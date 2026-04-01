@@ -18,6 +18,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, SlidersHorizontal, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
 import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
@@ -228,16 +230,19 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     },
   });
 
+  const [flagDialogJobId, setFlagDialogJobId] = useState<string | null>(null);
+  const [flagNote, setFlagNote] = useState("");
+
   const flagJobMutation = useMutation({
-    mutationFn: async (jobId: string) => {
-      const res = await apiRequest("POST", `/api/jobs/${jobId}/flag`, {});
+    mutationFn: async ({ jobId, note }: { jobId: string; note: string }) => {
+      const res = await apiRequest("POST", `/api/jobs/${jobId}/flag`, { importantNote: note });
       return res.json();
     },
-    onMutate: async (jobId) => {
+    onMutate: async ({ jobId }) => {
       await queryClient.cancelQueries({ queryKey: ["/api/jobs/flagged"] });
-      
+
       const previousFlagged = queryClient.getQueryData(["/api/jobs/flagged"]);
-      
+
       const jobToAdd = jobs.find(j => j.id === jobId);
       if (jobToAdd) {
         queryClient.setQueryData(["/api/jobs/flagged"], (old: any[] | undefined) => 
@@ -256,9 +261,11 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
       });
     },
     onSuccess: () => {
+      setFlagDialogJobId(null);
+      setFlagNote("");
       toast({
-        title: "Success",
-        description: "Job flagged as important.",
+        title: "Marked as important",
+        description: "Job flagged with your note.",
       });
     },
     onSettled: () => {
@@ -529,9 +536,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
   const handleToggleFlag = useCallback((jobId: string) => {
     if (flaggedJobIds.includes(jobId)) {
+      // Unflag immediately — no modal needed
       unflagJobMutation.mutate(jobId);
     } else {
-      flagJobMutation.mutate(jobId);
+      // Open the "Why is this important?" modal
+      setFlagDialogJobId(jobId);
+      setFlagNote("");
     }
   }, [flaggedJobIds, flagJobMutation, unflagJobMutation]);
 
@@ -1347,6 +1357,42 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           office={office}
         />
       )}
+
+      {/* Flag as Important — requires a reason */}
+      <Dialog open={!!flagDialogJobId} onOpenChange={(open) => { if (!open) { setFlagDialogJobId(null); setFlagNote(""); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mark as Important</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Why is this job important? This note will be visible on the Important Jobs page.
+            </p>
+            <Textarea
+              placeholder="e.g., Patient called twice asking about status, needs follow-up by Friday..."
+              value={flagNote}
+              onChange={(e) => setFlagNote(e.target.value)}
+              rows={3}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setFlagDialogJobId(null); setFlagNote(""); }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (flagDialogJobId && flagNote.trim()) {
+                  flagJobMutation.mutate({ jobId: flagDialogJobId, note: flagNote.trim() });
+                }
+              }}
+              disabled={!flagNote.trim() || flagJobMutation.isPending}
+            >
+              {flagJobMutation.isPending ? "Saving..." : "Mark as Important"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -1392,7 +1392,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       // Create flag immediately without waiting for summary
       const flag = await storage.flagJob(getAuthUser(req).id, req.params.jobId);
-      
+
+      // Store the important note if provided
+      const importantNote = typeof req.body?.importantNote === "string" ? req.body.importantNote.trim() : "";
+      if (importantNote) {
+        await storage.updateJobFlagImportantNote(getAuthUser(req).id, req.params.jobId, importantNote);
+      }
+
       const shouldGenerateAiSummary = isAiSummaryEnabled();
 
       // Only generate AI summaries when explicitly enabled for a hosted/online deployment.
