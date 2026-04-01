@@ -105,7 +105,15 @@ export async function apiRequest(
     await throwIfResNotOk(res);
     return res;
   } catch (error) {
-    if (!isLikelyNetworkError(error) || !shouldQueueOffline(method, url)) {
+    const isNetwork = isLikelyNetworkError(error);
+    const is401 = (error as any)?.status === 401;
+    const canQueue = shouldQueueOffline(method, url);
+
+    // Queue to offline outbox if:
+    // 1. Network error (Host is unreachable) AND endpoint is queueable, OR
+    // 2. 401 (session expired, e.g. after Host restart) AND endpoint is queueable
+    //    — the outbox will retry after the user re-authenticates
+    if ((!isNetwork && !is401) || !canQueue) {
       throw error;
     }
 

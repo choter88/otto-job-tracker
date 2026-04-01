@@ -127,76 +127,78 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
     }
   });
 
-  // Auto-reconnect: silently retry on the first 2 failures before showing
-  // an error dialog. This makes brief Host restarts invisible to Clients.
+  // Auto-reconnect with exponential backoff.
+  // Clients retry indefinitely in the background — the Host may be
+  // restarting, and the user's offline changes are safe in the outbox.
+  // After several silent retries, show a non-blocking notification so
+  // the user knows we're still trying.
   let loadFailCount = 0;
-  let showingLoadError = false;
-  const SILENT_RETRY_DELAYS = [3000, 5000]; // ms to wait before silent retries
+  let reconnectTimer = null;
+  const MAX_BACKOFF_MS = 30000; // cap at 30 seconds between retries
+
+  function getBackoffDelay(attempt) {
+    return Math.min(MAX_BACKOFF_MS, 2000 * Math.pow(1.5, Math.min(attempt, 10)));
+  }
 
   win.webContents.on(
     "did-fail-load",
     async (_event, _errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame) return;
-      if (showingLoadError) return;
+      if (!isMainFrame || win.isDestroyed()) return;
 
       loadFailCount++;
+      const delay = getBackoffDelay(loadFailCount);
 
-      // Silent retries for first 2 failures — no dialog, just wait and retry
-      if (loadFailCount <= SILENT_RETRY_DELAYS.length && !win.isDestroyed()) {
-        const delay = SILENT_RETRY_DELAYS[loadFailCount - 1];
-        console.log(`[reconnect] Load failed (attempt ${loadFailCount}), silent retry in ${delay}ms...`);
-        await new Promise((r) => setTimeout(r, delay));
-        if (!win.isDestroyed()) {
+      // For Host mode, show dialog after 3 failures (server might be genuinely broken)
+      if (config.mode === "host" && loadFailCount >= 3) {
+        const { dialog } = await import("electron");
+        const { response } = await dialog.showMessageBox(win, {
+          type: "error",
+          buttons: ["Retry", "Close"],
+          defaultId: 0,
+          cancelId: 1,
+          message: "Otto is still starting up",
+          detail: "This may take a moment. Click Retry to try again.",
+        }).catch(() => ({ response: 0 }));
+
+        if (win.isDestroyed()) return;
+        if (response === 0) {
+          loadFailCount = 0;
           try { win.loadURL(targetUrl); } catch { /* ignore */ }
+        } else {
+          try { win.close(); } catch { /* ignore */ }
         }
         return;
       }
 
-      // Third+ failure — show the dialog
-      showingLoadError = true;
-      const { dialog } = await import("electron");
-      try {
-        const buttons = isClient ? ["Retry", "Change Connection\u2026", "Close"] : ["Retry", "Close"];
-        const messageBoxOpts = {
-          type: "error",
-          buttons,
-          defaultId: 0,
-          cancelId: buttons.length - 1,
-          message:
-            config.mode === "host"
-              ? "Otto is still starting up"
-              : "Can\u2019t connect to the main computer",
-          detail:
-            config.mode === "host"
-              ? "This may take a moment. Click Retry to try again."
-              : "Make sure the main computer is turned on and connected to the same office network as this one.\n\nIf the problem continues, ask your office manager or IT support for help.",
-        };
+      // For Client mode, keep retrying silently with backoff
+      console.log(`[reconnect] Load failed (attempt ${loadFailCount}), retrying in ${Math.round(delay / 1000)}s...`);
 
-        let result = null;
+      // After 5 silent failures, show a small in-window message (not a blocking dialog)
+      if (isClient && loadFailCount === 5) {
         try {
-          result = await dialog.showMessageBox(win, messageBoxOpts);
-        } catch {
-          result = await dialog.showMessageBox(messageBoxOpts);
-        }
-
-        if (win.isDestroyed()) return;
-
-        if (result.response === 0) {
-          loadFailCount = 0; // Reset counter so manual Retry gets silent retries again
-          try { win.loadURL(targetUrl); } catch { /* ignore */ }
-        } else if (isClient && result.response === 1) {
-          createSetupWindow();
-        } else {
-          try { win.close(); } catch { /* ignore */ }
-        }
-      } finally {
-        showingLoadError = false;
+          win.webContents.executeJavaScript(`
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui;background:#f8fafc;color:#374151;text-align:center;padding:2rem;">' +
+              '<div><h2 style="font-size:1.25rem;font-weight:600;margin-bottom:0.5rem;">Reconnecting to the main computer...</h2>' +
+              '<p style="font-size:0.875rem;color:#6b7280;">Your changes are saved locally and will sync automatically when the connection is restored.</p>' +
+              '<p style="font-size:0.75rem;color:#9ca3af;margin-top:1rem;">Retrying every few seconds</p></div></div>';
+          `).catch(() => {});
+        } catch { /* ignore */ }
       }
+
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        if (!win.isDestroyed()) {
+          try { win.loadURL(targetUrl); } catch { /* ignore */ }
+        }
+      }, delay);
     },
   );
 
   // Reset fail counter on successful load
-  win.webContents.on("did-finish-load", () => { loadFailCount = 0; });
+  win.webContents.on("did-finish-load", () => {
+    loadFailCount = 0;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  });
 
   registerTlsTrustForWindow(win, targetUrl, config);
   win.loadURL(targetUrl);
