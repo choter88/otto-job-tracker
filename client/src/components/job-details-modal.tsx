@@ -203,8 +203,8 @@ export default function JobDetailsModal({
           <TabsContent value="overview" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="space-y-4 rounded-md border border-border p-4">
-                  <h3 className="font-semibold">Job details</h3>
+                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-primary">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Job Details</h3>
                   <div className="space-y-3 text-sm">
                     <div className="flex items-start justify-between gap-3">
                       <span className="text-muted-foreground">{useTrayNumber ? "Tray #" : "Patient"}</span>
@@ -247,8 +247,8 @@ export default function JobDetailsModal({
                   </div>
                 </div>
 
-                <div className="space-y-4 rounded-md border border-border p-4">
-                  <h3 className="font-semibold">Notes & custom fields</h3>
+                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-green-500">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Notes & Custom Fields</h3>
 
                   <div className="space-y-2 text-sm">
                     <p className="text-muted-foreground">Notes</p>
@@ -282,11 +282,11 @@ export default function JobDetailsModal({
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <History className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="font-semibold">Status history</h3>
-                </div>
+              <div className="space-y-3 border-t border-border pt-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                  <History className="h-3.5 w-3.5" />
+                  Status History
+                </h3>
 
                 {historyLoading ? (
                   <div className="rounded-md border border-border p-6 text-center text-muted-foreground">
@@ -309,8 +309,15 @@ export default function JobDetailsModal({
                       return (
                         <div
                           key={entry.id}
-                          className="rounded-md border border-border bg-card px-4 py-3 flex items-start justify-between gap-4"
+                          className="rounded-md border border-border bg-muted/30 px-4 py-2.5 flex items-start gap-3"
                         >
+                          <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${
+                            entry.newStatus === "completed" ? "bg-green-500" :
+                            entry.newStatus === "cancelled" ? "bg-red-400" :
+                            entry.oldStatus === null ? "bg-blue-500" :
+                            "bg-muted-foreground/50"
+                          }`} />
+                          <div className="flex-1 flex items-start justify-between gap-4 min-w-0">
                           <div className="min-w-0">
                             <p className="text-sm font-medium">
                               {entry.oldStatus ? `${oldLabel} → ${newLabel}` : `Initial status: ${newLabel}`}
@@ -324,8 +331,6 @@ export default function JobDetailsModal({
                               <span>{actorName}</span>
                             </p>
                           </div>
-                          <div className="shrink-0 text-muted-foreground">
-                            <History className="h-4 w-4" />
                           </div>
                         </div>
                       );

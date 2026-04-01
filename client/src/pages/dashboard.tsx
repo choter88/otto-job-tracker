@@ -142,7 +142,7 @@ export default function Dashboard() {
         {/* Header */}
         <header className="bg-card border-b border-border px-6 h-14 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground" data-testid="text-dashboard-title">
+            <h1 className="text-xl font-semibold text-foreground" data-testid="text-dashboard-title">
               {activeTab === "important" && "Important Jobs"}
               {activeTab === "all" && "Worklist"}
               {activeTab === "past" && "Past Jobs"}

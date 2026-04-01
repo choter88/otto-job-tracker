@@ -90,7 +90,7 @@ function SortableItem({ id, item, type, isDraggable, updateCustomItem, deleteCus
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center gap-3 p-4 bg-card border border-border rounded-lg hover:shadow-soft transition-shadow ${
+      className={`flex items-center gap-2 p-2.5 bg-card border border-border rounded-lg hover:shadow-soft transition-shadow ${
         isDragging ? 'shadow-lg z-50' : ''
       }`}
       data-testid={`custom-item-${item.id}`}
@@ -114,13 +114,12 @@ function SortableItem({ id, item, type, isDraggable, updateCustomItem, deleteCus
         />
       </div>
 
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">Color:</span>
+      <div className="flex items-center gap-1.5">
         <Input
           type="color"
           value={item.color}
           onChange={(e) => updateCustomItem(type, item.id, { color: e.target.value })}
-          className="w-10 h-10 rounded cursor-pointer border border-border"
+          className="w-8 h-8 rounded cursor-pointer border border-border"
           data-testid={`input-color-${item.id}`}
         />
       </div>
@@ -520,15 +519,19 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
     const itemIds = items.map(item => item.id);
 
     return (
-      <div className="space-y-4">
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold mb-2">{title}</h3>
-          <p className="text-sm text-muted-foreground mb-4">{description}</p>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+          </div>
           <Button
+            size="sm"
+            className="h-8 text-xs"
             onClick={() => addCustomItem(type)}
             data-testid={`button-add-${type}`}
           >
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
             Add {type === 'statuses' ? 'Status' : type === 'jobTypes' ? 'Type' : 'Destination'}
           </Button>
         </div>
@@ -540,7 +543,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
           onDragEnd={(event) => handleDragEnd(event, type)}
         >
           <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {items.map((item) => {
                 // For statuses, only middle items are draggable
                 const isDraggable = type === 'statuses' 
@@ -564,8 +567,8 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
         </DndContext>
 
         {type === 'statuses' && (
-          <div className="p-4 bg-muted rounded-lg">
-            <p className="text-sm text-muted-foreground">
+          <div className="p-3 bg-muted rounded-lg">
+            <p className="text-xs text-muted-foreground">
               <span className="inline-block w-2 h-2 bg-info rounded-full mr-2"></span>
               "Job Created" and "Completed" statuses cannot be moved or deleted as they are required for workflow.
             </p>
@@ -580,9 +583,9 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[min(96vw,1100px)] max-w-none h-[min(90vh,820px)] p-0 overflow-hidden flex flex-col animate-fade-in">
-        <DialogHeader className="border-b border-border px-6 py-5 pr-12">
-          <DialogTitle className="flex items-center gap-2 text-2xl">
-            <Settings className="h-6 w-6" />
+        <DialogHeader className="border-b border-border px-5 py-3 pr-12">
+          <DialogTitle className="flex items-center gap-2 text-lg">
+            <Settings className="h-5 w-5" />
             Office Settings
           </DialogTitle>
         </DialogHeader>
@@ -661,21 +664,21 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
             </div>
 
             <div className="flex-1 min-w-0 min-h-0">
-              <div className="h-full overflow-y-auto px-6 py-6">
+              <div className="h-full overflow-y-auto px-5 py-4">
                 <TabsContent value="general" className="mt-0">
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <div>
-                  <h3 className="text-lg font-semibold mb-2">General Settings</h3>
-                  <p className="text-sm text-muted-foreground mb-6">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">General Settings</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     Configure how jobs are identified and displayed in your practice.
                   </p>
                 </div>
 
-                <div className="bg-card border border-border rounded-lg p-6">
+                <div className="bg-card border border-border rounded-lg p-4">
                   <div className="flex items-start justify-between">
-                    <div className="space-y-1">
-                      <Label className="text-base font-medium">Job Identifier Mode</Label>
-                      <p className="text-sm text-muted-foreground">
+                    <div className="space-y-0.5">
+                      <Label className="text-sm font-medium">Job Identifier Mode</Label>
+                      <p className="text-xs text-muted-foreground">
                         Choose how jobs are identified in your practice.
                       </p>
                     </div>
@@ -692,8 +695,8 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="mt-4 p-4 bg-muted rounded-lg">
-                    <p className="text-sm text-muted-foreground">
+                  <div className="mt-3 p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground">
                       {jobIdentifierMode === "patientName" 
                         ? "Jobs will be identified by patient first and last name (e.g., \"Jane Smith\")."
                         : "Jobs will be identified by a manually-entered tray number. Patient name fields will not be required."}
