@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Clock3, Edit, FileText, MessageSquare, History } from "lucide-react";
+import { Clock3, Edit, FileText, MessageSquare, History, Link2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,7 @@ import { getColorForBadge, getDefaultDestinationColor, getDefaultJobTypeColor, g
 import { formatPatientDisplayName } from "@shared/name-format";
 import type { Job, Office } from "@shared/schema";
 
-export type JobDetailsTab = "overview" | "comments";
+export type JobDetailsTab = "overview" | "comments" | "related";
 
 interface JobStatusHistoryEntry {
   id: string;
@@ -68,6 +68,17 @@ export default function JobDetailsModal({
         const payload = await res.json().catch(() => null);
         throw new Error(payload?.error || payload?.message || res.statusText || "Failed to load status history");
       }
+      return res.json();
+    },
+    enabled: !!job?.id && open,
+  });
+
+  const { data: relatedJobs = [] } = useQuery<any[]>({
+    queryKey: ["/api/jobs", job?.id, "related"],
+    queryFn: async () => {
+      if (!job?.id) return [];
+      const res = await fetch(`/api/jobs/${job.id}/related`, { credentials: "include" });
+      if (!res.ok) return [];
       return res.json();
     },
     enabled: !!job?.id && open,
@@ -189,7 +200,7 @@ export default function JobDetailsModal({
           onValueChange={(value) => onActiveTabChange(value as JobDetailsTab)}
           className="flex-1 flex flex-col min-h-0"
         >
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className={`grid w-full ${relatedJobs.length > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
             <TabsTrigger value="overview" data-testid="tab-job-details-overview">
               <FileText className="mr-2 h-4 w-4" />
               Overview
@@ -198,6 +209,12 @@ export default function JobDetailsModal({
               <MessageSquare className="mr-2 h-4 w-4" />
               Comments
             </TabsTrigger>
+            {relatedJobs.length > 0 && (
+              <TabsTrigger value="related" data-testid="tab-job-details-related">
+                <Link2 className="mr-2 h-4 w-4" />
+                Related ({relatedJobs.length})
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="overview" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
@@ -354,6 +371,50 @@ export default function JobDetailsModal({
               />
             </div>
           </TabsContent>
+
+          {/* Related Jobs tab — auto-detected by patient name match */}
+          {relatedJobs.length > 0 && (
+            <TabsContent value="related" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Other jobs for this patient, detected automatically by matching name.
+                </p>
+                <div className="border rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-muted/50 border-b">
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Order</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Type</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Status</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Destination</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {relatedJobs.map((rj: any) => (
+                        <tr key={rj.id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+                          <td className="px-3 py-2 font-mono text-xs">
+                            {rj.orderId}
+                            {rj.archived && (
+                              <Badge variant="secondary" className="ml-2 text-[10px]">archived</Badge>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <Badge variant="secondary" className="text-xs">{getJobTypeLabel(rj.jobType)}</Badge>
+                          </td>
+                          <td className="px-3 py-2 text-xs">{getStatusLabel(rj.status)}</td>
+                          <td className="px-3 py-2 text-xs">{getDestinationLabel(rj.orderDestination)}</td>
+                          <td className="px-3 py-2 text-xs text-muted-foreground">
+                            {format(new Date(rj.createdAt), "MMM d, yyyy")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </TabsContent>
+          )}
 
         </Tabs>
       </DialogContent>

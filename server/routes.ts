@@ -1254,6 +1254,74 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  // Related jobs — find other jobs for the same patient
+  app.get("/api/jobs/:jobId/related", requireOffice, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const firstName = (job.patientFirstName || "").trim().toLowerCase();
+      const lastName = (job.patientLastName || "").trim().toLowerCase();
+      if (!lastName) return res.json([]);
+
+      // Find active jobs with the same patient name (excluding this job)
+      const activeRelated = await db
+        .select({
+          id: jobs.id,
+          orderId: jobs.orderId,
+          patientFirstName: jobs.patientFirstName,
+          patientLastName: jobs.patientLastName,
+          jobType: jobs.jobType,
+          status: jobs.status,
+          orderDestination: jobs.orderDestination,
+          createdAt: jobs.createdAt,
+        })
+        .from(jobs)
+        .where(
+          and(
+            eq(jobs.officeId, job.officeId),
+            sql`lower(trim(${jobs.patientFirstName})) = ${firstName}`,
+            sql`lower(trim(${jobs.patientLastName})) = ${lastName}`,
+            sql`${jobs.id} != ${job.id}`,
+          ),
+        )
+        .orderBy(desc(jobs.createdAt));
+
+      // Also check archived jobs
+      const archivedRelated = await db
+        .select({
+          id: archivedJobs.id,
+          orderId: archivedJobs.orderId,
+          patientFirstName: archivedJobs.patientFirstName,
+          patientLastName: archivedJobs.patientLastName,
+          jobType: archivedJobs.jobType,
+          status: archivedJobs.finalStatus,
+          orderDestination: archivedJobs.orderDestination,
+          createdAt: archivedJobs.originalCreatedAt,
+        })
+        .from(archivedJobs)
+        .where(
+          and(
+            eq(archivedJobs.officeId, job.officeId),
+            sql`lower(trim(${archivedJobs.patientFirstName})) = ${firstName}`,
+            sql`lower(trim(${archivedJobs.patientLastName})) = ${lastName}`,
+          ),
+        )
+        .orderBy(desc(archivedJobs.originalCreatedAt));
+
+      const related = [
+        ...activeRelated.map((j) => ({ ...j, archived: false })),
+        ...archivedRelated.map((j) => ({ ...j, archived: true })),
+      ];
+
+      res.json(related);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Job comments routes
   app.get("/api/jobs/:jobId/comments", requireOffice, async (req, res) => {
     try {

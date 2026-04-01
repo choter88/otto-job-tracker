@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, SlidersHorizontal, CheckSquare, X } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, SlidersHorizontal, CheckSquare, Link2, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -410,6 +410,16 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
       }
     });
   }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, customColumnFilters, sortBy, sortOrder, customColumns, overdueOnly, overdueJobIds]);
+
+  // Count jobs per patient for the "related" indicator
+  const patientJobCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const job of jobs) {
+      const key = `${(job.patientFirstName || "").trim()} ${(job.patientLastName || "").trim()}`.toLowerCase();
+      if (key.trim()) counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return counts;
+  }, [jobs]);
 
   // Memoize event handlers
   const handleStatusChange = useCallback((jobId: string, newStatus: string) => {
@@ -1082,6 +1092,20 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       <span className="font-medium truncate">
                         {getPatientLabel(job)}
                       </span>
+                      {(() => {
+                        const key = `${(job.patientFirstName || "").trim()} ${(job.patientLastName || "").trim()}`.toLowerCase();
+                        const count = patientJobCounts.get(key) || 0;
+                        return count > 1 ? (
+                          <span
+                            className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary cursor-pointer"
+                            title={`${count - 1} other job${count > 2 ? "s" : ""} for this patient`}
+                            onClick={(e) => { e.stopPropagation(); handleOpenJobDetails(job, "related"); }}
+                          >
+                            <Link2 className="h-3 w-3" />
+                            {count - 1}
+                          </span>
+                        ) : null;
+                      })()}
                       {(job as any)._pendingSync && (
                         <Badge
                           className="text-[10px] px-1.5 py-0 h-5 border-0"
