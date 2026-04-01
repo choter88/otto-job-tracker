@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, SlidersHorizontal, X } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, SlidersHorizontal, CheckSquare, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,6 +62,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -199,6 +200,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     },
     onSuccess: (result) => {
       setSelectedJobs([]);
+      setSelectionMode(false);
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs/archived"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs/overdue"] });
@@ -219,6 +221,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     },
     onSuccess: (result) => {
       setSelectedJobs([]);
+      setSelectionMode(false);
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       toast({
         title: "Bulk Delete",
@@ -765,8 +768,25 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </div>
         </div>
 
-        {/* Filter toggle + collapsible filters */}
+        {/* Filter + Select toggle */}
         <div className="flex items-center gap-2 px-5 py-2">
+          <Button
+            variant={selectionMode ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 text-xs gap-1.5"
+            onClick={() => {
+              setSelectionMode((v) => !v);
+              if (selectionMode) setSelectedJobs([]);
+            }}
+          >
+            <CheckSquare className="h-3.5 w-3.5" />
+            {selectionMode ? "Cancel" : "Select"}
+            {selectionMode && selectedJobs.length > 0 && (
+              <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
+                {selectedJobs.length}
+              </span>
+            )}
+          </Button>
           <Button
             variant={filtersOpen ? "secondary" : "ghost"}
             size="sm"
@@ -902,20 +922,22 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
             <TableHeader className="bg-muted/50">
               <TableRow>
-                <TableHead className="w-10">
-                  <Checkbox
-                    className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
-                    checked={filteredJobs.length > 0 && selectedJobs.length === filteredJobs.length}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setSelectedJobs(filteredJobs.map(job => job.id));
-                      } else {
-                        setSelectedJobs([]);
-                      }
-                    }}
-                    data-testid="checkbox-select-all"
-                  />
-                </TableHead>
+                {selectionMode && (
+                  <TableHead className="w-10">
+                    <Checkbox
+                      className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
+                      checked={filteredJobs.length > 0 && selectedJobs.length === filteredJobs.length}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedJobs(filteredJobs.map(job => job.id));
+                        } else {
+                          setSelectedJobs([]);
+                        }
+                      }}
+                      data-testid="checkbox-select-all"
+                    />
+                  </TableHead>
+                )}
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
                 </TableHead>
@@ -1024,19 +1046,21 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   onClick={() => handleOpenJobDetails(job, "overview")}
                   data-testid={`row-job-${job.id}`}
                 >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
-                      checked={selectedJobs.includes(job.id)}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setSelectedJobs([...selectedJobs, job.id]);
-                        } else {
-                          setSelectedJobs(selectedJobs.filter(id => id !== job.id));
-                        }
-                      }}
-                    />
-                  </TableCell>
+                  {selectionMode && (
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
+                        checked={selectedJobs.includes(job.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedJobs([...selectedJobs, job.id]);
+                          } else {
+                            setSelectedJobs(selectedJobs.filter(id => id !== job.id));
+                          }
+                        }}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"
@@ -1270,8 +1294,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </p>
         </div>
 
-        {/* Bulk Actions Bar */}
-        {selectedJobs.length > 0 && (
+        {/* Bulk Actions Bar — only visible in selection mode */}
+        {selectionMode && selectedJobs.length > 0 && (
           <div className="px-4 py-3 bg-primary/5 border-t border-primary/20 flex items-center gap-3">
             <p className="text-sm font-medium">
               {selectedJobs.length} job{selectedJobs.length !== 1 ? "s" : ""} selected
