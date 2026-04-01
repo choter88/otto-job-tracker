@@ -344,6 +344,12 @@ export default function SyncManager() {
               <span className={`h-2 w-2 rounded-full ${connectionDotClass}`} />
               {connectionLabel}
             </span>
+            {hasPending && (
+              <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                <span className="font-medium">{pendingCount}</span>
+                <span>{syncing ? "syncing..." : "queued"}</span>
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3 min-w-0 text-muted-foreground">
