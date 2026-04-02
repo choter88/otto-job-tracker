@@ -172,7 +172,14 @@ export default function SyncManager() {
         <div className="fixed bottom-[33px] left-0 right-0 z-50">
           <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-t border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
             <WifiOff className="h-4 w-4 shrink-0" />
-            <span>Host is offline. You can view existing data but changes require the Host to be running.</span>
+            <span className="flex-1">Host is offline. Otto is read-only until Otto is opened back up on the main computer.</span>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="shrink-0 px-3 py-1 bg-amber-600 text-white text-xs font-medium rounded hover:bg-amber-700"
+            >
+              Reconnect
+            </button>
           </div>
         </div>
       )}
@@ -186,6 +193,15 @@ export default function SyncManager() {
               <span className={`h-2 w-2 rounded-full ${connectionDotClass}`} />
               {connectionLabel}
             </span>
+            {modeIsClient && !connected && (
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="text-primary hover:underline font-medium"
+              >
+                Reconnect
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-3 min-w-0 text-muted-foreground">

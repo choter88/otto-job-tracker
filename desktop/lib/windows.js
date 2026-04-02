@@ -134,7 +134,7 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
   // the user knows we're still trying.
   let loadFailCount = 0;
   let reconnectTimer = null;
-  const MAX_BACKOFF_MS = 30000; // cap at 30 seconds between retries
+  const MAX_BACKOFF_MS = 15000; // cap at 15 seconds between retries
 
   function getBackoffDelay(attempt) {
     return Math.min(MAX_BACKOFF_MS, 2000 * Math.pow(1.5, Math.min(attempt, 10)));
@@ -178,9 +178,11 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
         try {
           win.webContents.executeJavaScript(`
             document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui;background:#f8fafc;color:#374151;text-align:center;padding:2rem;">' +
-              '<div><h2 style="font-size:1.25rem;font-weight:600;margin-bottom:0.5rem;">Reconnecting to the main computer...</h2>' +
-              '<p style="font-size:0.875rem;color:#6b7280;">Your changes are saved locally and will sync automatically when the connection is restored.</p>' +
-              '<p style="font-size:0.75rem;color:#9ca3af;margin-top:1rem;">Retrying every few seconds</p></div></div>';
+              '<div><h2 style="font-size:1.25rem;font-weight:600;margin-bottom:0.5rem;">Host is offline</h2>' +
+              '<p style="font-size:0.875rem;color:#6b7280;">Otto is read-only until Otto is opened back up on the main computer.</p>' +
+              '<p style="font-size:0.75rem;color:#9ca3af;margin-top:0.75rem;">Reconnecting automatically every few seconds</p>' +
+              '<button onclick="window.location.reload()" style="margin-top:1.25rem;padding:0.5rem 1.5rem;background:#2563eb;color:white;border:none;border-radius:0.5rem;font-size:0.875rem;font-weight:500;cursor:pointer;">Try Now</button>' +
+              '</div></div>';
           `).catch(() => {});
         } catch { /* ignore */ }
       }
