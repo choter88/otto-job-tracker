@@ -299,11 +299,6 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: false }));
 
-// Idempotency guard: prevents duplicate writes from outbox retries.
-// Must be after body parsing but before route handlers.
-import { idempotencyGuard } from "./middleware";
-app.use(idempotencyGuard);
-
 app.use((req, res, next) => {
   const start = Date.now();
   const method = String(req.method || "GET").toUpperCase();

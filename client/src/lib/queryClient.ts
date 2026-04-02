@@ -1,5 +1,4 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
-import { enqueueOutboxItem } from "./offline-outbox";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "";
 
@@ -39,119 +38,20 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
-function isMutatingMethod(method: string): boolean {
-  const m = String(method || "").toUpperCase();
-  return m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE";
-}
-
-function shouldQueueOffline(method: string, url: string): boolean {
-  if (!isMutatingMethod(method)) return false;
-
-  // Queue core job operations including comments, flags, and archive/restore.
-  const absolute = withApiBase(url);
-  try {
-    const parsed = new URL(absolute, window.location.origin);
-    const path = parsed.pathname;
-
-    // Job CRUD, status changes, archive/restore/redo
-    if (path.startsWith("/api/jobs")) {
-      if (path.includes("/comment-reads")) return false; // read-tracking, not important enough
-      if (path.includes("/summary")) return false; // AI summary is not available offline
-      return true;
-    }
-
-    // Archived job operations (restore, redo)
-    if (path.startsWith("/api/archived-jobs")) return true;
-
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-function isLikelyNetworkError(error: unknown): boolean {
-  const message = String((error as any)?.message || "");
-  if ((error as any)?.name === "AbortError") return true;
-  if (error instanceof TypeError) return true;
-  if (message.includes("Failed to fetch")) return true;
-  if (message.toLowerCase().includes("networkerror")) return true;
-  if (message.toLowerCase().includes("load failed")) return true;
-  return false;
-}
-
-function randomId(): string {
-  try {
-    const cryptoObj = (globalThis as any)?.crypto;
-    if (cryptoObj?.randomUUID) return cryptoObj.randomUUID();
-  } catch {
-    // ignore
-  }
-  return `outbox-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  try {
-    const res = await fetch(withApiBase(url), {
-      method,
-      headers: data ? { "Content-Type": "application/json" } : {},
-      body: data ? JSON.stringify(data) : undefined,
-      credentials: "include",
-    });
+  const res = await fetch(withApiBase(url), {
+    method,
+    headers: data ? { "Content-Type": "application/json" } : {},
+    body: data ? JSON.stringify(data) : undefined,
+    credentials: "include",
+  });
 
-    await throwIfResNotOk(res);
-    return res;
-  } catch (error) {
-    const isNetwork = isLikelyNetworkError(error);
-    const is401 = (error as any)?.status === 401;
-    const canQueue = shouldQueueOffline(method, url);
-
-    // Queue to offline outbox if:
-    // 1. Network error (Host is unreachable) AND endpoint is queueable, OR
-    // 2. 401 (session expired, e.g. after Host restart) AND endpoint is queueable
-    //    — the outbox will retry after the user re-authenticates
-    if ((!isNetwork && !is401) || !canQueue) {
-      throw error;
-    }
-
-    const outboxId = randomId();
-    const idempotencyKey = `outbox-${outboxId}`;
-    try {
-      await enqueueOutboxItem({
-        id: outboxId,
-        idempotencyKey,
-        origin: window.location.origin,
-        method: String(method || "POST").toUpperCase(),
-        url,
-        body: data ?? null,
-      });
-
-      try {
-        window.dispatchEvent(
-          new CustomEvent("otto:offlineQueued", {
-            detail: {
-              id: outboxId,
-              method: String(method || "POST").toUpperCase(),
-              url,
-            },
-          }),
-        );
-      } catch {
-        // ignore
-      }
-
-      return new Response(JSON.stringify({ ok: true, queued: true, outboxId }), {
-        status: 202,
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch {
-      // If we can't persist the outbox (e.g. not running in Electron), fall back to the original error.
-      throw error;
-    }
-  }
+  await throwIfResNotOk(res);
+  return res;
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";

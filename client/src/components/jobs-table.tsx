@@ -1106,19 +1106,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                           </span>
                         ) : null;
                       })()}
-                      {(job as any)._pendingSync && (
-                        <Badge
-                          className="text-[10px] px-1.5 py-0 h-5 border-0"
-                          style={{
-                            backgroundColor: 'hsl(220 14% 50% / 0.15)',
-                            color: 'hsl(220 14% 46%)'
-                          }}
-                          title="This job hasn't synced to the Host yet. The order ID will update once synced."
-                          data-testid={`badge-pending-${job.id}`}
-                        >
-                          SYNCING
-                        </Badge>
-                      )}
                       {job.isRedoJob && (
                         <Badge
                           className="text-[10px] px-1.5 py-0 h-5 border-0"

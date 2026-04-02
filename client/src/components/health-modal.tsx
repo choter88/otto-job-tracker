@@ -5,9 +5,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { clearOutboxItems, subscribeOutbox } from "@/lib/offline-outbox";
+// Offline outbox removed — read-only offline mode
 import { useAuth } from "@/hooks/use-auth";
-import { Activity, ClipboardList, FileDown, Trash2 } from "lucide-react";
+import { Activity, ClipboardList, FileDown } from "lucide-react";
 
 type MaybeBridge = {
   getConfig?: () => Promise<any>;
@@ -25,7 +25,7 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
   const { toast } = useToast();
   const [desktopConfig, setDesktopConfig] = useState<any | null>(null);
   const [licenseSnapshot, setLicenseSnapshot] = useState<any | null>(null);
-  const [outboxItems, setOutboxItems] = useState<any[]>([]);
+  // outbox removed
 
   const bridge: MaybeBridge | null = useMemo(() => {
     try {
@@ -80,26 +80,9 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    return subscribeOutbox((items) => {
-      const origin = window.location.origin;
-      setOutboxItems(items.filter((i) => i.origin === origin));
-    });
-  }, [open]);
-
   const mode = String(desktopConfig?.mode || "").toLowerCase();
   const isHost = mode === "host";
   const isDesktop = Boolean(bridge?.getConfig);
-
-  const outboxCount = outboxItems.length;
-  const outboxOldestAt = outboxItems.reduce((min: number, item: any) => {
-    const ts = Number(item?.createdAt) || 0;
-    if (!ts) return min;
-    return min ? Math.min(min, ts) : ts;
-  }, 0);
-  const outboxFailures = outboxItems.filter((i) => i?.lastError).length;
-  const outboxLastError = outboxItems.find((i) => i?.lastError)?.lastError || null;
 
   const networkBackupStatus = (() => {
     if (!isHost) return null;
@@ -132,30 +115,6 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
       return;
     }
     await bridge.exportSupportBundle();
-  };
-
-  const handleClearOutbox = async () => {
-    if (!isDesktop) {
-      toast({ title: "Not available", description: "Offline outbox is only available in the desktop app." });
-      return;
-    }
-    if (!outboxCount) return;
-
-    const ok = confirm(
-      "Clear the offline queue?\n\nThis will delete any pending offline changes that haven’t synced yet.",
-    );
-    if (!ok) return;
-
-    try {
-      await clearOutboxItems();
-      toast({ title: "Cleared", description: "Offline queue cleared." });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error?.message || "Failed to clear offline queue.",
-        variant: "destructive",
-      });
-    }
   };
 
   if (!user) return null;
@@ -223,15 +182,7 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
 
           <Card>
             <CardContent className="p-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-medium">Offline Sync</div>
-                <Badge variant={outboxCount ? "outline" : "secondary"}>{outboxCount} pending</Badge>
-              </div>
-              <div className="text-sm text-muted-foreground space-y-1">
-                <div>Oldest queued: {outboxCount ? formatWhen(outboxOldestAt) : "—"}</div>
-                <div>Failures: {outboxFailures}</div>
-                {outboxLastError ? <div className="truncate">Last error: {String(outboxLastError)}</div> : null}
-              </div>
+              <div className="font-medium">Diagnostics</div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={handleDiagnostics} disabled={!bridge?.showDiagnostics}>
                   <ClipboardList className="h-4 w-4" />
@@ -241,13 +192,9 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
                   <FileDown className="h-4 w-4" />
                   Export support bundle
                 </Button>
-                <Button variant="destructive" onClick={handleClearOutbox} disabled={!outboxCount || !isDesktop}>
-                  <Trash2 className="h-4 w-4" />
-                  Clear offline queue
-                </Button>
               </div>
               <div className="text-xs text-muted-foreground">
-                Support bundles are non‑PHI by design (no database export, no message bodies).
+                Support bundles are non-PHI by design (no database export, no message bodies).
               </div>
             </CardContent>
           </Card>

@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { queryClient } from "@/lib/queryClient";
-import { subscribeOutbox, flushOutbox } from "@/lib/offline-outbox";
 import { useAuth } from "@/hooks/use-auth";
-import { useToast } from "@/hooks/use-toast";
-import { AlertTriangle, RefreshCw, LogIn, WifiOff, Wifi } from "lucide-react";
+import { WifiOff } from "lucide-react";
 
 function buildSyncWsUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -12,123 +10,14 @@ function buildSyncWsUrl(): string {
 
 export default function SyncManager() {
   const { user } = useAuth();
-  const userId = user?.id || null;
-  const { toast } = useToast();
   const [connected, setConnected] = useState(true);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
   const [desktopConfig, setDesktopConfig] = useState<any | null>(null);
   const [licenseSnapshot, setLicenseSnapshot] = useState<any | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
-  const offlineToastAtRef = useRef(0);
-  const pendingCountRef = useRef(0);
-  const syncingRef = useRef(false);
 
-  useEffect(() => {
-    pendingCountRef.current = pendingCount;
-  }, [pendingCount]);
-
-  useEffect(() => {
-    syncingRef.current = syncing;
-  }, [syncing]);
-
-  const attemptFlush = useCallback(async () => {
-    if (!userId) return;
-    if (syncingRef.current) return;
-    if (pendingCountRef.current <= 0) return;
-    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-
-    // Auth pre-check: verify session is valid before flushing.
-    // This prevents wasting time sending items that will all 401.
-    try {
-      const authCheck = await fetch("/api/user", { credentials: "include" });
-      if (authCheck.status === 401) {
-        setSyncError("Please sign in to sync offline changes.");
-        return;
-      }
-    } catch {
-      // Host unreachable — skip flush, will retry on next interval
-      return;
-    }
-
-    const totalBefore = pendingCountRef.current;
-    setSyncing(true);
-    try {
-      const result = await flushOutbox(window.location.origin);
-      if (result.flushed > 0) {
-        queryClient.invalidateQueries();
-      }
-
-      const allSynced = result.flushed > 0 && result.remaining === 0;
-      const partialSync = result.flushed > 0 && result.remaining > 0;
-      const totalFailed = result.failedItems?.length || 0;
-
-      // Build failed items summary (e.g., "Create job, Update job status")
-      const failedSummary = (result.failedItems || [])
-        .slice(0, 3) // show max 3
-        .map((f) => {
-          const action = f.method === "POST" ? "Create" : f.method === "PUT" || f.method === "PATCH" ? "Update" : f.method === "DELETE" ? "Delete" : f.method;
-          const resource = f.url.includes("/comments") ? "comment" : f.url.includes("/flag") ? "flag" : f.url.includes("/jobs") ? "job" : "change";
-          return `${action} ${resource}`;
-        })
-        .join(", ");
-      const moreCount = totalFailed > 3 ? ` +${totalFailed - 3} more` : "";
-
-      if (allSynced) {
-        toast({
-          title: "All changes synced",
-          description: `Synced ${result.flushed} of ${totalBefore} offline change${totalBefore === 1 ? "" : "s"}.`,
-        });
-      } else if (partialSync) {
-        toast({
-          title: "Partially synced",
-          description: `Synced ${result.flushed} of ${totalBefore}. Failed: ${failedSummary}${moreCount}. Will retry.`,
-        });
-      } else if (result.flushed === 0 && totalBefore > 0 && result.lastError) {
-        toast({
-          title: "Sync failed",
-          description: totalFailed > 0
-            ? `Could not sync: ${failedSummary}${moreCount}. Will retry automatically.`
-            : `Could not sync ${totalBefore} change${totalBefore === 1 ? "" : "s"}. Will retry automatically.`,
-          variant: "destructive",
-        });
-      }
-
-      if (result.lastError) {
-        setSyncError(result.lastError);
-      } else if (result.remaining === 0) {
-        setSyncError(null);
-      }
-    } finally {
-      setSyncing(false);
-    }
-  }, [toast, userId]);
-
-  useEffect(() => {
-    return subscribeOutbox((items) => {
-      const origin = window.location.origin;
-      setPendingCount(items.filter((i) => i.origin === origin).length);
-    });
-  }, []);
-
-  useEffect(() => {
-    const handler = () => {
-      const now = Date.now();
-      if (now - offlineToastAtRef.current < 4000) return;
-      offlineToastAtRef.current = now;
-      toast({
-        title: "Saved offline",
-        description: "This change will sync automatically when the connection returns.",
-      });
-    };
-
-    window.addEventListener("otto:offlineQueued", handler as any);
-    return () => window.removeEventListener("otto:offlineQueued", handler as any);
-  }, [toast]);
-
+  // Load desktop config (mode, backup info)
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -139,19 +28,15 @@ export default function SyncManager() {
         if (!bridge?.getConfig) return;
         const cfg = await bridge.getConfig();
         if (!cancelled) setDesktopConfig(cfg);
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     };
 
     load();
     const timer = window.setInterval(load, 10_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [user?.id]);
 
+  // Load license status
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -162,25 +47,20 @@ export default function SyncManager() {
         if (!res.ok) return;
         const json = await res.json().catch(() => null);
         if (!cancelled) setLicenseSnapshot(json);
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     };
 
     load();
     const timer = window.setInterval(load, 60_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [user?.id]);
 
+  // WebSocket connection with auto-reconnect (exponential backoff)
   useEffect(() => {
     let disposed = false;
 
     const connect = () => {
-      if (disposed) return;
-      if (!user) return;
+      if (disposed || !user) return;
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
@@ -193,7 +73,6 @@ export default function SyncManager() {
         ws.onopen = () => {
           retryRef.current = 0;
           setConnected(true);
-          setSyncError(null);
           queryClient.invalidateQueries();
         };
 
@@ -203,9 +82,7 @@ export default function SyncManager() {
             if (data?.type === "office_updated") {
               queryClient.invalidateQueries();
             }
-          } catch {
-            // ignore
-          }
+          } catch { /* ignore */ }
         };
 
         const onCloseOrError = () => {
@@ -229,49 +106,18 @@ export default function SyncManager() {
     return () => {
       disposed = true;
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
-      try {
-        wsRef.current?.close();
-      } catch {
-        // ignore
-      }
+      try { wsRef.current?.close(); } catch { /* ignore */ }
     };
   }, [user?.id]);
-
-  useEffect(() => {
-    if (!userId) return;
-    void attemptFlush();
-  }, [attemptFlush, connected, pendingCount, userId]);
-
-  useEffect(() => {
-    if (!userId) return;
-    const onOnline = () => {
-      void attemptFlush();
-    };
-    window.addEventListener("online", onOnline);
-    return () => window.removeEventListener("online", onOnline);
-  }, [attemptFlush, userId]);
-
-  useEffect(() => {
-    if (!userId) return;
-    const timer = window.setInterval(() => {
-      void attemptFlush();
-    }, 15_000);
-    return () => window.clearInterval(timer);
-  }, [attemptFlush, userId]);
-
-  const handleRelogin = useCallback(() => {
-    window.location.href = "/auth";
-  }, []);
 
   if (!user) return null;
 
   const mode = String(desktopConfig?.mode || "").toLowerCase();
   const modeLabel = mode === "host" ? "Host" : mode === "client" ? "Client" : "Otto Tracker";
   const modeIsClient = mode === "client";
-  const connectionLabel = modeIsClient ? (connected ? "Connected" : "Disconnected") : "Local";
-
-  const hasPending = pendingCount > 0;
-  const blockedByAuth = syncError?.includes("sign in");
+  const connectionLabel = modeIsClient
+    ? (connected ? "Connected" : "Offline — view only")
+    : "Local";
 
   const backupInfo = (() => {
     if (mode !== "host") return null;
@@ -285,9 +131,7 @@ export default function SyncManager() {
     }
 
     if (networkEnabled && hasNetworkFolder) {
-      if (desktopConfig?.backupLastError) {
-        return { label: "Backups: error", warn: true };
-      }
+      if (desktopConfig?.backupLastError) return { label: "Backups: error", warn: true };
       if (desktopConfig?.backupLastAt) {
         return { label: `Backups: last ${new Date(desktopConfig.backupLastAt).toLocaleDateString()}`, warn: false };
       }
@@ -298,10 +142,7 @@ export default function SyncManager() {
       return { label: networkEnabled ? "Backups: not set up" : "Backups: disabled", warn: networkEnabled };
     }
 
-    if (desktopConfig?.localBackupLastError) {
-      return { label: "Backups: local error", warn: true };
-    }
-
+    if (desktopConfig?.localBackupLastError) return { label: "Backups: local error", warn: true };
     if (desktopConfig?.localBackupLastAt) {
       return {
         label: `Backups: local ${new Date(desktopConfig.localBackupLastAt).toLocaleDateString()}`,
@@ -324,47 +165,15 @@ export default function SyncManager() {
       ? "bg-emerald-500"
       : "bg-destructive";
 
-  // Prominent offline/sync banner shown above the status bar when there are issues
-  const showOfflineBanner = modeIsClient && (!connected || hasPending || syncError);
-
   return (
     <>
-      {/* Prominent sync/offline banner */}
-      {showOfflineBanner && (
-        <div className="fixed bottom-[41px] left-0 right-0 z-50">
-          {!connected && !hasPending && (
-            <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-t border-amber-200 dark:border-amber-800 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-200">
-              <WifiOff className="h-4 w-4 shrink-0" />
-              <span>Working offline. Changes you make will save automatically when reconnected.</span>
-            </div>
-          )}
-          {hasPending && !blockedByAuth && (
-            <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-t border-amber-200 dark:border-amber-800 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-200">
-              {syncing ? (
-                <RefreshCw className="h-4 w-4 shrink-0 animate-spin" />
-              ) : (
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-              )}
-              <span>
-                {syncing
-                  ? `Syncing ${pendingCount} change${pendingCount === 1 ? "" : "s"}…`
-                  : `${pendingCount} change${pendingCount === 1 ? "" : "s"} waiting to sync${!connected ? " — will sync when reconnected" : ""}`}
-              </span>
-            </div>
-          )}
-          {blockedByAuth && (
-            <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-t border-red-200 dark:border-red-800 px-4 py-2.5 text-sm text-red-800 dark:text-red-200">
-              <LogIn className="h-4 w-4 shrink-0" />
-              <span>{pendingCount} change{pendingCount === 1 ? "" : "s"} waiting to sync.</span>
-              <button
-                type="button"
-                onClick={handleRelogin}
-                className="ml-1 underline font-medium hover:text-red-900 dark:hover:text-red-100"
-              >
-                Sign in to sync
-              </button>
-            </div>
-          )}
+      {/* Offline banner for Client mode */}
+      {modeIsClient && !connected && (
+        <div className="fixed bottom-[33px] left-0 right-0 z-50">
+          <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-t border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <WifiOff className="h-4 w-4 shrink-0" />
+            <span>Host is offline. You can view existing data but changes require the Host to be running.</span>
+          </div>
         </div>
       )}
 
@@ -377,12 +186,6 @@ export default function SyncManager() {
               <span className={`h-2 w-2 rounded-full ${connectionDotClass}`} />
               {connectionLabel}
             </span>
-            {hasPending && (
-              <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-                <span className="font-medium">{pendingCount}</span>
-                <span>{syncing ? "syncing..." : "queued"}</span>
-              </span>
-            )}
           </div>
 
           <div className="flex items-center gap-3 min-w-0 text-muted-foreground">

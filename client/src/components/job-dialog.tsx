@@ -181,7 +181,6 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
         const optimisticJob = {
           id: clientJobId,
           orderId: `PENDING-${pendingSuffix}`,
-          _pendingSync: true, // marker for UI to show sync badge
           officeId: user?.officeId || '',
           ...data,
           phone: data.phone ? data.phone.replace(/\D/g, '') : '',
