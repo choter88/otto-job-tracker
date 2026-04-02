@@ -84,6 +84,15 @@ export function setupSyncWebSocket(httpServer: HTTPServer, sessionMiddleware: Re
   return wss;
 }
 
+/** Count all active WebSocket connections across all offices. */
+export function getConnectedClientCount(): number {
+  let count = 0;
+  for (const set of officeConnections.values()) {
+    count += set.size;
+  }
+  return count;
+}
+
 export function broadcastToOffice(officeId: string, data: any): void {
   const set = officeConnections.get(officeId);
   if (!set || set.size === 0) return;

@@ -245,7 +245,6 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
                     {/* Patient */}
                     <TableCell>
                       <p className="font-medium text-sm">{patientName}</p>
-                      <p className="text-xs text-muted-foreground font-mono">{job.orderId}</p>
                     </TableCell>
 
                     {/* Job Type */}

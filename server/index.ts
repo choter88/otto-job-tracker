@@ -4,7 +4,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { enforceAirgap } from "./airgap";
 import { logAudit } from "./audit-logger";
 import { getLicenseSnapshot, startLicenseScheduler, onLicenseStateChange } from "./license";
-import { broadcastToOffice, setupSyncWebSocket } from "./sync-websocket";
+import { broadcastToOffice, setupSyncWebSocket, getConnectedClientCount } from "./sync-websocket";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
@@ -465,6 +465,7 @@ function logStartupProgress(msg: string) {
   // Expose the server instance and a force-shutdown helper so Electron's
   // before-quit handler can close the port immediately.
   (globalThis as any).__ottoServer = server;
+  (globalThis as any).__ottoGetConnectedClientCount = getConnectedClientCount;
   (globalThis as any).__ottoForceShutdown = () => {
     // Destroy all open connections so the port is freed immediately.
     for (const socket of openConnections) {

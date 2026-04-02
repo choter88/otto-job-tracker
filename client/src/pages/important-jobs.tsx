@@ -334,9 +334,7 @@ function JobCard({
           </div>
 
           {/* Row 2: Metadata (single-line, truncated) */}
-          <div className="text-xs text-muted-foreground truncate" title={`${job.orderId} · Destination: ${destinationLabel}`}>
-            <span className="font-mono">{job.orderId}</span>
-            <span className="mx-2">·</span>
+          <div className="text-xs text-muted-foreground truncate" title={`Destination: ${destinationLabel}`}>
             <span className="inline-flex items-center gap-1">
               <span>Destination:</span>
               <span className="inline-flex items-center gap-1">

@@ -310,13 +310,13 @@ export default function AnalyticsDashboard() {
       const ageDays = Number.isFinite(baseDate.getTime()) ? daysSince(baseDate) : null;
       return {
         id: job.id,
-        orderId: job.orderId,
+        patientName: `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unknown",
         status: job.status,
         statusLabel: getStatusLabel(job.status),
         ageDays,
       };
     })
-    .filter((item): item is { id: string; orderId: string; status: string; statusLabel: string; ageDays: number } => typeof item.ageDays === "number")
+    .filter((item): item is { id: string; patientName: string; status: string; statusLabel: string; ageDays: number } => typeof item.ageDays === "number")
     .sort((a, b) => b.ageDays - a.ageDays)
     .slice(0, 5);
 
@@ -385,7 +385,7 @@ export default function AnalyticsDashboard() {
     .slice(0, 5)
     .map((flagged) => ({
       id: String(flagged.id),
-      orderId: String(flagged.orderId),
+      patientName: `${flagged.patientFirstName || ""} ${flagged.patientLastName || ""}`.trim() || "Unknown",
       flaggedBy: flagged?.flaggedBy?.firstName
         ? `${String(flagged.flaggedBy.firstName)} ${String(flagged.flaggedBy.lastName || "")}`.trim()
         : "",
@@ -960,7 +960,7 @@ export default function AnalyticsDashboard() {
                   {worstOverdueJobs.slice(0, 3).map((job: any) => (
                     <div key={job.id} className="flex items-start justify-between gap-3 text-sm">
                       <div className="min-w-0">
-                        <p className="font-mono truncate">{job.orderId}</p>
+                        <p className="font-medium truncate">{`${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unknown"}</p>
                         <p className="text-xs text-muted-foreground truncate">{getStatusLabel(String(job.status || ""))}</p>
                       </div>
                       <div className="text-right">
@@ -982,7 +982,7 @@ export default function AnalyticsDashboard() {
                   {backlogWatchlist.slice(0, 3).map((job) => (
                     <div key={job.id} className="flex items-start justify-between gap-3 text-sm">
                       <div className="min-w-0">
-                        <p className="font-mono truncate">{job.orderId}</p>
+                        <p className="font-medium truncate">{job.patientName}</p>
                         <p className="text-xs text-muted-foreground truncate">{job.statusLabel}</p>
                       </div>
                       <p className="font-semibold tabular-nums">{job.ageDays.toFixed(1)}d</p>
@@ -1001,7 +1001,7 @@ export default function AnalyticsDashboard() {
                   {starredWatchlist.slice(0, 3).map((job) => (
                     <div key={job.id} className="flex items-start justify-between gap-3 text-sm">
                       <div className="min-w-0">
-                        <p className="font-mono truncate">{job.orderId}</p>
+                        <p className="font-medium truncate">{job.patientName}</p>
                         <p className="text-xs text-muted-foreground truncate">
                           {job.flaggedBy ? `By ${job.flaggedBy}` : "Flagged"}
                           {job.hasNote ? " · Note" : ""}

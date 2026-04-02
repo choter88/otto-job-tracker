@@ -31,7 +31,7 @@ export default function CommentsSidebar({ open, onOpenChange, job }: CommentsSid
             <div className="p-4 border-b border-border flex items-center justify-between">
               <div>
                 <h3 className="font-semibold text-lg">Comments</h3>
-                <p className="text-sm text-muted-foreground">Order #{job.orderId}</p>
+                <p className="text-sm text-muted-foreground">{job.patientFirstName} {job.patientLastName} · {job.jobType}</p>
               </div>
               <Button
                 variant="ghost"

@@ -159,7 +159,7 @@ export default function JobDetailsModal({
             <div>
               <DialogTitle className="text-2xl">{patientDisplayName}</DialogTitle>
               <DialogDescription>
-                Order #{job.orderId} • Created {format(new Date(job.createdAt), "MMM d, yyyy 'at' h:mm a")}
+                Created {format(new Date(job.createdAt), "MMM d, yyyy 'at' h:mm a")}
               </DialogDescription>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Badge
@@ -365,7 +365,7 @@ export default function JobDetailsModal({
                 header={
                   <div className="px-4 py-3 border-b border-border flex items-center gap-2 text-sm">
                     <MessageSquare className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">Comments for order #{job.orderId}</span>
+                    <span className="font-medium">Comments</span>
                   </div>
                 }
               />
@@ -383,8 +383,7 @@ export default function JobDetailsModal({
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-muted/50 border-b">
-                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Order</th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Type</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Job Type</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Status</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Destination</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Created</th>
@@ -393,14 +392,11 @@ export default function JobDetailsModal({
                     <tbody>
                       {relatedJobs.map((rj: any) => (
                         <tr key={rj.id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
-                          <td className="px-3 py-2 font-mono text-xs">
-                            {rj.orderId}
-                            {rj.archived && (
-                              <Badge variant="secondary" className="ml-2 text-[10px]">archived</Badge>
-                            )}
-                          </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 text-xs">
                             <Badge variant="secondary" className="text-xs">{getJobTypeLabel(rj.jobType)}</Badge>
+                            {rj.archived && (
+                              <Badge variant="secondary" className="ml-1 text-[10px]">archived</Badge>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-xs">{getStatusLabel(rj.status)}</td>
                           <td className="px-3 py-2 text-xs">{getDestinationLabel(rj.orderDestination)}</td>
