@@ -244,6 +244,22 @@ export const jobStatusHistory = sqliteTable("job_status_history", {
   changedAt: integer("changed_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
+// Manual job link groups — user-created links between jobs (families, couples, multi-order patients)
+export const jobLinkGroups = sqliteTable(
+  "job_link_groups",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id").references(() => jobs.id, { onDelete: "cascade" }).notNull(),
+    groupId: text("group_id").notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    groupIdx: index("job_link_groups_group_idx").on(table.groupId),
+    jobIdx: uniqueIndex("job_link_groups_job_unique").on(table.jobId),
+  }),
+);
+
 // Notification rules table
 export const notificationRules = sqliteTable("notification_rules", {
   id: text("id").primaryKey(),

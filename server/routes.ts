@@ -17,6 +17,7 @@ import {
   notificationRules,
   users,
   jobFlags,
+  jobLinkGroups,
   insertJobSchema,
   insertJobCommentSchema,
   insertNotificationRuleSchema,
@@ -1311,12 +1312,119 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         )
         .orderBy(desc(archivedJobs.originalCreatedAt));
 
-      const related = [
-        ...activeRelated.map((j) => ({ ...j, archived: false })),
-        ...archivedRelated.map((j) => ({ ...j, archived: true })),
-      ];
+      // Also find manually-linked jobs via job_link_groups
+      const jobLinkEntry = await db
+        .select({ groupId: jobLinkGroups.groupId })
+        .from(jobLinkGroups)
+        .where(eq(jobLinkGroups.jobId, job.id))
+        .limit(1);
+
+      let manuallyLinked: any[] = [];
+      if (jobLinkEntry.length > 0) {
+        const groupId = jobLinkEntry[0].groupId;
+        const linkedEntries = await db
+          .select({ jobId: jobLinkGroups.jobId })
+          .from(jobLinkGroups)
+          .where(and(eq(jobLinkGroups.groupId, groupId), sql`${jobLinkGroups.jobId} != ${job.id}`));
+
+        const linkedJobIds = linkedEntries.map((e) => e.jobId);
+        if (linkedJobIds.length > 0) {
+          manuallyLinked = await db
+            .select({
+              id: jobs.id,
+              orderId: jobs.orderId,
+              patientFirstName: jobs.patientFirstName,
+              patientLastName: jobs.patientLastName,
+              jobType: jobs.jobType,
+              status: jobs.status,
+              orderDestination: jobs.orderDestination,
+              createdAt: jobs.createdAt,
+            })
+            .from(jobs)
+            .where(sql`${jobs.id} IN (${sql.join(linkedJobIds.map((id) => sql`${id}`), sql`, `)})`)
+            .orderBy(desc(jobs.createdAt));
+        }
+      }
+
+      // Merge and deduplicate
+      const seenIds = new Set<string>();
+      const related: any[] = [];
+      for (const j of [
+        ...manuallyLinked.map((j) => ({ ...j, archived: false, manualLink: true })),
+        ...activeRelated.map((j) => ({ ...j, archived: false, manualLink: false })),
+        ...archivedRelated.map((j) => ({ ...j, archived: true, manualLink: false })),
+      ]) {
+        if (!seenIds.has(j.id)) {
+          seenIds.add(j.id);
+          related.push(j);
+        }
+      }
 
       res.json(related);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Link jobs — create a link group from selected job IDs
+  app.post("/api/jobs/link", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const { jobIds } = req.body;
+      if (!Array.isArray(jobIds) || jobIds.length < 2) {
+        return res.status(400).json({ error: "At least 2 jobs required to create a link" });
+      }
+
+      const user = getOfficeUser(req);
+
+      // Check if any of the jobs are already in a link group — merge into that group
+      const existingLinks = await db
+        .select({ jobId: jobLinkGroups.jobId, groupId: jobLinkGroups.groupId })
+        .from(jobLinkGroups)
+        .where(sql`${jobLinkGroups.jobId} IN (${sql.join(jobIds.map((id: string) => sql`${id}`), sql`, `)})`);
+
+      let groupId: string;
+      if (existingLinks.length > 0) {
+        // Use the first existing group — merge all jobs into it
+        groupId = existingLinks[0].groupId;
+      } else {
+        groupId = randomUUID();
+      }
+
+      // Insert each job that isn't already in this group
+      const existingJobIds = new Set(existingLinks.filter((e) => e.groupId === groupId).map((e) => e.jobId));
+      let linked = 0;
+      for (const jobId of jobIds) {
+        if (existingJobIds.has(jobId)) continue;
+        // Remove from any other group first (a job can only be in one group)
+        await db.delete(jobLinkGroups).where(eq(jobLinkGroups.jobId, jobId));
+        await db.insert(jobLinkGroups).values({
+          id: randomUUID(),
+          jobId,
+          groupId,
+          createdBy: user.id,
+        });
+        linked++;
+      }
+
+      broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "job_link" });
+      res.json({ ok: true, groupId, linked });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Unlink a job from its link group
+  app.delete("/api/jobs/:jobId/link", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job || job.officeId !== getAuthUser(req).officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      await db.delete(jobLinkGroups).where(eq(jobLinkGroups.jobId, job.id));
+
+      broadcastToOffice(job.officeId, { type: "office_updated", ts: Date.now(), source: "job_unlink" });
+      res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

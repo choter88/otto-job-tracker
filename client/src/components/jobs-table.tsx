@@ -233,6 +233,22 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     },
   });
 
+  const linkJobsMutation = useMutation({
+    mutationFn: async (jobIds: string[]) => {
+      const res = await apiRequest("POST", "/api/jobs/link", { jobIds });
+      return res.json();
+    },
+    onSuccess: () => {
+      setSelectedJobs([]);
+      setSelectionMode(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      toast({ title: "Jobs linked", description: "Selected jobs are now linked together." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
   const [flagDialogJobId, setFlagDialogJobId] = useState<string | null>(null);
   const [flagNote, setFlagNote] = useState("");
 
@@ -1323,6 +1339,16 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   ))}
                 </SelectContent>
               </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={selectedJobs.length < 2}
+                onClick={() => linkJobsMutation.mutate(selectedJobs)}
+              >
+                <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                Link Jobs
+              </Button>
               <Button
                 variant="destructive"
                 size="sm"

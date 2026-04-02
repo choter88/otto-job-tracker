@@ -458,6 +458,16 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
       changed_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     );`,
 
+    `CREATE TABLE IF NOT EXISTS job_link_groups (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL,
+      created_by TEXT REFERENCES users(id),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    );`,
+    `CREATE INDEX IF NOT EXISTS job_link_groups_group_idx ON job_link_groups (group_id);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS job_link_groups_job_unique ON job_link_groups (job_id);`,
+
     `CREATE TABLE IF NOT EXISTS notification_rules (
       id TEXT PRIMARY KEY,
       office_id TEXT NOT NULL REFERENCES offices(id),
