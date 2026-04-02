@@ -284,6 +284,13 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     }
   };
 
+  const ensureUserPreferencesColumn = (): void => {
+    const cols = sqlite.prepare(`PRAGMA table_info(users)`).all() as any[];
+    if (!cols.some((c: any) => c.name === "preferences")) {
+      sqlite.prepare(`ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'`).run();
+    }
+  };
+
   const statements: string[] = [
     `PRAGMA foreign_keys = ON;`,
     `PRAGMA journal_mode = WAL;`,
@@ -580,6 +587,7 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     ensureAccountSignupRequestAuthColumns();
     ensureJobFlagNoteColumns();
     ensureHighContrastOfficeColors();
+    ensureUserPreferencesColumn();
   })();
 
   // Run numbered SQL migrations from server/migrations/.

@@ -1,15 +1,17 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Clock3, Edit, FileText, MessageSquare, History, Link2 } from "lucide-react";
+import { Clock3, Edit, FileText, MessageSquare, History, Link2, Star, Unlink } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
 import JobCommentsPanel from "@/components/job-comments-panel";
 import { getColorForBadge, getDefaultDestinationColor, getDefaultJobTypeColor, getDefaultStatusColor } from "@/lib/default-colors";
 import { formatPatientDisplayName } from "@shared/name-format";
+import { apiRequest } from "@/lib/queryClient";
 import type { Job, Office } from "@shared/schema";
 
 export type JobDetailsTab = "overview" | "comments" | "related";
@@ -34,6 +36,9 @@ interface JobDetailsModalProps {
   activeTab: JobDetailsTab;
   onActiveTabChange: (tab: JobDetailsTab) => void;
   onEditJob: (job: Job) => void;
+  onSwitchJob?: (jobId: string) => void;
+  flaggedJobIds?: string[];
+  overdueJobIds?: Set<string>;
 }
 
 function toTitleCase(value: string) {
@@ -51,8 +56,13 @@ export default function JobDetailsModal({
   activeTab,
   onActiveTabChange,
   onEditJob,
+  onSwitchJob,
+  flaggedJobIds = [],
+  overdueJobIds = new Set(),
 }: JobDetailsModalProps) {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const { data: office } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
@@ -82,6 +92,19 @@ export default function JobDetailsModal({
       return res.json();
     },
     enabled: !!job?.id && open,
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      await apiRequest("DELETE", `/api/jobs/${jobId}/link`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "related"] });
+      toast({ title: "Job unlinked" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to unlink job", description: error.message, variant: "destructive" });
+    },
   });
 
   const customStatuses = useMemo(() => (office?.settings?.customStatuses || []) as any[], [office?.settings?.customStatuses]);
@@ -153,7 +176,7 @@ export default function JobDetailsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-5xl h-[86vh] max-h-[86vh] flex flex-col" data-testid="dialog-job-details">
+      <DialogContent className="w-full max-w-5xl h-[86vh] max-h-[86vh] flex flex-col bg-background" data-testid="dialog-job-details">
         <DialogHeader className="space-y-3 pr-12">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -200,10 +223,10 @@ export default function JobDetailsModal({
           onValueChange={(value) => onActiveTabChange(value as JobDetailsTab)}
           className="flex-1 flex flex-col min-h-0"
         >
-          <TabsList className={`grid w-full ${relatedJobs.length > 0 ? "grid-cols-3" : "grid-cols-2"} bg-muted/60`}>
+          <TabsList className={`grid w-full ${relatedJobs.length > 0 ? "grid-cols-3" : "grid-cols-2"} bg-muted h-11 p-1 rounded-lg`}>
             <TabsTrigger
               value="overview"
-              className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+              className="rounded-md text-sm font-medium data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background data-[state=inactive]:hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
               data-testid="tab-job-details-overview"
             >
               <FileText className="mr-2 h-4 w-4" />
@@ -211,7 +234,7 @@ export default function JobDetailsModal({
             </TabsTrigger>
             <TabsTrigger
               value="comments"
-              className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+              className="rounded-md text-sm font-medium data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background data-[state=inactive]:hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
               data-testid="tab-job-details-comments"
             >
               <MessageSquare className="mr-2 h-4 w-4" />
@@ -220,11 +243,11 @@ export default function JobDetailsModal({
             {relatedJobs.length > 0 && (
               <TabsTrigger
                 value="related"
-                className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+                className="rounded-md text-sm font-medium data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background data-[state=inactive]:hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
                 data-testid="tab-job-details-related"
               >
                 <Link2 className="mr-2 h-4 w-4" />
-                Related ({relatedJobs.length})
+                Related ({relatedJobs.length + 1})
               </TabsTrigger>
             )}
           </TabsList>
@@ -384,39 +407,112 @@ export default function JobDetailsModal({
             </div>
           </TabsContent>
 
-          {/* Related Jobs tab — auto-detected by patient name match */}
+          {/* Related Jobs tab — auto-detected by patient name match + manually linked */}
           {relatedJobs.length > 0 && (
             <TabsContent value="related" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground">
-                  Other jobs for this patient, detected automatically by matching name.
+                  Related jobs for this patient (auto-detected by name match and manually linked).
                 </p>
                 <div className="border rounded-lg overflow-hidden">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-muted/50 border-b">
-                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Job Type</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">{useTrayNumber ? "Tray #" : "Patient"}</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Type</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Status</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Destination</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Created</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground"></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {relatedJobs.map((rj: any) => (
-                        <tr key={rj.id} className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
-                          <td className="px-3 py-2 text-xs">
-                            <Badge variant="secondary" className="text-xs">{getJobTypeLabel(rj.jobType)}</Badge>
-                            {rj.archived && (
-                              <Badge variant="secondary" className="ml-1 text-[10px]">archived</Badge>
+                      {/* Current job row */}
+                      <tr className="border-b bg-primary/5">
+                        <td className="px-3 py-2 text-xs">
+                          <div className="flex items-center gap-1.5">
+                            {flaggedJobIds.includes(job.id) && (
+                              <Star className="h-3 w-3 fill-yellow-500 text-yellow-500 shrink-0" />
                             )}
-                          </td>
-                          <td className="px-3 py-2 text-xs">{getStatusLabel(rj.status)}</td>
-                          <td className="px-3 py-2 text-xs">{getDestinationLabel(rj.orderDestination)}</td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {format(new Date(rj.createdAt), "MMM d, yyyy")}
-                          </td>
-                        </tr>
-                      ))}
+                            <span className="font-medium">{patientDisplayName}</span>
+                            <span className="text-muted-foreground">(This job)</span>
+                            {overdueJobIds.has(job.id) && (
+                              <Badge className="text-[10px] px-1.5 py-0 h-4 border-0" style={{ backgroundColor: 'hsl(0 84% 60% / 0.15)', color: 'hsl(0 84% 50%)' }}>OVERDUE</Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {(() => { const c = getJobTypeBadgeColor(job.jobType); return <Badge className="text-xs border-0" style={{ backgroundColor: c.background, color: c.text }}>{getJobTypeLabel(job.jobType)}</Badge>; })()}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {(() => { const c = getStatusBadgeColor(job.status); return <Badge className="text-xs border-0" style={{ backgroundColor: c.background, color: c.text }}>{getStatusLabel(job.status)}</Badge>; })()}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {(() => { const c = getDestinationBadgeColor(job.orderDestination); return <Badge className="text-xs border-0" style={{ backgroundColor: c.background, color: c.text }}>{getDestinationLabel(job.orderDestination)}</Badge>; })()}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground">
+                          {format(new Date(job.createdAt), "MMM d, yyyy")}
+                        </td>
+                        <td className="px-3 py-2 text-xs"></td>
+                      </tr>
+                      {/* Related job rows */}
+                      {relatedJobs.map((rj: any) => {
+                        const rjDisplayName = useTrayNumber
+                          ? (rj.trayNumber || "Tray not set")
+                          : (formatPatientDisplayName(rj.patientFirstName, rj.patientLastName) || "Unnamed");
+                        const rjTypeBadge = getJobTypeBadgeColor(rj.jobType);
+                        const rjStatusBadge = getStatusBadgeColor(rj.status);
+                        const rjDestBadge = getDestinationBadgeColor(rj.orderDestination);
+                        const isClickable = !rj.archived && onSwitchJob;
+                        return (
+                          <tr
+                            key={rj.id}
+                            className={`border-b last:border-b-0 transition-colors ${isClickable ? "hover:bg-muted/30 cursor-pointer" : "hover:bg-muted/20"}`}
+                            onClick={isClickable ? () => onSwitchJob!(rj.id) : undefined}
+                          >
+                            <td className="px-3 py-2 text-xs">
+                              <div className="flex items-center gap-1.5">
+                                {flaggedJobIds.includes(rj.id) && (
+                                  <Star className="h-3 w-3 fill-yellow-500 text-yellow-500 shrink-0" />
+                                )}
+                                <span className="font-medium">{rjDisplayName}</span>
+                                {rj.archived && (
+                                  <Badge variant="secondary" className="text-[10px] px-1 py-0">archived</Badge>
+                                )}
+                                {overdueJobIds.has(rj.id) && (
+                                  <Badge className="text-[10px] px-1.5 py-0 h-4 border-0" style={{ backgroundColor: 'hsl(0 84% 60% / 0.15)', color: 'hsl(0 84% 50%)' }}>OVERDUE</Badge>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-xs">
+                              <Badge className="text-xs border-0" style={{ backgroundColor: rjTypeBadge.background, color: rjTypeBadge.text }}>{getJobTypeLabel(rj.jobType)}</Badge>
+                            </td>
+                            <td className="px-3 py-2 text-xs">
+                              <Badge className="text-xs border-0" style={{ backgroundColor: rjStatusBadge.background, color: rjStatusBadge.text }}>{getStatusLabel(rj.status)}</Badge>
+                            </td>
+                            <td className="px-3 py-2 text-xs">
+                              <Badge className="text-xs border-0" style={{ backgroundColor: rjDestBadge.background, color: rjDestBadge.text }}>{getDestinationLabel(rj.orderDestination)}</Badge>
+                            </td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground">
+                              {format(new Date(rj.createdAt), "MMM d, yyyy")}
+                            </td>
+                            <td className="px-3 py-2 text-xs">
+                              {rj.manualLink && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
+                                  onClick={(e) => { e.stopPropagation(); unlinkMutation.mutate(rj.id); }}
+                                  disabled={unlinkMutation.isPending}
+                                >
+                                  <Unlink className="h-3 w-3 mr-1" />
+                                  Unlink
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

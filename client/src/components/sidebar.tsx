@@ -14,6 +14,7 @@ import {
   PanelLeft,
   ChevronRight,
   MessageCircleQuestion,
+  Settings,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -23,11 +24,12 @@ interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   onFeedbackClick?: () => void;
+  onUserSettingsClick?: () => void;
 }
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "otto.sidebar.collapsed";
 
-export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: SidebarProps) {
+export default function Sidebar({ activeTab, onTabChange, onFeedbackClick, onUserSettingsClick }: SidebarProps) {
   const { user } = useAuth();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -274,8 +276,33 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick }: Sid
         </div>
       )}
 
-      {/* Help & Feedback — pinned to bottom */}
-      <div className="border-t border-border py-3 px-2">
+      {/* Settings & Help — pinned to bottom */}
+      <div className="border-t border-border py-3 px-2 space-y-0.5">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "w-full flex items-center h-10 text-sm font-medium rounded-md",
+                "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              )}
+              onClick={onUserSettingsClick}
+              aria-label="User Settings"
+              data-testid="nav-user-settings"
+            >
+              <span className={cn("flex items-center justify-center shrink-0", collapsed ? "w-full" : "w-16")}>
+                <Settings className="h-4 w-4" />
+              </span>
+              {!collapsed && (
+                <span className="flex-1 text-left">User Settings</span>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            <p>Font size, dark mode, and other preferences</p>
+          </TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <button

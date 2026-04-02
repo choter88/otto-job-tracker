@@ -227,6 +227,36 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     res.json({ ok: true, ts: Date.now() });
   });
 
+  // ── User preferences ────────────────────────────────────────────────
+  app.get("/api/user/preferences", requireAuth, async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      const row = await db.select({ preferences: users.preferences }).from(users).where(eq(users.id, user.id)).limit(1);
+      const prefs = row[0]?.preferences ?? {};
+      res.json(typeof prefs === "string" ? JSON.parse(prefs) : prefs);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/user/preferences", requireAuth, async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      const incoming = req.body;
+      if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+        return res.status(400).json({ error: "Body must be a JSON object" });
+      }
+      const row = await db.select({ preferences: users.preferences }).from(users).where(eq(users.id, user.id)).limit(1);
+      const existing = row[0]?.preferences ?? {};
+      const current = typeof existing === "string" ? JSON.parse(existing) : existing;
+      const merged = { ...current, ...incoming };
+      await db.update(users).set({ preferences: merged, updatedAt: new Date() }).where(eq(users.id, user.id));
+      res.json(merged);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/license/status", (_req, res) => {
     applyNoStoreHeaders(res);
     res.json(getLicenseSnapshot());
@@ -1255,6 +1285,29 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  // Linked job IDs — returns all job IDs that are in manual link groups for this office
+  app.get("/api/jobs/linked-ids", requireOffice, async (req, res) => {
+    try {
+      const officeId = getOfficeUser(req).officeId;
+      // Get all job IDs that are in link groups, filtered to this office
+      const linked = await db
+        .select({ jobId: jobLinkGroups.jobId, groupId: jobLinkGroups.groupId })
+        .from(jobLinkGroups)
+        .innerJoin(jobs, eq(jobLinkGroups.jobId, jobs.id))
+        .where(eq(jobs.officeId, officeId));
+
+      // Group by groupId so the client knows which jobs are linked together
+      const groups: Record<string, string[]> = {};
+      for (const row of linked) {
+        if (!groups[row.groupId]) groups[row.groupId] = [];
+        groups[row.groupId].push(row.jobId);
+      }
+      res.json(groups);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Related jobs — find other jobs for the same patient
   app.get("/api/jobs/:jobId/related", requireOffice, async (req, res) => {
     try {
@@ -1274,6 +1327,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           orderId: jobs.orderId,
           patientFirstName: jobs.patientFirstName,
           patientLastName: jobs.patientLastName,
+          trayNumber: jobs.trayNumber,
           jobType: jobs.jobType,
           status: jobs.status,
           orderDestination: jobs.orderDestination,
@@ -1297,6 +1351,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           orderId: archivedJobs.orderId,
           patientFirstName: archivedJobs.patientFirstName,
           patientLastName: archivedJobs.patientLastName,
+          trayNumber: archivedJobs.trayNumber,
           jobType: archivedJobs.jobType,
           status: archivedJobs.finalStatus,
           orderDestination: archivedJobs.orderDestination,
@@ -1335,6 +1390,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               orderId: jobs.orderId,
               patientFirstName: jobs.patientFirstName,
               patientLastName: jobs.patientLastName,
+              trayNumber: jobs.trayNumber,
               jobType: jobs.jobType,
               status: jobs.status,
               orderDestination: jobs.orderDestination,

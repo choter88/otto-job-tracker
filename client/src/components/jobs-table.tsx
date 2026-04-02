@@ -120,8 +120,24 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     enabled: !!user?.officeId,
   });
 
+  const { data: linkedGroups = {} } = useQuery<Record<string, string[]>>({
+    queryKey: ["/api/jobs/linked-ids"],
+    enabled: !!user?.officeId,
+  });
+
   const flaggedJobIds = useMemo(() => flaggedJobs.map((job: any) => job.id), [flaggedJobs]);
   const overdueJobIds = useMemo(() => new Set(overdueJobs.map((job: any) => job.id)), [overdueJobs]);
+
+  // Build a set of manually-linked job IDs for quick lookup
+  const linkedJobIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const group of Object.values(linkedGroups)) {
+      if (group.length >= 2) {
+        for (const id of group) set.add(id);
+      }
+    }
+    return set;
+  }, [linkedGroups]);
 
   const updateJobMutation = useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<Job> }) => {
@@ -242,6 +258,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
       setSelectedJobs([]);
       setSelectionMode(false);
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/linked-ids"] });
       toast({ title: "Jobs linked", description: "Selected jobs are now linked together." });
     },
     onError: (error: Error) => {
@@ -794,15 +811,17 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </div>
         </div>
 
-        {/* Toolbar: Select + Filters (all inline) */}
+        {/* Toolbar: Select + Filters / Bulk Actions (mutually exclusive) */}
         <div className="flex flex-wrap items-center gap-2 px-5 py-2">
           <Button
             variant={selectionMode ? "secondary" : "ghost"}
             size="sm"
             className="h-7 text-xs gap-1.5"
             onClick={() => {
-              setSelectionMode((v) => !v);
-              if (selectionMode) setSelectedJobs([]);
+              const entering = !selectionMode;
+              setSelectionMode(entering);
+              if (!entering) setSelectedJobs([]);
+              if (entering) setFiltersOpen(false);
             }}
           >
             <CheckSquare className="h-3.5 w-3.5" />
@@ -814,140 +833,213 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             )}
           </Button>
 
-          <div className="w-px h-4 bg-border" />
-
-          <Button
-            variant={filtersOpen ? "secondary" : "ghost"}
-            size="sm"
-            className="h-7 text-xs gap-1.5"
-            onClick={() => setFiltersOpen((v) => !v)}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            Filters
-            {!filtersOpen && (statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
-              <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
-                {[statusFilter !== "all", typeFilter !== "all", destinationFilter !== "all", overdueOnly].filter(Boolean).length}
-              </span>
-            )}
-          </Button>
-
-          {filtersOpen && <>
-            <div className="flex flex-wrap items-center gap-2">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
-              <SelectValue placeholder="All Statuses" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              {customStatuses.length > 0 ? (
-                customStatuses.map((status: any) => (
-                  <SelectItem key={status.id} value={status.id}>
-                    {status.label}
-                  </SelectItem>
-                ))
-              ) : (
-                <>
-                  <SelectItem value="job_created">Job Created</SelectItem>
-                  <SelectItem value="ordered">Ordered</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
-                </>
-              )}
-            </SelectContent>
-          </Select>
-
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-type-filter">
-              <SelectValue placeholder="All Types" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              {customJobTypes.length > 0 ? (
-                customJobTypes.map((type: any) => (
-                  <SelectItem key={type.id} value={type.id}>
-                    {type.label}
-                  </SelectItem>
-                ))
-              ) : (
-                <>
-                  <SelectItem value="contacts">Contacts</SelectItem>
-                  <SelectItem value="glasses">Glasses</SelectItem>
-                  <SelectItem value="sunglasses">Sunglasses</SelectItem>
-                </>
-              )}
-            </SelectContent>
-          </Select>
-
-          <Select value={destinationFilter} onValueChange={setDestinationFilter}>
-            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-destination-filter">
-              <SelectValue placeholder="All Destinations" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Destinations</SelectItem>
-              {customOrderDestinations.length > 0 ? (
-                customOrderDestinations.map((dest: any) => (
-                  <SelectItem key={dest.id} value={dest.label}>
-                    {dest.label}
-                  </SelectItem>
-                ))
-              ) : (
-                <>
-                  <SelectItem value="Vision Lab">Vision Lab</SelectItem>
-                  <SelectItem value="EyeTech Labs">EyeTech Labs</SelectItem>
-                  <SelectItem value="Premium Optics">Premium Optics</SelectItem>
-                </>
-              )}
-            </SelectContent>
-          </Select>
-
-          <label className="flex items-center gap-2 px-3 py-2 bg-muted rounded-md cursor-pointer">
-            <Checkbox
-              checked={overdueOnly}
-              onCheckedChange={(checked) => setOverdueOnly(!!checked)}
-              data-testid="checkbox-overdue-only"
-            />
-            <span className="text-xs">Overdue Only</span>
-          </label>
-
-          {customColumns
-            .filter((col: any) => col.type === 'checkbox')
-            .map((column: any) => (
-              <label 
-                key={column.id} 
-                className="flex items-center gap-2 px-3 py-2 bg-muted rounded-md cursor-pointer"
-              >
-                <Checkbox
-                  checked={customColumnFilters[column.id] === 'unchecked'}
-                  onCheckedChange={(checked) => {
-                    setCustomColumnFilters({
-                      ...customColumnFilters,
-                      [column.id]: checked ? 'unchecked' : null
-                    });
-                  }}
-                  data-testid={`checkbox-filter-custom-${column.id}`}
-                />
-                <span className="text-xs">{column.name} (unchecked only)</span>
-              </label>
-            ))}
-            </div>
-
-            {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
-              <button
-                type="button"
-                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                onClick={() => {
-                  setStatusFilter("all");
-                  setTypeFilter("all");
-                  setDestinationFilter("all");
-                  setOverdueOnly(false);
-                  setCustomColumnFilters({});
+          {/* Bulk actions — inline, shown when jobs are selected */}
+          {selectionMode && selectedJobs.length > 0 && (
+            <>
+              <div className="w-px h-4 bg-border" />
+              <span className="text-xs font-medium">{selectedJobs.length} selected</span>
+              <Select
+                value=""
+                onValueChange={(newStatus) => {
+                  if (!newStatus) return;
+                  bulkUpdateMutation.mutate({ jobIds: selectedJobs, updates: { status: newStatus } });
                 }}
               >
-                <X className="h-3 w-3" />
+                <SelectTrigger className="h-7 w-36 text-xs">
+                  <SelectValue placeholder="Update Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(customStatuses.length > 0 ? customStatuses : [
+                    { id: "job_created", label: "Job Created" },
+                    { id: "ordered", label: "Ordered" },
+                    { id: "in_progress", label: "In Progress" },
+                    { id: "quality_check", label: "Quality Check" },
+                    { id: "ready_for_pickup", label: "Ready for Pickup" },
+                    { id: "completed", label: "Completed" },
+                    { id: "cancelled", label: "Cancelled" },
+                  ]).map((s: any) => (
+                    <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                disabled={selectedJobs.length < 2}
+                onClick={() => linkJobsMutation.mutate(selectedJobs)}
+              >
+                <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                Link Jobs
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => {
+                  if (confirm(`Delete ${selectedJobs.length} job${selectedJobs.length !== 1 ? "s" : ""}? This cannot be undone.`)) {
+                    bulkDeleteMutation.mutate(selectedJobs);
+                  }
+                }}
+              >
+                Delete
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setSelectedJobs([])}
+              >
                 Clear
-              </button>
-            )}
-          </>}
+              </Button>
+            </>
+          )}
+
+          {selectionMode && selectedJobs.length === 0 && (
+            <>
+              <div className="w-px h-4 bg-border" />
+              <span className="text-xs text-muted-foreground italic">Click rows or use checkboxes to select jobs</span>
+            </>
+          )}
+
+          {/* Filters — hidden when in selection mode */}
+          {!selectionMode && (
+            <>
+              <div className="w-px h-4 bg-border" />
+              <Button
+                variant={filtersOpen ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={() => setFiltersOpen((v) => !v)}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Filters
+                {!filtersOpen && (statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
+                  <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
+                    {[statusFilter !== "all", typeFilter !== "all", destinationFilter !== "all", overdueOnly].filter(Boolean).length}
+                  </span>
+                )}
+              </Button>
+
+              {filtersOpen && <>
+                <div className="flex flex-wrap items-center gap-2">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
+                  <SelectValue placeholder="All Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  {customStatuses.length > 0 ? (
+                    customStatuses.map((status: any) => (
+                      <SelectItem key={status.id} value={status.id}>
+                        {status.label}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <>
+                      <SelectItem value="job_created">Job Created</SelectItem>
+                      <SelectItem value="ordered">Ordered</SelectItem>
+                      <SelectItem value="in_progress">In Progress</SelectItem>
+                      <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-type-filter">
+                  <SelectValue placeholder="All Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  {customJobTypes.length > 0 ? (
+                    customJobTypes.map((type: any) => (
+                      <SelectItem key={type.id} value={type.id}>
+                        {type.label}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <>
+                      <SelectItem value="contacts">Contacts</SelectItem>
+                      <SelectItem value="glasses">Glasses</SelectItem>
+                      <SelectItem value="sunglasses">Sunglasses</SelectItem>
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+
+              <Select value={destinationFilter} onValueChange={setDestinationFilter}>
+                <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-destination-filter">
+                  <SelectValue placeholder="All Destinations" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Destinations</SelectItem>
+                  {customOrderDestinations.length > 0 ? (
+                    customOrderDestinations.map((dest: any) => (
+                      <SelectItem key={dest.id} value={dest.label}>
+                        {dest.label}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <>
+                      <SelectItem value="Vision Lab">Vision Lab</SelectItem>
+                      <SelectItem value="EyeTech Labs">EyeTech Labs</SelectItem>
+                      <SelectItem value="Premium Optics">Premium Optics</SelectItem>
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+
+              <label className="flex items-center gap-2 px-3 py-2 bg-muted rounded-md cursor-pointer">
+                <Checkbox
+                  checked={overdueOnly}
+                  onCheckedChange={(checked) => setOverdueOnly(!!checked)}
+                  data-testid="checkbox-overdue-only"
+                />
+                <span className="text-xs">Overdue Only</span>
+              </label>
+
+              {customColumns
+                .filter((col: any) => col.type === 'checkbox')
+                .map((column: any) => (
+                  <label
+                    key={column.id}
+                    className="flex items-center gap-2 px-3 py-2 bg-muted rounded-md cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={customColumnFilters[column.id] === 'unchecked'}
+                      onCheckedChange={(checked) => {
+                        setCustomColumnFilters({
+                          ...customColumnFilters,
+                          [column.id]: checked ? 'unchecked' : null
+                        });
+                      }}
+                      data-testid={`checkbox-filter-custom-${column.id}`}
+                    />
+                    <span className="text-xs">{column.name} (unchecked only)</span>
+                  </label>
+                ))}
+                </div>
+
+                {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                    onClick={() => {
+                      setStatusFilter("all");
+                      setTypeFilter("all");
+                      setDestinationFilter("all");
+                      setOverdueOnly(false);
+                      setCustomColumnFilters({});
+                    }}
+                  >
+                    <X className="h-3 w-3" />
+                    Clear
+                  </button>
+                )}
+              </>}
+            </>
+          )}
         </div>
 
         {/* Jobs Table */}
@@ -955,6 +1047,18 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
             <TableHeader className="bg-muted/50">
               <TableRow>
+                {selectionMode && (
+                  <TableHead className="w-10 text-center">
+                    <Checkbox
+                      checked={filteredJobs.length > 0 && selectedJobs.length === filteredJobs.length}
+                      onCheckedChange={(checked) => {
+                        setSelectedJobs(checked ? filteredJobs.map((j) => j.id) : []);
+                      }}
+                      aria-label="Select all jobs"
+                      className="mx-auto"
+                    />
+                  </TableHead>
+                )}
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
                 </TableHead>
@@ -1074,6 +1178,20 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   }}
                   data-testid={`row-job-${job.id}`}
                 >
+                  {selectionMode && (
+                    <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedJobs.includes(job.id)}
+                        onCheckedChange={(checked) => {
+                          setSelectedJobs((prev) =>
+                            checked ? [...prev, job.id] : prev.filter((id) => id !== job.id)
+                          );
+                        }}
+                        aria-label={`Select job`}
+                        className="mx-auto"
+                      />
+                    </TableCell>
+                  )}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"
@@ -1082,7 +1200,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       onClick={() => handleToggleFlag(job.id)}
                       data-testid={`button-flag-${job.id}`}
                     >
-                      <Star 
+                      <Star
                         className={cn(
                           "h-4 w-4",
                           flaggedJobIds.includes(job.id) ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground"
@@ -1095,10 +1213,20 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       <span className="font-medium truncate">
                         {getPatientLabel(job)}
                       </span>
+                      {linkedJobIds.has(job.id) && (
+                        <span
+                          className="inline-flex items-center gap-0.5 text-[10px] cursor-pointer"
+                          style={{ color: 'hsl(221 83% 53%)' }}
+                          title="Manually linked to other jobs"
+                          onClick={(e) => { e.stopPropagation(); handleOpenJobDetails(job, "related"); }}
+                        >
+                          <Link2 className="h-3 w-3" />
+                        </span>
+                      )}
                       {(() => {
                         const key = `${(job.patientFirstName || "").trim()} ${(job.patientLastName || "").trim()}`.toLowerCase();
                         const count = patientJobCounts.get(key) || 0;
-                        return count > 1 ? (
+                        return count > 1 && !linkedJobIds.has(job.id) ? (
                           <span
                             className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary cursor-pointer"
                             title={`${count - 1} other job${count > 2 ? "s" : ""} for this patient`}
@@ -1308,70 +1436,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </p>
         </div>
 
-        {/* Bulk Actions Bar — only visible in selection mode */}
-        {selectionMode && selectedJobs.length > 0 && (
-          <div className="px-4 py-3 bg-primary/5 border-t border-primary/20 flex items-center gap-3">
-            <p className="text-sm font-medium">
-              {selectedJobs.length} job{selectedJobs.length !== 1 ? "s" : ""} selected
-            </p>
-            <div className="flex items-center gap-2 ml-auto">
-              <Select
-                value=""
-                onValueChange={(newStatus) => {
-                  if (!newStatus) return;
-                  bulkUpdateMutation.mutate({ jobIds: selectedJobs, updates: { status: newStatus } });
-                }}
-              >
-                <SelectTrigger className="h-8 w-40 text-xs">
-                  <SelectValue placeholder="Update Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(customStatuses.length > 0 ? customStatuses : [
-                    { id: "job_created", label: "Job Created" },
-                    { id: "ordered", label: "Ordered" },
-                    { id: "in_progress", label: "In Progress" },
-                    { id: "quality_check", label: "Quality Check" },
-                    { id: "ready_for_pickup", label: "Ready for Pickup" },
-                    { id: "completed", label: "Completed" },
-                    { id: "cancelled", label: "Cancelled" },
-                  ]).map((s: any) => (
-                    <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                disabled={selectedJobs.length < 2}
-                onClick={() => linkJobsMutation.mutate(selectedJobs)}
-              >
-                <Link2 className="mr-1.5 h-3.5 w-3.5" />
-                Link Jobs
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => {
-                  if (confirm(`Delete ${selectedJobs.length} job${selectedJobs.length !== 1 ? "s" : ""}? This cannot be undone.`)) {
-                    bulkDeleteMutation.mutate(selectedJobs);
-                  }
-                }}
-              >
-                Delete Selected
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => setSelectedJobs([])}
-              >
-                Clear
-              </Button>
-            </div>
-          </div>
-        )}
+        {/* Bulk actions are now inline in the toolbar above */}
       </Card>
 
       {/* Job Dialog */}
@@ -1393,6 +1458,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           activeTab={jobDetailsTab}
           onActiveTabChange={setJobDetailsTab}
           onEditJob={handleStartEditingJob}
+          onSwitchJob={(jobId) => {
+            setSelectedDetailsJobId(jobId);
+            setJobDetailsTab("overview");
+          }}
+          flaggedJobIds={flaggedJobIds}
+          overdueJobIds={overdueJobIds}
         />
       )}
 

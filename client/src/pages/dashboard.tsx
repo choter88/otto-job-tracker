@@ -12,6 +12,7 @@ import ImportantJobs from "@/pages/important-jobs";
 import NotificationBell from "@/components/notification-bell";
 import SettingsModal from "@/components/settings-modal";
 import HealthModal from "@/components/health-modal";
+import UserSettingsModal, { applyUserPreferences } from "@/components/user-settings-modal";
 import { FeedbackDialog } from "@/components/feedback-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +34,7 @@ export default function Dashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [healthOpen, setHealthOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [userSettingsOpen, setUserSettingsOpen] = useState(false);
 
   // Derive tab from URL - check if we're on a specific tab route
   const [, importantParams] = useRoute("/important");
@@ -46,6 +48,13 @@ export default function Dashboard() {
   };
 
   const [activeTab, setActiveTab] = useState(getInitialTab);
+
+  // Apply user preferences (font size, dark mode) on load
+  useEffect(() => {
+    if (user?.preferences) {
+      applyUserPreferences(user.preferences);
+    }
+  }, [user?.id]);
 
   // Sync activeTab with URL changes and redirect /important to canonical route
   useEffect(() => {
@@ -136,7 +145,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-background pb-[33px]">
-      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onFeedbackClick={() => setFeedbackOpen(true)} />
+      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onFeedbackClick={() => setFeedbackOpen(true)} onUserSettingsClick={() => setUserSettingsOpen(true)} />
       
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
@@ -204,6 +213,7 @@ export default function Dashboard() {
       {/* Settings Modal */}
       <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
       <HealthModal open={healthOpen} onOpenChange={setHealthOpen} />
+      <UserSettingsModal open={userSettingsOpen} onOpenChange={setUserSettingsOpen} />
       <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </div>
   );

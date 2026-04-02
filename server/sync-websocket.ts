@@ -4,7 +4,7 @@ import type { RequestHandler } from "express";
 import type { SessionData } from "express-session";
 import { storage } from "./storage";
 
-type OttoWs = WebSocket & { ottoOfficeId?: string; ottoUserId?: string };
+type OttoWs = WebSocket & { ottoOfficeId?: string; ottoUserId?: string; ottoIsLocal?: boolean };
 
 const officeConnections = new Map<string, Set<OttoWs>>();
 
@@ -41,6 +41,8 @@ export function setupSyncWebSocket(httpServer: HTTPServer, sessionMiddleware: Re
           wss.handleUpgrade(request, socket, head, (ws) => {
             (ws as OttoWs).ottoOfficeId = officeId;
             (ws as OttoWs).ottoUserId = userId;
+            const remoteAddr = request.socket?.remoteAddress || "";
+            (ws as OttoWs).ottoIsLocal = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
             wss.emit("connection", ws, request);
           });
         })
@@ -84,11 +86,13 @@ export function setupSyncWebSocket(httpServer: HTTPServer, sessionMiddleware: Re
   return wss;
 }
 
-/** Count all active WebSocket connections across all offices. */
+/** Count remote (non-localhost) WebSocket connections — i.e. actual Client machines. */
 export function getConnectedClientCount(): number {
   let count = 0;
   for (const set of officeConnections.values()) {
-    count += set.size;
+    for (const ws of set) {
+      if (!ws.ottoIsLocal) count++;
+    }
   }
   return count;
 }

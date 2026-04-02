@@ -23,6 +23,7 @@ export const users = sqliteTable(
     lastName: text("last_name").notNull(),
     role: text("role", { enum: userRoleValues }).default("staff").notNull(),
     officeId: text("office_id").references(() => offices.id),
+    preferences: text("preferences", { mode: "json" }).default("{}").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
   },
