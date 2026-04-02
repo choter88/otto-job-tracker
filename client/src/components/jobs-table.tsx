@@ -833,17 +833,20 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             )}
           </Button>
 
-          {/* Bulk actions — inline, shown when jobs are selected */}
-          {selectionMode && selectedJobs.length > 0 && (
+          {/* Bulk actions — always visible in selection mode */}
+          {selectionMode && (
             <>
               <div className="w-px h-4 bg-border" />
-              <span className="text-xs font-medium">{selectedJobs.length} selected</span>
+              {selectedJobs.length > 0 && (
+                <span className="text-xs font-medium">{selectedJobs.length} selected</span>
+              )}
               <Select
                 value=""
                 onValueChange={(newStatus) => {
                   if (!newStatus) return;
                   bulkUpdateMutation.mutate({ jobIds: selectedJobs, updates: { status: newStatus } });
                 }}
+                disabled={selectedJobs.length === 0}
               >
                 <SelectTrigger className="h-7 w-36 text-xs">
                   <SelectValue placeholder="Update Status" />
@@ -876,6 +879,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 variant="destructive"
                 size="sm"
                 className="h-7 text-xs"
+                disabled={selectedJobs.length === 0}
                 onClick={() => {
                   if (confirm(`Delete ${selectedJobs.length} job${selectedJobs.length !== 1 ? "s" : ""}? This cannot be undone.`)) {
                     bulkDeleteMutation.mutate(selectedJobs);
@@ -884,21 +888,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               >
                 Delete
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => setSelectedJobs([])}
-              >
-                Clear
-              </Button>
-            </>
-          )}
-
-          {selectionMode && selectedJobs.length === 0 && (
-            <>
-              <div className="w-px h-4 bg-border" />
-              <span className="text-xs text-muted-foreground italic">Click rows or use checkboxes to select jobs</span>
             </>
           )}
 
@@ -1047,18 +1036,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
             <TableHeader className="bg-muted/50">
               <TableRow>
-                {selectionMode && (
-                  <TableHead className="w-10 text-center">
-                    <Checkbox
-                      checked={filteredJobs.length > 0 && selectedJobs.length === filteredJobs.length}
-                      onCheckedChange={(checked) => {
-                        setSelectedJobs(checked ? filteredJobs.map((j) => j.id) : []);
-                      }}
-                      aria-label="Select all jobs"
-                      className="mx-auto"
-                    />
-                  </TableHead>
-                )}
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
                 </TableHead>
@@ -1163,8 +1140,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   className={cn(
                     "cursor-pointer transition-colors",
                     selectionMode && selectedJobs.includes(job.id)
-                      ? "bg-primary/10 border-l-2 border-l-primary"
-                      : index % 2 === 0 ? "bg-muted/30 hover:bg-muted/50" : "bg-background hover:bg-muted/30",
+                      ? "bg-blue-50 dark:bg-blue-950/30 border-l-[3px] border-l-primary"
+                      : index % 2 === 0 ? "bg-muted/30 hover:bg-muted/50" : "bg-card hover:bg-muted/30",
                   )}
                   onClick={() => {
                     if (selectionMode) {
@@ -1178,20 +1155,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   }}
                   data-testid={`row-job-${job.id}`}
                 >
-                  {selectionMode && (
-                    <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={selectedJobs.includes(job.id)}
-                        onCheckedChange={(checked) => {
-                          setSelectedJobs((prev) =>
-                            checked ? [...prev, job.id] : prev.filter((id) => id !== job.id)
-                          );
-                        }}
-                        aria-label={`Select job`}
-                        className="mx-auto"
-                      />
-                    </TableCell>
-                  )}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"

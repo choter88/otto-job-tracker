@@ -9,17 +9,24 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
 interface UserPreferences {
-  fontSize?: "small" | "default" | "large";
+  fontSize?: "xs" | "sm" | "default" | "lg" | "xl";
   darkMode?: boolean;
 }
 
-const FONT_SIZE_MAP: Record<string, number> = {
-  small: 13,
-  default: 14,
-  large: 16,
-};
+const FONT_SIZE_OPTIONS = [
+  { id: "xs", label: "XS", px: 12 },
+  { id: "sm", label: "S", px: 13 },
+  { id: "default", label: "M", px: 14 },
+  { id: "lg", label: "L", px: 16 },
+  { id: "xl", label: "XL", px: 18 },
+] as const;
 
-const SLIDER_TO_SIZE = ["small", "default", "large"] as const;
+const FONT_SIZE_MAP: Record<string, number> = Object.fromEntries(
+  FONT_SIZE_OPTIONS.map((o) => [o.id, o.px]),
+);
+
+const SLIDER_TO_SIZE = FONT_SIZE_OPTIONS.map((o) => o.id);
+const DEFAULT_INDEX = 2; // "default" (M) is the middle
 
 function applyFontSize(size: string) {
   const px = FONT_SIZE_MAP[size] ?? 14;
@@ -53,7 +60,7 @@ export default function UserSettingsModal({ open, onOpenChange }: UserSettingsMo
     enabled: open,
   });
 
-  const [fontSize, setFontSize] = useState<"small" | "default" | "large">("default");
+  const [fontSize, setFontSize] = useState<string>("default");
   const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
@@ -63,7 +70,9 @@ export default function UserSettingsModal({ open, onOpenChange }: UserSettingsMo
     }
   }, [prefs]);
 
-  const sliderIndex = SLIDER_TO_SIZE.indexOf(fontSize);
+  const sliderIndex = SLIDER_TO_SIZE.indexOf(fontSize as any);
+  const currentIndex = sliderIndex >= 0 ? sliderIndex : DEFAULT_INDEX;
+  const currentOption = FONT_SIZE_OPTIONS[currentIndex];
 
   const saveMutation = useMutation({
     mutationFn: async (updates: UserPreferences) => {
@@ -93,21 +102,35 @@ export default function UserSettingsModal({ open, onOpenChange }: UserSettingsMo
           {/* Font Size */}
           <div className="space-y-3">
             <Label className="text-sm font-medium">Font Size</Label>
-            <div className="flex items-center gap-4">
-              <span className="text-xs text-muted-foreground w-10">Small</span>
+            <div className="px-1">
               <Slider
                 min={0}
-                max={2}
+                max={FONT_SIZE_OPTIONS.length - 1}
                 step={1}
-                value={[sliderIndex]}
+                value={[currentIndex]}
                 onValueChange={([val]) => setFontSize(SLIDER_TO_SIZE[val])}
                 className="flex-1"
               />
-              <span className="text-xs text-muted-foreground w-10 text-right">Large</span>
+              <div className="flex justify-between mt-1.5">
+                {FONT_SIZE_OPTIONS.map((opt, i) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    className={`text-[10px] w-8 text-center rounded py-0.5 ${
+                      i === currentIndex
+                        ? "font-semibold text-primary"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => setFontSize(opt.id)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="rounded-md border border-border bg-muted/30 p-3">
-              <p style={{ fontSize: `${FONT_SIZE_MAP[fontSize]}px` }}>
-                Preview text at {FONT_SIZE_MAP[fontSize]}px ({fontSize})
+            <div className="rounded-md border border-border bg-white dark:bg-muted/30 p-3">
+              <p style={{ fontSize: `${currentOption.px}px` }}>
+                Preview text at {currentOption.px}px
               </p>
             </div>
           </div>
@@ -126,7 +149,7 @@ export default function UserSettingsModal({ open, onOpenChange }: UserSettingsMo
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={() => saveMutation.mutate({ fontSize, darkMode })} disabled={saveMutation.isPending}>
+          <Button onClick={() => saveMutation.mutate({ fontSize: fontSize as any, darkMode })} disabled={saveMutation.isPending}>
             {saveMutation.isPending ? "Saving..." : "Save"}
           </Button>
         </div>

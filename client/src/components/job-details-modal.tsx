@@ -176,7 +176,7 @@ export default function JobDetailsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-5xl h-[86vh] max-h-[86vh] flex flex-col bg-background" data-testid="dialog-job-details">
+      <DialogContent className="w-full max-w-5xl h-[86vh] max-h-[86vh] flex flex-col" data-testid="dialog-job-details">
         <DialogHeader className="space-y-3 pr-12">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -255,7 +255,7 @@ export default function JobDetailsModal({
           <TabsContent value="overview" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-primary">
+                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-primary bg-white dark:bg-muted/30">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Job Details</h3>
                   <div className="space-y-3 text-sm">
                     <div className="flex items-start justify-between gap-3">
@@ -299,7 +299,7 @@ export default function JobDetailsModal({
                   </div>
                 </div>
 
-                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-green-500">
+                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-green-500 bg-white dark:bg-muted/30">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Notes & Custom Fields</h3>
 
                   <div className="space-y-2 text-sm">
