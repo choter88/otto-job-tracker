@@ -12,11 +12,19 @@ export type OutboxItem = {
   lastError: string | null;
 };
 
+export type OutboxFlushFailedItem = {
+  method: string;
+  url: string;
+  error: string;
+  attempts: number;
+};
+
 export type OutboxFlushResult = {
   flushed: number;
   remaining: number;
   blockedByAuth: boolean;
   lastError: string | null;
+  failedItems: OutboxFlushFailedItem[];
 };
 
 type OutboxBridge = {
@@ -178,11 +186,12 @@ export async function flushOutbox(origin: string): Promise<OutboxFlushResult> {
   const other = items.filter((item) => item.origin !== origin);
 
   if (matching.length === 0) {
-    return { flushed: 0, remaining: items.length, blockedByAuth: false, lastError: null };
+    return { flushed: 0, remaining: items.length, blockedByAuth: false, lastError: null, failedItems: [] };
   }
 
   const MAX_ATTEMPTS = 10;
   const remaining: OutboxItem[] = [];
+  const failedItems: OutboxFlushFailedItem[] = [];
   let flushed = 0;
   let blockedByAuth = false;
   let lastError: string | null = null;
@@ -223,7 +232,8 @@ export async function flushOutbox(origin: string): Promise<OutboxFlushResult> {
         const text = (await res.text().catch(() => "")) || res.statusText || "Request failed";
         lastError = `${res.status}: ${text}`.slice(0, 500);
         remaining.push({ ...item, attempts: item.attempts + 1, lastError });
-        continue; // ← key change: continue instead of break
+        failedItems.push({ method: item.method, url: item.url, error: lastError, attempts: item.attempts + 1 });
+        continue;
       }
 
       flushed += 1;
@@ -231,12 +241,13 @@ export async function flushOutbox(origin: string): Promise<OutboxFlushResult> {
       // Network error: skip this item but continue (Host might be partially available)
       lastError = String(error?.message || "Network error").slice(0, 500);
       remaining.push({ ...item, attempts: item.attempts + 1, lastError });
-      continue; // ← key change: continue instead of break
+      failedItems.push({ method: item.method, url: item.url, error: lastError, attempts: item.attempts + 1 });
+      continue;
     }
   }
 
   await save([...other, ...remaining]);
-  return { flushed, remaining: other.length + remaining.length, blockedByAuth, lastError };
+  return { flushed, remaining: other.length + remaining.length, blockedByAuth, lastError, failedItems };
   })();
 
   try {

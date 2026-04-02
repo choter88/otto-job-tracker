@@ -59,25 +59,46 @@ export default function SyncManager() {
     try {
       const result = await flushOutbox(window.location.origin);
       if (result.flushed > 0) {
-        const allSynced = result.remaining === 0;
-        toast({
-          title: allSynced ? "All changes synced" : "Synced changes",
-          description: allSynced
-            ? `Synced ${result.flushed} of ${totalBefore} offline change${totalBefore === 1 ? "" : "s"}.`
-            : `Synced ${result.flushed} of ${totalBefore} change${totalBefore === 1 ? "" : "s"}. ${result.remaining} still queued.`,
-          variant: allSynced ? "default" : undefined,
-        });
         queryClient.invalidateQueries();
       }
+
+      const allSynced = result.flushed > 0 && result.remaining === 0;
+      const partialSync = result.flushed > 0 && result.remaining > 0;
+      const totalFailed = result.failedItems?.length || 0;
+
+      // Build failed items summary (e.g., "Create job, Update job status")
+      const failedSummary = (result.failedItems || [])
+        .slice(0, 3) // show max 3
+        .map((f) => {
+          const action = f.method === "POST" ? "Create" : f.method === "PUT" || f.method === "PATCH" ? "Update" : f.method === "DELETE" ? "Delete" : f.method;
+          const resource = f.url.includes("/comments") ? "comment" : f.url.includes("/flag") ? "flag" : f.url.includes("/jobs") ? "job" : "change";
+          return `${action} ${resource}`;
+        })
+        .join(", ");
+      const moreCount = totalFailed > 3 ? ` +${totalFailed - 3} more` : "";
+
+      if (allSynced) {
+        toast({
+          title: "All changes synced",
+          description: `Synced ${result.flushed} of ${totalBefore} offline change${totalBefore === 1 ? "" : "s"}.`,
+        });
+      } else if (partialSync) {
+        toast({
+          title: "Partially synced",
+          description: `Synced ${result.flushed} of ${totalBefore}. Failed: ${failedSummary}${moreCount}. Will retry.`,
+        });
+      } else if (result.flushed === 0 && totalBefore > 0 && result.lastError) {
+        toast({
+          title: "Sync failed",
+          description: totalFailed > 0
+            ? `Could not sync: ${failedSummary}${moreCount}. Will retry automatically.`
+            : `Could not sync ${totalBefore} change${totalBefore === 1 ? "" : "s"}. Will retry automatically.`,
+          variant: "destructive",
+        });
+      }
+
       if (result.lastError) {
         setSyncError(result.lastError);
-        if (result.flushed === 0 && totalBefore > 0) {
-          toast({
-            title: "Sync failed",
-            description: `Could not sync ${totalBefore} change${totalBefore === 1 ? "" : "s"}. Will retry automatically.`,
-            variant: "destructive",
-          });
-        }
       } else if (result.remaining === 0) {
         setSyncError(null);
       }
