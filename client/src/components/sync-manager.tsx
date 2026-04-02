@@ -54,18 +54,30 @@ export default function SyncManager() {
       return;
     }
 
+    const totalBefore = pendingCountRef.current;
     setSyncing(true);
     try {
       const result = await flushOutbox(window.location.origin);
       if (result.flushed > 0) {
+        const allSynced = result.remaining === 0;
         toast({
-          title: "Synced changes",
-          description: `Synced ${result.flushed} offline change${result.flushed === 1 ? "" : "s"}.`,
+          title: allSynced ? "All changes synced" : "Synced changes",
+          description: allSynced
+            ? `Synced ${result.flushed} of ${totalBefore} offline change${totalBefore === 1 ? "" : "s"}.`
+            : `Synced ${result.flushed} of ${totalBefore} change${totalBefore === 1 ? "" : "s"}. ${result.remaining} still queued.`,
+          variant: allSynced ? "default" : undefined,
         });
         queryClient.invalidateQueries();
       }
       if (result.lastError) {
         setSyncError(result.lastError);
+        if (result.flushed === 0 && totalBefore > 0) {
+          toast({
+            title: "Sync failed",
+            description: `Could not sync ${totalBefore} change${totalBefore === 1 ? "" : "s"}. Will retry automatically.`,
+            variant: "destructive",
+          });
+        }
       } else if (result.remaining === 0) {
         setSyncError(null);
       }
