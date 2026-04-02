@@ -200,17 +200,29 @@ export default function JobDetailsModal({
           onValueChange={(value) => onActiveTabChange(value as JobDetailsTab)}
           className="flex-1 flex flex-col min-h-0"
         >
-          <TabsList className={`grid w-full ${relatedJobs.length > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
-            <TabsTrigger value="overview" data-testid="tab-job-details-overview">
+          <TabsList className={`grid w-full ${relatedJobs.length > 0 ? "grid-cols-3" : "grid-cols-2"} bg-muted/60`}>
+            <TabsTrigger
+              value="overview"
+              className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+              data-testid="tab-job-details-overview"
+            >
               <FileText className="mr-2 h-4 w-4" />
               Overview
             </TabsTrigger>
-            <TabsTrigger value="comments" data-testid="tab-job-details-comments">
+            <TabsTrigger
+              value="comments"
+              className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+              data-testid="tab-job-details-comments"
+            >
               <MessageSquare className="mr-2 h-4 w-4" />
               Comments
             </TabsTrigger>
             {relatedJobs.length > 0 && (
-              <TabsTrigger value="related" data-testid="tab-job-details-related">
+              <TabsTrigger
+                value="related"
+                className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+                data-testid="tab-job-details-related"
+              >
                 <Link2 className="mr-2 h-4 w-4" />
                 Related ({relatedJobs.length})
               </TabsTrigger>
