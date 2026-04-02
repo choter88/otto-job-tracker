@@ -778,8 +778,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </div>
         </div>
 
-        {/* Filter + Select toggle */}
-        <div className="flex items-center gap-2 px-5 py-2">
+        {/* Toolbar: Select + Filters (all inline) */}
+        <div className="flex flex-wrap items-center gap-2 px-5 py-2">
           <Button
             variant={selectionMode ? "secondary" : "ghost"}
             size="sm"
@@ -797,6 +797,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               </span>
             )}
           </Button>
+
+          <div className="w-px h-4 bg-border" />
+
           <Button
             variant={filtersOpen ? "secondary" : "ghost"}
             size="sm"
@@ -805,30 +808,15 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
             Filters
-            {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
+            {!filtersOpen && (statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
               <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
                 {[statusFilter !== "all", typeFilter !== "all", destinationFilter !== "all", overdueOnly].filter(Boolean).length}
               </span>
             )}
           </Button>
-          {filtersOpen && (statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
-            <button
-              type="button"
-              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-              onClick={() => {
-                setStatusFilter("all");
-                setTypeFilter("all");
-                setDestinationFilter("all");
-                setOverdueOnly(false);
-                setCustomColumnFilters({});
-              }}
-            >
-              <X className="h-3 w-3" />
-              Clear all
-            </button>
-          )}
-        </div>
-        {filtersOpen && <div className="flex flex-wrap items-center gap-2 px-5 pb-2.5">
+
+          {filtersOpen && <>
+            <div className="flex flex-wrap items-center gap-2">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
               <SelectValue placeholder="All Statuses" />
@@ -925,29 +913,32 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 <span className="text-xs">{column.name} (unchecked only)</span>
               </label>
             ))}
-        </div>}
+            </div>
+
+            {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                onClick={() => {
+                  setStatusFilter("all");
+                  setTypeFilter("all");
+                  setDestinationFilter("all");
+                  setOverdueOnly(false);
+                  setCustomColumnFilters({});
+                }}
+              >
+                <X className="h-3 w-3" />
+                Clear
+              </button>
+            )}
+          </>}
+        </div>
 
         {/* Jobs Table */}
         <div ref={tableViewportRef} className="overflow-x-auto">
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
             <TableHeader className="bg-muted/50">
               <TableRow>
-                {selectionMode && (
-                  <TableHead className="w-10">
-                    <Checkbox
-                      className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
-                      checked={filteredJobs.length > 0 && selectedJobs.length === filteredJobs.length}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setSelectedJobs(filteredJobs.map(job => job.id));
-                        } else {
-                          setSelectedJobs([]);
-                        }
-                      }}
-                      data-testid="checkbox-select-all"
-                    />
-                  </TableHead>
-                )}
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
                 </TableHead>
@@ -1047,30 +1038,26 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 </TableRow>
               )}
               {filteredJobs.map((job, index) => (
-                <TableRow 
-                  key={job.id} 
+                <TableRow
+                  key={job.id}
                   className={cn(
-                    "table-row-hover cursor-pointer transition-colors",
-                    index % 2 === 0 ? "bg-muted/30" : "bg-background"
+                    "cursor-pointer transition-colors",
+                    selectionMode && selectedJobs.includes(job.id)
+                      ? "bg-primary/10 border-l-2 border-l-primary"
+                      : index % 2 === 0 ? "bg-muted/30 hover:bg-muted/50" : "bg-background hover:bg-muted/30",
                   )}
-                  onClick={() => handleOpenJobDetails(job, "overview")}
+                  onClick={() => {
+                    if (selectionMode) {
+                      // Toggle selection instead of opening details
+                      setSelectedJobs((prev) =>
+                        prev.includes(job.id) ? prev.filter((id) => id !== job.id) : [...prev, job.id]
+                      );
+                    } else {
+                      handleOpenJobDetails(job, "overview");
+                    }
+                  }}
                   data-testid={`row-job-${job.id}`}
                 >
-                  {selectionMode && (
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
-                        checked={selectedJobs.includes(job.id)}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setSelectedJobs([...selectedJobs, job.id]);
-                          } else {
-                            setSelectedJobs(selectedJobs.filter(id => id !== job.id));
-                          }
-                        }}
-                      />
-                    </TableCell>
-                  )}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="ghost"
