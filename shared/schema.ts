@@ -261,6 +261,21 @@ export const jobLinkGroups = sqliteTable(
   }),
 );
 
+// Group notes for linked jobs — shared across all jobs in a link group
+export const linkGroupNotes = sqliteTable(
+  "link_group_notes",
+  {
+    id: text("id").primaryKey(),
+    groupId: text("group_id").notNull(),
+    content: text("content").notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    groupIdx: index("link_group_notes_group_idx").on(table.groupId),
+  }),
+);
+
 // Notification rules table
 export const notificationRules = sqliteTable("notification_rules", {
   id: text("id").primaryKey(),

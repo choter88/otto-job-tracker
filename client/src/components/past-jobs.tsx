@@ -327,31 +327,25 @@ export default function PastJobs() {
       {/* Past Jobs Table */}
       {!isLoading && filteredJobs.length > 0 && (
         <div className="overflow-x-auto">
-          <Table>
-          <TableHeader>
+          <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
+          <TableHeader className="bg-muted/50">
             <TableRow>
-              <TableHead>Order ID</TableHead>
               <TableHead>Patient</TableHead>
               <TableHead>Job Type</TableHead>
               <TableHead>Destination</TableHead>
               <TableHead>Final Status</TableHead>
               <TableHead>Completed Date</TableHead>
               <TableHead>Original Date</TableHead>
-              <TableHead>Actions</TableHead>
+              <TableHead className="text-center">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredJobs.map((job) => (
-              <TableRow 
-                key={job.id} 
-                className="table-row-hover"
+            {filteredJobs.map((job, index) => (
+              <TableRow
+                key={job.id}
+                className={index % 2 === 0 ? "bg-muted/30 hover:bg-muted/50" : "bg-card hover:bg-muted/30"}
                 data-testid={`row-past-job-${job.id}`}
               >
-                <TableCell>
-                  <span className="font-mono text-sm font-medium text-primary">
-                    {job.orderId}
-                  </span>
-                </TableCell>
                 <TableCell>
                   <span className="font-medium">
                     {`${job.patientFirstName} ${job.patientLastName}`.trim()}

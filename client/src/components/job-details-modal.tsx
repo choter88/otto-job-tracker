@@ -1,11 +1,12 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Clock3, Edit, FileText, MessageSquare, History, Link2, Star, Unlink } from "lucide-react";
+import { Clock3, Edit, FileText, MessageSquare, History, Link2, Star, Unlink, Send, Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import JobCommentsPanel from "@/components/job-comments-panel";
@@ -83,15 +84,61 @@ export default function JobDetailsModal({
     enabled: !!job?.id && open,
   });
 
-  const { data: relatedJobs = [] } = useQuery<any[]>({
+  const { data: relatedData } = useQuery<{ jobs: any[]; groupId: string | null }>({
     queryKey: ["/api/jobs", job?.id, "related"],
     queryFn: async () => {
-      if (!job?.id) return [];
+      if (!job?.id) return { jobs: [], groupId: null };
       const res = await fetch(`/api/jobs/${job.id}/related`, { credentials: "include" });
+      if (!res.ok) return { jobs: [], groupId: null };
+      const data = await res.json();
+      // Handle both old format (array) and new format ({ jobs, groupId })
+      if (Array.isArray(data)) return { jobs: data, groupId: null };
+      return data;
+    },
+    enabled: !!job?.id && open,
+  });
+  const relatedJobs = relatedData?.jobs ?? [];
+  const linkGroupId = relatedData?.groupId ?? null;
+
+  // Group notes for linked jobs
+  const { data: groupNotes = [] } = useQuery<any[]>({
+    queryKey: ["/api/link-groups", linkGroupId, "notes"],
+    queryFn: async () => {
+      if (!linkGroupId) return [];
+      const res = await fetch(`/api/link-groups/${linkGroupId}/notes`, { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!job?.id && open,
+    enabled: !!linkGroupId && open,
+  });
+
+  const [newGroupNote, setNewGroupNote] = useState("");
+
+  const addGroupNoteMutation = useMutation({
+    mutationFn: async (content: string) => {
+      if (!linkGroupId) throw new Error("No link group");
+      const res = await apiRequest("POST", `/api/link-groups/${linkGroupId}/notes`, { content });
+      return res.json();
+    },
+    onSuccess: () => {
+      setNewGroupNote("");
+      queryClient.invalidateQueries({ queryKey: ["/api/link-groups", linkGroupId, "notes"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to add note", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const deleteGroupNoteMutation = useMutation({
+    mutationFn: async (noteId: string) => {
+      await apiRequest("DELETE", `/api/link-groups/notes/${noteId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/link-groups", linkGroupId, "notes"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to delete note", description: error.message, variant: "destructive" });
+    },
   });
 
   const unlinkMutation = useMutation({
@@ -255,7 +302,7 @@ export default function JobDetailsModal({
           <TabsContent value="overview" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-primary bg-white dark:bg-muted/30">
+                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-primary bg-card dark:bg-muted/30">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Job Details</h3>
                   <div className="space-y-3 text-sm">
                     <div className="flex items-start justify-between gap-3">
@@ -299,7 +346,7 @@ export default function JobDetailsModal({
                   </div>
                 </div>
 
-                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-green-500 bg-white dark:bg-muted/30">
+                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-green-500 bg-card dark:bg-muted/30">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Notes & Custom Fields</h3>
 
                   <div className="space-y-2 text-sm">
@@ -516,6 +563,67 @@ export default function JobDetailsModal({
                     </tbody>
                   </table>
                 </div>
+
+                {/* Group Notes — shared across all linked jobs */}
+                {linkGroupId && (
+                  <div className="mt-6 space-y-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Group Notes
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Notes shared across all linked jobs in this group.
+                    </p>
+
+                    {/* Existing notes */}
+                    {groupNotes.length > 0 && (
+                      <div className="space-y-2">
+                        {groupNotes.map((note: any) => (
+                          <div key={note.id} className="rounded-md border border-border bg-card p-3 text-sm">
+                            <p className="whitespace-pre-wrap">{note.content}</p>
+                            <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                              <span>
+                                {note.createdByName} &middot; {format(new Date(note.createdAt), "MMM d, yyyy h:mm a")}
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
+                                onClick={() => deleteGroupNoteMutation.mutate(note.id)}
+                                disabled={deleteGroupNoteMutation.isPending}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Add new note */}
+                    <div className="flex gap-2">
+                      <Textarea
+                        placeholder="Add a note for this group of linked jobs..."
+                        value={newGroupNote}
+                        onChange={(e) => setNewGroupNote(e.target.value)}
+                        className="min-h-[60px] text-sm resize-none"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && newGroupNote.trim()) {
+                            addGroupNoteMutation.mutate(newGroupNote);
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        className="shrink-0 h-auto"
+                        disabled={!newGroupNote.trim() || addGroupNoteMutation.isPending}
+                        onClick={() => addGroupNoteMutation.mutate(newGroupNote)}
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             </TabsContent>
           )}

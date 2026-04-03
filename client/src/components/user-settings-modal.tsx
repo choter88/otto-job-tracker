@@ -128,7 +128,7 @@ export default function UserSettingsModal({ open, onOpenChange }: UserSettingsMo
                 ))}
               </div>
             </div>
-            <div className="rounded-md border border-border bg-white dark:bg-muted/30 p-3">
+            <div className="rounded-md border border-border bg-muted/30 p-3">
               <p style={{ fontSize: `${currentOption.px}px` }}>
                 Preview text at {currentOption.px}px
               </p>

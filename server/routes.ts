@@ -18,6 +18,7 @@ import {
   users,
   jobFlags,
   jobLinkGroups,
+  linkGroupNotes,
   insertJobSchema,
   insertJobCommentSchema,
   insertNotificationRuleSchema,
@@ -1416,7 +1417,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
 
-      res.json(related);
+      const groupId = jobLinkEntry.length > 0 ? jobLinkEntry[0].groupId : null;
+      res.json({ jobs: related, groupId });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1480,6 +1482,66 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       await db.delete(jobLinkGroups).where(eq(jobLinkGroups.jobId, job.id));
 
       broadcastToOffice(job.officeId, { type: "office_updated", ts: Date.now(), source: "job_unlink" });
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Group notes for linked jobs
+  app.get("/api/link-groups/:groupId/notes", requireOffice, async (req, res) => {
+    try {
+      const notes = await db
+        .select({
+          id: linkGroupNotes.id,
+          content: linkGroupNotes.content,
+          createdBy: linkGroupNotes.createdBy,
+          createdAt: linkGroupNotes.createdAt,
+        })
+        .from(linkGroupNotes)
+        .where(eq(linkGroupNotes.groupId, req.params.groupId))
+        .orderBy(desc(linkGroupNotes.createdAt));
+
+      // Enrich with user names
+      const enriched = await Promise.all(
+        notes.map(async (note) => {
+          if (!note.createdBy) return { ...note, createdByName: "Unknown" };
+          const user = await storage.getUser(note.createdBy);
+          return {
+            ...note,
+            createdByName: user ? `${user.firstName} ${user.lastName}`.trim() : "Unknown",
+          };
+        }),
+      );
+      res.json(enriched);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/link-groups/:groupId/notes", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const { content } = req.body;
+      if (!content || typeof content !== "string" || !content.trim()) {
+        return res.status(400).json({ error: "Content is required" });
+      }
+      const user = getAuthUser(req);
+      const id = randomUUID();
+      await db.insert(linkGroupNotes).values({
+        id,
+        groupId: req.params.groupId,
+        content: content.trim(),
+        createdBy: user.id,
+      });
+      res.json({ id, groupId: req.params.groupId, content: content.trim(), createdBy: user.id, createdAt: Date.now() });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/link-groups/notes/:noteId", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      await db.delete(linkGroupNotes).where(eq(linkGroupNotes.id, req.params.noteId));
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
