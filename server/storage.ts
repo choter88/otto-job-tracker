@@ -1447,7 +1447,11 @@ export class DatabaseStorage implements IStorage {
       .from(notifications)
       .leftJoin(users, eq(notifications.actorId, users.id))
       .leftJoin(jobs, eq(notifications.jobId, jobs.id))
-      .where(eq(notifications.userId, userId))
+      .where(and(
+        eq(notifications.userId, userId),
+        // Exclude read notifications older than 24h (auto-archived)
+        sql`(${notifications.readAt} IS NULL OR ${notifications.readAt} > ${Date.now() - 24 * 60 * 60 * 1000})`,
+      ))
       .$dynamic();
 
     if (options?.unreadOnly) {

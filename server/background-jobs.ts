@@ -24,6 +24,26 @@ function substituteTemplate(template: string, variables: Record<string, any>): s
   });
 }
 
+// Auto-archive (delete) notifications that were read more than 24 hours ago.
+// Runs every hour so cleanup is reasonably prompt.
+cron.schedule('17 * * * *', async () => {
+  try {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const deleted = await db
+      .delete(notifications)
+      .where(and(
+        sql`${notifications.readAt} IS NOT NULL`,
+        lte(notifications.readAt, cutoff),
+      ))
+      .returning({ id: notifications.id });
+    if (deleted.length > 0) {
+      console.log(`[auto-archive] Deleted ${deleted.length} read notification(s) older than 24h.`);
+    }
+  } catch (error) {
+    console.error('[auto-archive] Failed to clean up old notifications:', error);
+  }
+});
+
 cron.schedule('0 0 * * *', async () => {
   console.log('Running overdue detection job...');
   
@@ -65,12 +85,13 @@ cron.schedule('0 0 * * *', async () => {
         
         recipients = Array.from(new Set(recipients));
         
+        const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
         for (const userId of recipients) {
           await storage.createNotification({
             userId,
             type: "overdue_alert",
-            title: `Job ${job.orderId} is overdue`,
-            message: `Job has been in ${job.status} for ${daysOverdue} days (max ${rule.maxDays} days)`,
+            title: `${patientName} — overdue`,
+            message: `In ${job.status} for ${daysOverdue} days (max ${rule.maxDays})`,
             jobId: job.id,
             linkTo: `/jobs/${job.id}`,
             actorId: null,

@@ -152,14 +152,14 @@ export default function NotificationBell() {
         </div>
 
         {/* Notifications List */}
-        <ScrollArea className="max-h-[400px]">
+        <ScrollArea className="h-[360px]">
           {notificationsLoading ? (
-            <div className="p-4 space-y-3">
+            <div className="p-3 space-y-2">
               {[...Array(3)].map((_, i) => (
-                <div key={i} className="flex gap-3" data-testid={`skeleton-notification-${i}`}>
-                  <Skeleton className="h-8 w-8 rounded-full" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-3/4" />
+                <div key={i} className="flex gap-2 py-1" data-testid={`skeleton-notification-${i}`}>
+                  <Skeleton className="h-4 w-4 rounded-full shrink-0" />
+                  <div className="flex-1 space-y-1">
+                    <Skeleton className="h-3 w-3/4" />
                     <Skeleton className="h-3 w-1/2" />
                   </div>
                 </div>
@@ -170,46 +170,43 @@ export default function NotificationBell() {
               className="p-8 text-center text-muted-foreground"
               data-testid="empty-notifications"
             >
-              <Bell className="h-12 w-12 mx-auto mb-3 opacity-20" />
-              <p className="text-sm">No new notifications</p>
+              <Bell className="h-8 w-8 mx-auto mb-2 opacity-20" />
+              <p className="text-xs">No notifications</p>
             </div>
           ) : (
-            <div className="py-2">
+            <div>
               {notifications.map((notification, index) => (
                 <div key={notification.id}>
                   <button
                     onClick={() => handleNotificationClick(notification)}
-                    className={`w-full text-left px-4 py-3 hover:bg-muted transition-colors flex gap-3 ${
+                    className={`w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors flex items-start gap-2 ${
                       !notification.readAt ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
                     }`}
                     data-testid={`notification-item-${notification.id}`}
                   >
-                    <div className="flex-shrink-0 mt-1">
+                    <div className="flex-shrink-0 mt-0.5">
                       {getNotificationIcon(notification.type)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="font-medium text-sm" data-testid={`notification-title-${notification.id}`}>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium text-xs truncate flex-1" data-testid={`notification-title-${notification.id}`}>
                           {notification.title}
                         </p>
+                        <span className="text-[10px] text-muted-foreground shrink-0">
+                          {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
+                        </span>
                         {!notification.readAt && (
                           <div
-                            className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0 mt-1"
+                            className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0"
                             data-testid={`unread-indicator-${notification.id}`}
                           />
                         )}
                       </div>
                       <p
-                        className="text-sm text-muted-foreground mt-1 line-clamp-2"
+                        className="text-[11px] text-muted-foreground truncate"
                         data-testid={`notification-message-${notification.id}`}
                       >
                         {notification.message}
-                      </p>
-                      <p
-                        className="text-xs text-muted-foreground mt-1"
-                        data-testid={`notification-time-${notification.id}`}
-                      >
-                        {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
                       </p>
                     </div>
                   </button>

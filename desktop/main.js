@@ -2042,12 +2042,15 @@ function _runShutdown() {
     // best-effort
   }
 
-  // Session cleanup is handled by the session store's built-in TTL (15-min
-  // HIPAA timeout with rolling expiry).  We no longer delete sessions.sqlite
-  // on quit — doing so invalidated all Client sessions on Host restart,
-  // preventing invisible reconnection.  The SESSION_SECRET is persisted in
-  // session-secret.txt, so sessions survive restarts and Clients can
-  // reconnect transparently once the Host is back online.
+  // Clear only the Host's own session(s) — not Client sessions.
+  // This ensures the Host must re-authenticate on next launch (HIPAA) while
+  // Client sessions survive for invisible reconnection.
+  try {
+    const clearHostSessions = globalThis.__ottoClearHostSessions;
+    if (typeof clearHostSessions === "function") clearHostSessions();
+  } catch {
+    // best-effort
+  }
 }
 
 app.on("before-quit", async (event) => {

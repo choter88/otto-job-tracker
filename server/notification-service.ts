@@ -31,8 +31,8 @@ export async function notifyJobStatusChange(
         return storage.createNotification({
           userId: user.id,
           type: "status_change",
-          title: `Job ${job.orderId} status changed`,
-          message: `${changedBy.firstName} changed status from ${oldStatus} to ${job.status}`,
+          title: `${`${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient"} — status changed`,
+          message: `${changedBy.firstName} changed: ${oldStatus} → ${job.status}`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
           actorId: changedBy.id,
@@ -74,8 +74,8 @@ export async function notifyNewComment(
         storage.createNotification({
           userId: user.id,
           type: "comment",
-          title: `New comment on job ${job.orderId}`,
-          message: `${author.firstName} commented: ${truncatedContent}`,
+          title: `${`${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient"} — new comment`,
+          message: `${author.firstName}: ${truncatedContent}`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
           actorId: author.id,
@@ -105,8 +105,8 @@ export async function notifyOverdueJob(
         storage.createNotification({
           userId: user.id,
           type: "overdue_alert",
-          title: `Job ${job.orderId} is overdue`,
-          message: `Job has been in ${job.status} for ${rule.maxDays} days`,
+          title: `${`${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient"} — overdue`,
+          message: `In ${job.status} for ${rule.maxDays} days`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
           actorId: null,

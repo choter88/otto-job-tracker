@@ -13,6 +13,17 @@ import { User as SelectUser } from "@shared/schema";
 import { hashSecret, verifySecret } from "./secret-hash";
 import { isValidSixDigitPin, normalizeLoginId } from "./auth-identifiers";
 
+/**
+ * Track session IDs that originated from localhost (the Host's own browser).
+ * On quit we delete only these, preserving Client sessions for reconnection.
+ */
+const localSessionIds = new Set<string>();
+
+function isLocalAddress(ip: string | undefined): boolean {
+  if (!ip) return false;
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
 declare global {
   namespace Express {
     interface User extends SelectUser {}
@@ -299,6 +310,10 @@ export function setupAuth(app: Express) {
         if (regenErr) return next(regenErr);
         req.login(user, (loginErr) => {
           if (loginErr) return next(loginErr);
+          // Track Host (localhost) sessions for selective cleanup on quit
+          if (isLocalAddress(req.ip || req.socket?.remoteAddress)) {
+            localSessionIds.add(req.sessionID);
+          }
           res.status(200).json(withoutPassword(user));
         });
       });
@@ -338,6 +353,9 @@ export function setupAuth(app: Express) {
       if (regenErr) return next(regenErr);
       req.login(user, (err) => {
         if (err) return next(err);
+        if (isLocalAddress(req.ip || req.socket?.remoteAddress)) {
+          localSessionIds.add(req.sessionID);
+        }
         res.status(200).json(withoutPassword(user));
       });
     });
@@ -354,6 +372,19 @@ export function setupAuth(app: Express) {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     res.json(withoutPassword(req.user as SelectUser));
   });
+
+  // Expose a function to clear only Host (localhost) sessions on quit.
+  // Client sessions are preserved so they can reconnect transparently.
+  (globalThis as any).__ottoClearHostSessions = () => {
+    try {
+      for (const sid of localSessionIds) {
+        sessionStore.destroy(sid, () => {});
+      }
+      localSessionIds.clear();
+    } catch {
+      // best-effort
+    }
+  };
 
   return sessionMiddleware;
 }
