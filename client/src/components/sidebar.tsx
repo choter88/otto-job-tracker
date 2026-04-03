@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Glasses,
   Briefcase,
   Archive,
   AlertTriangle,
@@ -16,6 +15,7 @@ import {
   MessageCircleQuestion,
   Settings,
 } from "lucide-react";
+import logoSymbol from "@/assets/logo-symbol.png";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Job, Office } from "@shared/schema";
@@ -136,8 +136,8 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick, onUse
             onClick={collapsed ? () => setCollapsed(false) : undefined}
             title={collapsed ? "Expand sidebar" : undefined}
           >
-            <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-              <Glasses className="h-5 w-5 text-primary-foreground" />
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden bg-white">
+              <img src={logoSymbol} alt="Otto" className="w-8 h-8 object-contain" />
             </div>
           </span>
           {!collapsed && (
