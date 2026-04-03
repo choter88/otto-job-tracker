@@ -63,6 +63,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [linkMode, setLinkMode] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -257,6 +258,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     onSuccess: () => {
       setSelectedJobs([]);
       setSelectionMode(false);
+      setLinkMode(false);
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs/linked-ids"] });
       toast({ title: "Jobs linked", description: "Selected jobs are now linked together." });
@@ -811,17 +813,23 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </div>
         </div>
 
-        {/* Toolbar: Select + Link Jobs + Filters / Bulk Actions */}
+        {/* Toolbar: Select + Link Jobs + Filters */}
         <div className="flex flex-wrap items-center gap-2 px-5 py-2">
+          {/* Select mode button */}
           <Button
             variant={selectionMode ? "secondary" : "ghost"}
             size="sm"
             className="h-7 text-xs gap-1.5"
             onClick={() => {
-              const entering = !selectionMode;
-              setSelectionMode(entering);
-              if (!entering) setSelectedJobs([]);
-              if (entering) setFiltersOpen(false);
+              if (selectionMode) {
+                setSelectionMode(false);
+                setSelectedJobs([]);
+              } else {
+                setSelectionMode(true);
+                setLinkMode(false);
+                setSelectedJobs([]);
+                setFiltersOpen(false);
+              }
             }}
           >
             <CheckSquare className="h-3.5 w-3.5" />
@@ -833,23 +841,51 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             )}
           </Button>
 
-          {!selectionMode && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs gap-1.5"
-              onClick={() => {
-                setSelectionMode(true);
+          {/* Link Jobs mode button */}
+          <Button
+            variant={linkMode ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 text-xs gap-1.5"
+            onClick={() => {
+              if (linkMode) {
+                setLinkMode(false);
+                setSelectedJobs([]);
+              } else {
+                setLinkMode(true);
+                setSelectionMode(false);
                 setSelectedJobs([]);
                 setFiltersOpen(false);
-              }}
-            >
-              <Link2 className="h-3.5 w-3.5" />
-              Link Jobs
-            </Button>
+              }
+            }}
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            {linkMode ? "Cancel" : "Link Jobs"}
+            {linkMode && selectedJobs.length > 0 && (
+              <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
+                {selectedJobs.length}
+              </span>
+            )}
+          </Button>
+
+          {/* Link mode actions */}
+          {linkMode && (
+            <>
+              <div className="w-px h-4 bg-border" />
+              <span className="text-xs text-muted-foreground">Select 2 or more jobs to link</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                disabled={selectedJobs.length < 2}
+                onClick={() => linkJobsMutation.mutate(selectedJobs)}
+              >
+                <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                Link {selectedJobs.length > 0 ? `(${selectedJobs.length})` : ""}
+              </Button>
+            </>
           )}
 
-          {/* Bulk actions — always visible in selection mode */}
+          {/* Select mode bulk actions */}
           {selectionMode && (
             <>
               <div className="w-px h-4 bg-border" />
@@ -882,16 +918,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 </SelectContent>
               </Select>
               <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                disabled={selectedJobs.length < 2}
-                onClick={() => linkJobsMutation.mutate(selectedJobs)}
-              >
-                <Link2 className="mr-1.5 h-3.5 w-3.5" />
-                Link Selected
-              </Button>
-              <Button
                 variant="destructive"
                 size="sm"
                 className="h-7 text-xs"
@@ -907,8 +933,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             </>
           )}
 
-          {/* Filters — hidden when in selection mode */}
-          {!selectionMode && (
+          {/* Filters — hidden when in selection or link mode */}
+          {!selectionMode && !linkMode && (
             <>
               <div className="w-px h-4 bg-border" />
               <Button
@@ -1155,13 +1181,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   key={job.id}
                   className={cn(
                     "cursor-pointer transition-colors",
-                    selectionMode && selectedJobs.includes(job.id)
+                    (selectionMode || linkMode) && selectedJobs.includes(job.id)
                       ? "bg-blue-50 dark:bg-blue-950/30 border-l-[3px] border-l-primary"
                       : index % 2 === 0 ? "bg-muted/30 hover:bg-muted/50" : "bg-card hover:bg-muted/30",
                   )}
                   onClick={() => {
-                    if (selectionMode) {
-                      // Toggle selection instead of opening details
+                    if (selectionMode || linkMode) {
                       setSelectedJobs((prev) =>
                         prev.includes(job.id) ? prev.filter((id) => id !== job.id) : [...prev, job.id]
                       );

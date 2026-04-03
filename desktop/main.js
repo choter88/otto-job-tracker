@@ -2042,21 +2042,12 @@ function _runShutdown() {
     // best-effort
   }
 
-  // Clear all sessions on quit so users must re-authenticate on next launch (HIPAA)
-  try {
-    const dataDir = process.env.OTTO_DATA_DIR || path.join(app.getPath("home"), ".otto-job-tracker");
-    const sessionDbPath = path.join(dataDir, "sessions.sqlite");
-    if (fs.existsSync(sessionDbPath)) {
-      fs.unlinkSync(sessionDbPath);
-    }
-    // Also remove WAL/SHM files if present
-    for (const suffix of ["-wal", "-shm"]) {
-      const walPath = sessionDbPath + suffix;
-      if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
-    }
-  } catch {
-    // best-effort — if it fails, the 15-min timeout still protects
-  }
+  // Session cleanup is handled by the session store's built-in TTL (15-min
+  // HIPAA timeout with rolling expiry).  We no longer delete sessions.sqlite
+  // on quit — doing so invalidated all Client sessions on Host restart,
+  // preventing invisible reconnection.  The SESSION_SECRET is persisted in
+  // session-secret.txt, so sessions survive restarts and Clients can
+  // reconnect transparently once the Host is back online.
 }
 
 app.on("before-quit", async (event) => {
