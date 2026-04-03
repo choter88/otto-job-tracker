@@ -248,16 +248,16 @@ export default function Admin() {
               <p className="text-sm text-muted-foreground">Manage all offices on the platform</p>
             </div>
             <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
+              <Table className="table-fixed">
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead data-testid="header-office-name">Office Name</TableHead>
-                    <TableHead data-testid="header-email">Email</TableHead>
-                    <TableHead data-testid="header-phone">Phone</TableHead>
-                    <TableHead data-testid="header-users">Total Users</TableHead>
-                    <TableHead data-testid="header-jobs">Active Jobs</TableHead>
-                    <TableHead data-testid="header-status">Status</TableHead>
-                    <TableHead data-testid="header-actions">Actions</TableHead>
+                    <TableHead className="w-[18%]" data-testid="header-office-name">Office Name</TableHead>
+                    <TableHead className="w-[20%]" data-testid="header-email">Email</TableHead>
+                    <TableHead className="w-[12%]" data-testid="header-phone">Phone</TableHead>
+                    <TableHead className="w-[9%]" data-testid="header-users">Users</TableHead>
+                    <TableHead className="w-[9%]" data-testid="header-jobs">Jobs</TableHead>
+                    <TableHead className="w-[10%]" data-testid="header-status">Status</TableHead>
+                    <TableHead className="w-[22%]" data-testid="header-actions">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -282,13 +282,13 @@ export default function Admin() {
                   ) : (
                     offices.map((office) => (
                       <TableRow key={office.id} data-testid={`row-office-${office.id}`}>
-                        <TableCell className="font-medium" data-testid={`text-office-name-${office.id}`}>
+                        <TableCell className="font-medium truncate" data-testid={`text-office-name-${office.id}`}>
                           {office.name}
                         </TableCell>
-                        <TableCell data-testid={`text-office-email-${office.id}`}>
+                        <TableCell className="truncate text-muted-foreground" data-testid={`text-office-email-${office.id}`}>
                           {office.email || "—"}
                         </TableCell>
-                        <TableCell data-testid={`text-office-phone-${office.id}`}>
+                        <TableCell className="text-muted-foreground" data-testid={`text-office-phone-${office.id}`}>
                           {office.phone || "—"}
                         </TableCell>
                         <TableCell data-testid={`text-office-users-${office.id}`}>
@@ -349,13 +349,13 @@ export default function Admin() {
               <p className="text-sm text-muted-foreground">Last 10 admin actions</p>
             </div>
             <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
+              <Table className="table-fixed">
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead data-testid="header-timestamp">Timestamp</TableHead>
-                    <TableHead data-testid="header-admin">Admin</TableHead>
-                    <TableHead data-testid="header-action">Action</TableHead>
-                    <TableHead data-testid="header-target">Target</TableHead>
+                    <TableHead className="w-[25%]" data-testid="header-timestamp">Timestamp</TableHead>
+                    <TableHead className="w-[20%]" data-testid="header-admin">Admin</TableHead>
+                    <TableHead className="w-[30%]" data-testid="header-action">Action</TableHead>
+                    <TableHead className="w-[25%]" data-testid="header-target">Target</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
