@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { WifiOff } from "lucide-react";
@@ -16,6 +16,7 @@ export default function SyncManager() {
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
+  const connectRef = useRef<(() => void) | null>(null);
 
   // Load desktop config (mode, backup info)
   useEffect(() => {
@@ -67,12 +68,16 @@ export default function SyncManager() {
       }
 
       try {
+        // Close existing socket before reconnecting
+        try { wsRef.current?.close(); } catch { /* ignore */ }
+
         const ws = new WebSocket(buildSyncWsUrl());
         wsRef.current = ws;
 
         ws.onopen = () => {
           retryRef.current = 0;
           setConnected(true);
+          // Refresh all data invisibly when reconnected
           queryClient.invalidateQueries();
         };
 
@@ -101,6 +106,7 @@ export default function SyncManager() {
       }
     };
 
+    connectRef.current = connect;
     connect();
 
     return () => {
@@ -175,7 +181,10 @@ export default function SyncManager() {
             <span className="flex-1">Host is offline. Otto is read-only until Otto is opened back up on the main computer.</span>
             <button
               type="button"
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                retryRef.current = 0;
+                if (connectRef.current) connectRef.current();
+              }}
               className="shrink-0 px-3 py-1 bg-amber-600 text-white text-xs font-medium rounded hover:bg-amber-700"
             >
               Reconnect
@@ -196,7 +205,10 @@ export default function SyncManager() {
             {modeIsClient && !connected && (
               <button
                 type="button"
-                onClick={() => window.location.reload()}
+                onClick={() => {
+                  retryRef.current = 0;
+                  if (connectRef.current) connectRef.current();
+                }}
                 className="text-primary hover:underline font-medium"
               >
                 Reconnect

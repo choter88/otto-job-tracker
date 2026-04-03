@@ -811,7 +811,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </div>
         </div>
 
-        {/* Toolbar: Select + Filters / Bulk Actions (mutually exclusive) */}
+        {/* Toolbar: Select + Link Jobs + Filters / Bulk Actions */}
         <div className="flex flex-wrap items-center gap-2 px-5 py-2">
           <Button
             variant={selectionMode ? "secondary" : "ghost"}
@@ -832,6 +832,22 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               </span>
             )}
           </Button>
+
+          {!selectionMode && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1.5"
+              onClick={() => {
+                setSelectionMode(true);
+                setSelectedJobs([]);
+                setFiltersOpen(false);
+              }}
+            >
+              <Link2 className="h-3.5 w-3.5" />
+              Link Jobs
+            </Button>
+          )}
 
           {/* Bulk actions — always visible in selection mode */}
           {selectionMode && (
@@ -873,7 +889,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 onClick={() => linkJobsMutation.mutate(selectedJobs)}
               >
                 <Link2 className="mr-1.5 h-3.5 w-3.5" />
-                Link Jobs
+                Link Selected
               </Button>
               <Button
                 variant="destructive"

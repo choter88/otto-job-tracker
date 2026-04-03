@@ -114,15 +114,19 @@ function SortableItem({ id, item, type, isDraggable, updateCustomItem, deleteCus
         />
       </div>
 
-      <div className="flex items-center gap-1.5">
-        <Input
+      <label
+        className="relative w-9 h-9 rounded-md cursor-pointer border border-border/50 shrink-0 transition-shadow hover:shadow-md"
+        style={{ backgroundColor: item.color || "#888888" }}
+        title="Click to change color"
+      >
+        <input
           type="color"
           value={item.color}
           onChange={(e) => updateCustomItem(type, item.id, { color: e.target.value })}
-          className="w-8 h-8 rounded cursor-pointer border border-border"
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           data-testid={`input-color-${item.id}`}
         />
-      </div>
+      </label>
 
       <Button
         variant="ghost"

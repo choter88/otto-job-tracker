@@ -2017,39 +2017,11 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-let quitConfirmed = false;
-
-app.on("before-quit", async (event) => {
-  stopAutoUpdater();
-
-  // Warn Host users if Clients are still connected
-  if (!quitConfirmed) {
-    try {
-      const config = _readConfig();
-      if (config.mode === "host") {
-        const getCount = globalThis.__ottoGetConnectedClientCount;
-        const clientCount = typeof getCount === "function" ? getCount() : 0;
-        if (clientCount > 0) {
-          event.preventDefault();
-          const { response } = await dialog.showMessageBox({
-            type: "question",
-            title: "Clients still connected",
-            message: `${clientCount} Client computer${clientCount !== 1 ? "s are" : " is"} still connected.`,
-            detail: "Closing Otto will disconnect them. They won't be able to make changes until you reopen it.",
-            buttons: ["Close Anyway", "Cancel"],
-            defaultId: 1,
-            cancelId: 1,
-          });
-          if (response === 0) {
-            quitConfirmed = true;
-            app.quit();
-          }
-          return;
-        }
-      }
-    } catch { /* proceed with quit */ }
-  }
-
+/**
+ * Cleanup server, connections, and session data before exit.
+ * Called from the before-quit handler (both normal path and "Close Anyway").
+ */
+function _runShutdown() {
   // Force-close the Express server and all open connections so port 5150
   // is freed immediately.  Without this, keep-alive/WebSocket connections
   // linger in TIME_WAIT and the port is unavailable on next launch.
@@ -2085,6 +2057,41 @@ app.on("before-quit", async (event) => {
   } catch {
     // best-effort — if it fails, the 15-min timeout still protects
   }
+}
+
+app.on("before-quit", async (event) => {
+  stopAutoUpdater();
+
+  // Warn Host users if Clients are still connected
+  try {
+    const config = _readConfig();
+    if (config.mode === "host") {
+      const getCount = globalThis.__ottoGetConnectedClientCount;
+      const clientCount = typeof getCount === "function" ? getCount() : 0;
+      if (clientCount > 0) {
+        event.preventDefault();
+        const { response } = await dialog.showMessageBox({
+          type: "question",
+          title: "Clients still connected",
+          message: `${clientCount} Client computer${clientCount !== 1 ? "s are" : " is"} still connected.`,
+          detail: "Closing Otto will disconnect them. They won't be able to make changes until you reopen it.",
+          buttons: ["Close Anyway", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+        });
+        if (response === 0) {
+          // Run shutdown inline and force-exit immediately.
+          // Calling app.quit() from inside an async before-quit handler can
+          // get stuck on macOS, so use app.exit() instead.
+          _runShutdown();
+          app.exit(0);
+        }
+        return;
+      }
+    }
+  } catch { /* proceed with quit */ }
+
+  _runShutdown();
 });
 
 app.on("second-instance", (_event, argv) => {
