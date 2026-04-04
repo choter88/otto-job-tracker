@@ -114,7 +114,27 @@ export function getSqlitePath(app) {
 }
 
 export function getLocalBackupDir(app) {
-  return path.join(app.getPath("userData"), "backups");
+  // Store backups in ~/Documents/Otto Tracker Backups/ so they survive
+  // app data folder deletion (reset). Previously stored in userData/backups.
+  const newDir = path.join(app.getPath("documents"), "Otto Tracker Backups");
+
+  // One-time migration: if old location has backups and new doesn't, move them
+  const legacyDir = path.join(app.getPath("userData"), "backups");
+  try {
+    if (fs.existsSync(legacyDir) && !fs.existsSync(newDir)) {
+      const legacyFiles = fs.readdirSync(legacyDir).filter((n) => n.startsWith("otto-backup-"));
+      if (legacyFiles.length > 0) {
+        fs.mkdirSync(newDir, { recursive: true });
+        for (const file of legacyFiles) {
+          fs.renameSync(path.join(legacyDir, file), path.join(newDir, file));
+        }
+      }
+    }
+  } catch {
+    // best-effort migration
+  }
+
+  return newDir;
 }
 
 export function readConfig(app) {

@@ -221,6 +221,72 @@ function _restoreDatabase() {
   return restoreDatabaseRaw({ app, dialog, readConfig: _readConfig, getLocalBackupDir: _getLocalBackupDir });
 }
 
+async function _resetHost() {
+  const confirm = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["Reset Host", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    message: "Reset this Host?",
+    detail:
+      "This will delete all data on this computer and return to the setup screen.\n\n" +
+      "Local backups in Documents are NOT deleted.\n\n" +
+      "This cannot be undone.",
+  });
+
+  if (confirm.response !== 0) return;
+
+  // Second confirmation for safety
+  const doubleConfirm = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["Yes, delete everything", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    message: "Are you sure?",
+    detail: "All jobs, settings, and user accounts on this Host will be permanently deleted.",
+  });
+
+  if (doubleConfirm.response !== 0) return;
+
+  try {
+    // Delete database + WAL/SHM files
+    const sqlitePath = _getSqlitePath();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const p = sqlitePath + suffix;
+      try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
+    }
+
+    // Delete session database
+    const dataDir = process.env.OTTO_DATA_DIR || path.join(app.getPath("home"), ".otto-job-tracker");
+    const sessionDbPath = path.join(dataDir, "sessions.sqlite");
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const p = sessionDbPath + suffix;
+      try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
+    }
+
+    // Reset config to fresh state (keeps backup settings)
+    const config = _readConfig();
+    _writeConfig({
+      ...config,
+      mode: "",
+      hostToken: "",
+      activationCode: "",
+      trustedFingerprint256: "",
+    });
+  } catch (error) {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "Reset failed",
+      detail: `${error?.message || error}\n\nYou may need to manually delete the app data folder.`,
+    });
+    return;
+  }
+
+  // Relaunch into setup
+  app.relaunch();
+  app.exit(0);
+}
+
 function _scheduleAutomaticBackups() {
   scheduleAutomaticBackupsRaw({
     readConfig: _readConfig,
@@ -346,6 +412,7 @@ function _setAppMenu(config) {
     scheduleAutomaticBackups: _scheduleAutomaticBackups,
     runBackupToNetworkFolder: _runBackupToNetworkFolder,
     restoreDatabase: _restoreDatabase,
+    resetHost: _resetHost,
     createSetupWindow: _createSetupWindow,
     showDiagnostics: _showDiagnostics,
     exportSupportBundle: _exportSupportBundle,

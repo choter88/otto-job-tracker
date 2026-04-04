@@ -1,6 +1,6 @@
 import { Menu } from "electron";
 
-export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetworkBackupFolder, scheduleAutomaticBackups, runBackupToNetworkFolder, restoreDatabase, createSetupWindow, showDiagnostics, exportSupportBundle, checkForUpdates, installUpdate, getUpdateState }) {
+export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetworkBackupFolder, scheduleAutomaticBackups, runBackupToNetworkFolder, restoreDatabase, resetHost, createSetupWindow, showDiagnostics, exportSupportBundle, checkForUpdates, installUpdate, getUpdateState }) {
   const isHost = config.mode === "host";
   const isDev = !app.isPackaged || process.env.NODE_ENV === "development";
 
@@ -32,6 +32,8 @@ export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetwor
               { label: "Choose Backup Folder\u2026", click: () => chooseNetworkBackupFolder().then(() => scheduleAutomaticBackups()) },
               { label: "Back Up Now", click: () => runBackupToNetworkFolder({ interactive: true, reason: "manual" }) },
               { label: "Restore Data\u2026", click: () => restoreDatabase() },
+              { type: "separator" },
+              { label: "Reset Host\u2026", click: () => resetHost() },
               { type: "separator" },
             ]
           : []),
