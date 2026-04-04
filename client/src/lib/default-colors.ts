@@ -217,7 +217,10 @@ export function hexToHSL(hex: string): string {
 
 // Helper to convert HSL string (e.g. "210 50% 60%") to hex
 export function hslToHex(hslStr: string): string {
-  const parts = hslStr.replace(/%/g, "").split(/\s+/).map(Number);
+  // Strip "hsl(", ")", commas, and "%" to extract raw numbers.
+  // Handles both "220 70% 50%" and "hsl(220, 70%, 50%)" formats.
+  const cleaned = hslStr.replace(/hsl\s*\(?\s*/i, "").replace(/\)/g, "").replace(/%/g, "").replace(/,/g, " ");
+  const parts = cleaned.trim().split(/\s+/).map(Number);
   if (parts.length < 3 || parts.some(isNaN)) return "#808080";
   let [h, s, l] = parts;
   s /= 100;
@@ -245,6 +248,11 @@ export function normalizeToHex(color: string | undefined, hsl: string | undefine
   return "#808080";
 }
 
+// Strip hsl() wrapper to get bare values like "220, 70%, 50%" or "220 70% 50%"
+function bareHsl(value: string): string {
+  return value.replace(/hsl\s*\(\s*/i, "").replace(/\)\s*$/, "").trim();
+}
+
 // Helper to get color for badge styling
 export function getColorForBadge(color: string | null | undefined): { background: string; text: string } {
   const safeColor = typeof color === "string" ? color.trim() : "";
@@ -252,14 +260,15 @@ export function getColorForBadge(color: string | null | undefined): { background
     return { background: "hsl(0 0% 90% / 0.15)", text: "hsl(0 0% 40%)" };
   }
 
-  // If it's already in HSL format (from our defaults)
+  // If it's in HSL format (bare "220 70% 50%" or wrapped "hsl(220, 70%, 50%)")
   if (safeColor.includes('%')) {
+    const raw = bareHsl(safeColor);
     return {
-      background: `hsl(${safeColor} / 0.15)`,
-      text: `hsl(${safeColor})`
+      background: `hsl(${raw} / 0.15)`,
+      text: `hsl(${raw})`
     };
   }
-  
+
   // If it's hex, convert to HSL and apply
   const hsl = hexToHSL(safeColor);
   return {
