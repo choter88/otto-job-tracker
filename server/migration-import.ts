@@ -584,8 +584,17 @@ export function importSnapshotV1(params: {
   assertNoDuplicates(jobRows.map((j) => j.order_id), "job orderId");
 
   const jobIdSet = new Set(jobRows.map((j) => j.id));
-  // originalJobId validation is deferred until after archived jobs are parsed,
-  // since redo jobs can reference archived (completed/cancelled) originals.
+  for (const link of jobOriginalLinks) {
+    if (!jobIdSet.has(link.originalJobId)) {
+      // The jobs.original_job_id FK references jobs(id), so the target must
+      // be an active job — not an archived one.  Snapshot should set
+      // originalJobId to null if the original was already completed/archived.
+      throw new Error(
+        `jobs.originalJobId references jobId ${link.originalJobId} which is not in the active jobs array. ` +
+        `If the original was archived, set originalJobId to null in the snapshot.`,
+      );
+    }
+  }
 
   const archivedRows: any[] = [];
   for (const { idx, raw } of archivedJobsRaw) {
@@ -643,14 +652,6 @@ export function importSnapshotV1(params: {
   }
 
   assertNoDuplicates(archivedRows.map((j) => j.id), "archived job id");
-
-  // Now validate originalJobId references against both active AND archived jobs
-  const allJobIdSet = new Set([...jobIdSet, ...archivedRows.map((j) => j.id)]);
-  for (const link of jobOriginalLinks) {
-    if (!allJobIdSet.has(link.originalJobId)) {
-      throw new Error(`jobs.originalJobId references unknown jobId: ${link.originalJobId}`);
-    }
-  }
 
   const commentRows: any[] = [];
   for (const { idx, raw } of jobCommentsRaw) {

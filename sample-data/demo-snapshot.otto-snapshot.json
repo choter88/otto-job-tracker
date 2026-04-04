@@ -11,29 +11,98 @@
     "email": null,
     "settings": {
       "customStatuses": [
-        { "id": "job_created", "label": "Job Created", "color": "hsl(220, 70%, 50%)" },
-        { "id": "ordered", "label": "Ordered", "color": "hsl(35, 85%, 50%)" },
-        { "id": "in_progress", "label": "In Progress", "color": "hsl(200, 80%, 45%)" },
-        { "id": "quality_check", "label": "Quality Check", "color": "hsl(270, 60%, 55%)" },
-        { "id": "ready_for_pickup", "label": "Ready for Pickup", "color": "hsl(145, 65%, 40%)" },
-        { "id": "completed", "label": "Completed", "color": "hsl(160, 70%, 35%)" }
+        {
+          "id": "job_created",
+          "label": "Job Created",
+          "color": "hsl(220, 70%, 50%)"
+        },
+        {
+          "id": "ordered",
+          "label": "Ordered",
+          "color": "hsl(35, 85%, 50%)"
+        },
+        {
+          "id": "in_progress",
+          "label": "In Progress",
+          "color": "hsl(200, 80%, 45%)"
+        },
+        {
+          "id": "quality_check",
+          "label": "Quality Check",
+          "color": "hsl(270, 60%, 55%)"
+        },
+        {
+          "id": "ready_for_pickup",
+          "label": "Ready for Pickup",
+          "color": "hsl(145, 65%, 40%)"
+        },
+        {
+          "id": "completed",
+          "label": "Completed",
+          "color": "hsl(160, 70%, 35%)"
+        }
       ],
       "customJobTypes": [
-        { "id": "glasses", "label": "Glasses", "color": "hsl(210, 70%, 50%)" },
-        { "id": "contacts", "label": "Contacts", "color": "hsl(170, 55%, 40%)" },
-        { "id": "sunglasses", "label": "Sunglasses", "color": "hsl(30, 80%, 50%)" },
-        { "id": "rx", "label": "Rx (Prescription/Specialty)", "color": "hsl(280, 60%, 50%)" }
+        {
+          "id": "glasses",
+          "label": "Glasses",
+          "color": "hsl(210, 70%, 50%)"
+        },
+        {
+          "id": "contacts",
+          "label": "Contacts",
+          "color": "hsl(170, 55%, 40%)"
+        },
+        {
+          "id": "sunglasses",
+          "label": "Sunglasses",
+          "color": "hsl(30, 80%, 50%)"
+        },
+        {
+          "id": "rx",
+          "label": "Rx (Prescription/Specialty)",
+          "color": "hsl(280, 60%, 50%)"
+        }
       ],
       "customOrderDestinations": [
-        { "id": "vision_lab", "label": "Vision Lab", "color": "hsl(205, 80%, 45%)" },
-        { "id": "eyetech_labs", "label": "EyeTech Labs", "color": "hsl(145, 60%, 40%)" },
-        { "id": "premium_optics", "label": "Premium Optics", "color": "hsl(35, 80%, 50%)" },
-        { "id": "coopervision", "label": "CooperVision", "color": "hsl(260, 55%, 50%)" },
-        { "id": "b_and_l", "label": "B+L", "color": "hsl(190, 65%, 45%)" },
-        { "id": "other", "label": "Other", "color": "hsl(0, 0%, 50%)" }
+        {
+          "id": "vision_lab",
+          "label": "Vision Lab",
+          "color": "hsl(205, 80%, 45%)"
+        },
+        {
+          "id": "eyetech_labs",
+          "label": "EyeTech Labs",
+          "color": "hsl(145, 60%, 40%)"
+        },
+        {
+          "id": "premium_optics",
+          "label": "Premium Optics",
+          "color": "hsl(35, 80%, 50%)"
+        },
+        {
+          "id": "coopervision",
+          "label": "CooperVision",
+          "color": "hsl(260, 55%, 50%)"
+        },
+        {
+          "id": "b_and_l",
+          "label": "B+L",
+          "color": "hsl(190, 65%, 45%)"
+        },
+        {
+          "id": "other",
+          "label": "Other",
+          "color": "hsl(0, 0%, 50%)"
+        }
       ],
       "customColumns": [
-        { "id": "custom_ship_to_patient", "label": "Ship to Patient", "type": "checkbox", "active": true }
+        {
+          "id": "custom_ship_to_patient",
+          "label": "Ship to Patient",
+          "type": "checkbox",
+          "active": true
+        }
       ]
     },
     "createdAt": 1735689600000,
@@ -105,7 +174,9 @@
       "createdBy": "user-owner",
       "phone": "3105559002",
       "notes": "Biofinity Toric: OD BC 8.7 PWR -3.50 CYL -1.25 AX 10, OS BC 8.7 PWR -3.25 CYL -0.75 AX 180. Annual supply (8 boxes).",
-      "customColumnValues": { "custom_ship_to_patient": true },
+      "customColumnValues": {
+        "custom_ship_to_patient": true
+      },
       "isRedoJob": false,
       "createdAt": 1709424000000,
       "updatedAt": 1709510400000,
@@ -285,7 +356,9 @@
       "createdBy": "user-owner",
       "phone": "3105559012",
       "notes": "MyDay daily disposable: OD BC 8.4 PWR -4.00, OS BC 8.4 PWR -3.75. 90-pack x2. Patient prefers morning pickup.",
-      "customColumnValues": { "custom_ship_to_patient": true },
+      "customColumnValues": {
+        "custom_ship_to_patient": true
+      },
       "isRedoJob": false,
       "createdAt": 1709683200000,
       "updatedAt": 1709856000000,
@@ -357,7 +430,9 @@
       "createdBy": "user-manager",
       "phone": "3105559016",
       "notes": "B+L INFUSE multifocal: OD BC 8.6 PWR -1.50 ADD Low, OS BC 8.6 PWR -1.75 ADD Low. 90-pack x2. Related to A. Patel (WEC-2026-0005).",
-      "customColumnValues": { "custom_ship_to_patient": true },
+      "customColumnValues": {
+        "custom_ship_to_patient": true
+      },
       "isRedoJob": false,
       "createdAt": 1710028800000,
       "updatedAt": 1710115200000,
@@ -395,7 +470,7 @@
       "notes": "OD: -4.00 -2.50 x10, OS: -3.75 -2.25 x170. Warby Parker Durand, crystal frame. Progressive Zeiss SmartLife, 1.67, DuraVision BlueProtect. REDO of archived WEC-2026-A006. Edge chipping on original lenses.",
       "customColumnValues": {},
       "isRedoJob": true,
-      "originalJobId": "a1b2c3d4-a006-4000-8000-000000000006",
+      "originalJobId": null,
       "createdAt": 1710201600000,
       "updatedAt": 1710288000000,
       "statusChangedAt": 1710288000000
@@ -574,7 +649,9 @@
       "createdBy": "user-owner",
       "phone": "3105559028",
       "notes": "OD: -1.00 -0.50 x180, OS: -1.25 -0.25 x175. Tiffany TF2234B, 52mm, pale gold. Progressive Essilor Varilux Physio W3+, 1.60, Crizal Sapphire UV. REDO: original axis was ground incorrectly by lab.",
-      "customColumnValues": { "custom_ship_to_patient": true },
+      "customColumnValues": {
+        "custom_ship_to_patient": true
+      },
       "isRedoJob": true,
       "createdAt": 1743552000000,
       "updatedAt": 1743638400000,
@@ -612,7 +689,9 @@
       "createdBy": "user-owner",
       "phone": "3105558002",
       "notes": "Biofinity monthly: OD BC 8.6 PWR -3.00, OS BC 8.6 PWR -2.75. 6-month supply.",
-      "customColumnValues": { "custom_ship_to_patient": true },
+      "customColumnValues": {
+        "custom_ship_to_patient": true
+      },
       "isRedoJob": false,
       "previousStatus": "ready_for_pickup",
       "originalCreatedAt": 1737590400000,
@@ -702,7 +781,9 @@
       "createdBy": "user-staff",
       "phone": null,
       "notes": "B+L Ultra: OD BC 8.5 PWR -5.50, OS BC 8.5 PWR -5.25. Annual supply shipped directly.",
-      "customColumnValues": { "custom_ship_to_patient": true },
+      "customColumnValues": {
+        "custom_ship_to_patient": true
+      },
       "isRedoJob": false,
       "previousStatus": "ready_for_pickup",
       "originalCreatedAt": 1738454400000,
@@ -1448,7 +1529,10 @@
       "status": "job_created",
       "maxDays": 3,
       "enabled": true,
-      "notifyRoles": ["owner", "manager"],
+      "notifyRoles": [
+        "owner",
+        "manager"
+      ],
       "notifyUsers": [],
       "smsEnabled": false,
       "smsTemplate": null,
@@ -1460,7 +1544,10 @@
       "status": "ordered",
       "maxDays": 7,
       "enabled": true,
-      "notifyRoles": ["owner", "manager"],
+      "notifyRoles": [
+        "owner",
+        "manager"
+      ],
       "notifyUsers": [],
       "smsEnabled": false,
       "smsTemplate": null,
@@ -1472,7 +1559,11 @@
       "status": "in_progress",
       "maxDays": 10,
       "enabled": true,
-      "notifyRoles": ["owner", "manager", "staff"],
+      "notifyRoles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
       "notifyUsers": [],
       "smsEnabled": false,
       "smsTemplate": null,
