@@ -1,7 +1,8 @@
 import os from "os";
 import { randomBytes } from "crypto";
 import { OTTO_DEFAULT_PORT } from "@shared/constants";
-import type { LicenseSnapshot, LicenseState } from "./license-types";
+import type { LicenseSnapshot, LicenseState, OttoPlan } from "./license-types";
+import { DEFAULT_PLAN } from "./license-types";
 import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./license-state";
 import { portalCheckin, portalActivate } from "./license-client";
 import type { LicenseActivateResult, CheckinMetrics } from "./license-client";
@@ -9,6 +10,18 @@ import type { LicenseActivateResult, CheckinMetrics } from "./license-client";
 let state: LicenseState | null = null;
 let checkinTimer: NodeJS.Timeout | null = null;
 let _onStateChange: (() => void) | null = null;
+
+/**
+ * In-memory plan cache — NOT stored in the SQLite job database.
+ * Populated from the portal's check-in response.
+ * Defaults to pro/unlimited if portal hasn't sent plan data yet (backward compat).
+ */
+let cachedPlan: OttoPlan = { ...DEFAULT_PLAN };
+
+/** Get the currently cached plan. */
+export function getCachedPlan(): OttoPlan {
+  return cachedPlan;
+}
 
 /** Register a callback invoked whenever license state changes (e.g. to invalidate caches). */
 export function onLicenseStateChange(cb: () => void): void {
@@ -171,6 +184,20 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
   if (typeof result.currentPeriodEnd === "number" && result.currentPeriodEnd > 0) {
     checkinPatch.currentPeriodEnd = result.currentPeriodEnd;
   }
+
+  // Update cached plan from portal response (backward compat: keep default if not present)
+  if (result.plan) {
+    cachedPlan = {
+      clientSlots: result.plan.clientSlots,
+      tabletSlots: result.plan.tabletSlots,
+    };
+  }
+
+  // Store paymentRequired in license state
+  if (typeof result.paymentRequired === "boolean") {
+    checkinPatch.paymentRequired = result.paymentRequired;
+  }
+
   updateState(checkinPatch);
 
   return getLicenseSnapshot();

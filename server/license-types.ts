@@ -1,3 +1,15 @@
+/**
+ * Plan information received from the portal during check-in.
+ * Mirrored in otto-web/server/portal/licensing.ts (check-in response).
+ */
+export type OttoPlan = {
+  clientSlots: number;
+  tabletSlots: number;
+};
+
+/** Default plan for backward compat with older portals that don't send plan data. */
+export const DEFAULT_PLAN: OttoPlan = { clientSlots: 999, tabletSlots: 999 };
+
 export type LicenseOfficeStatus = "ACTIVE" | "DISABLED";
 
 export type LicenseMode =
@@ -33,6 +45,9 @@ export type LicenseState = {
   // Subscription billing cycle end (unix ms, from portal's Stripe data).
   // Used to enforce a 3-day grace period after the subscription period expires.
   currentPeriodEnd?: number;
+
+  // Whether the portal indicated payment is required (trial expired or subscription issue)
+  paymentRequired?: boolean;
 };
 
 export type LicenseSnapshot = {
@@ -50,5 +65,5 @@ export type LicenseSnapshot = {
   graceEndsAt: number | null;
   lastError: string | null;
   currentInviteCodeLast4: string | null;
+  paymentRequired: boolean;
 };
-

@@ -38,7 +38,7 @@ import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
-import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot } from "./license";
+import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot, getCachedPlan } from "./license";
 import { portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth, portalSubmitFeedback } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
@@ -621,6 +621,24 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(500).json({ error: "No office configured on this Host" });
       }
       const office = allOffices[0];
+
+      // Enforce Client connection limit from cached plan
+      const plan = getCachedPlan();
+      {
+        const officeUsers = await storage.getUsersInOffice(office.id);
+        // Count non-owner users as Client workstation connections
+        // (the Host owner is created during bootstrap, not via client-register)
+        const clientCount = officeUsers.filter((u) => u.role !== "owner").length;
+        if (clientCount >= plan.clientSlots) {
+          return res.status(403).json({
+            error: "CLIENT_LIMIT_REACHED",
+            message: `This office has reached its workstation limit (${plan.clientSlots} Client workstations). To add more, visit the Otto portal and add a workstation to your subscription.`,
+            clientSlots: plan.clientSlots,
+            maxClients: plan.clientSlots, // backward compat
+            currentClients: clientCount,
+          });
+        }
+      }
 
       // Check for existing pending request
       const pendingRequest = await storage.getPendingAccountSignupRequestByLoginId(office.id, normalizedLoginId);
@@ -2069,6 +2087,25 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
         const requestedRole = role as "manager" | "staff" | "view_only";
 
+        // Enforce Client connection limit before approving.
+        // Note: this check is outside the approval transaction. A theoretical race exists
+        // if two approvals happen simultaneously, but in practice the desktop is a single-user
+        // app with SQLite's single-writer model, making concurrent approvals near-impossible.
+        const plan = getCachedPlan();
+        {
+          const officeUsers = await storage.getUsersInOffice(getOfficeUser(req).officeId);
+          const clientCount = officeUsers.filter((u) => u.role !== "owner").length;
+          if (clientCount >= plan.clientSlots) {
+            return res.status(403).json({
+              error: "CLIENT_LIMIT_REACHED",
+              message: `This office has reached its workstation limit (${plan.clientSlots} Client workstations). To add more, visit the Otto portal and add a workstation to your subscription.`,
+              clientSlots: plan.clientSlots,
+              maxClients: plan.clientSlots, // backward compat
+              currentClients: clientCount,
+            });
+          }
+        }
+
         const createdUser = await storage.approveAccountSignupRequest(
           req.params.id,
           getOfficeUser(req).officeId,
@@ -3033,6 +3070,94 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
+  });
+
+  // ── Tablet Job Board (slot-gated, LAN-accessible) ──────────────────
+  // Serves a lightweight job board view for tablet browsers on the LAN.
+  // No link or menu item in the desktop UI should reference this route.
+
+  // Tablet session tracking via heartbeat — in-memory map of sessionId → last heartbeat timestamp
+  const tabletSessions = new Map<string, number>();
+  const TABLET_SESSION_EXPIRY_MS = 60_000; // 60 seconds without heartbeat = expired
+
+  function getActiveTabletSessionCount(): number {
+    const now = Date.now();
+    const expired: string[] = [];
+    tabletSessions.forEach((lastSeen, id) => {
+      if (now - lastSeen > TABLET_SESSION_EXPIRY_MS) {
+        expired.push(id);
+      }
+    });
+    expired.forEach((id) => tabletSessions.delete(id));
+    return tabletSessions.size;
+  }
+
+  // POST /tablet/heartbeat — tablet pings every 30s with a session ID
+  app.post("/tablet/heartbeat", (req, res) => {
+    const plan = getCachedPlan();
+    if (plan.tabletSlots <= 0) {
+      return res.status(403).json({ error: "TABLET_NOT_ENABLED", message: "Tablet boards are not enabled for this office." });
+    }
+
+    const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId : "";
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId is required" });
+    }
+
+    // If this is a new session, check the limit
+    if (!tabletSessions.has(sessionId)) {
+      const activeCount = getActiveTabletSessionCount();
+      if (activeCount >= plan.tabletSlots) {
+        return res.status(403).json({
+          error: "TABLET_LIMIT_REACHED",
+          message: `This office has reached its tablet limit (${plan.tabletSlots} tablets). To add more, visit the Otto portal and add a tablet to your subscription.`,
+        });
+      }
+    }
+
+    tabletSessions.set(sessionId, Date.now());
+    res.json({ ok: true });
+  });
+
+  app.get("/tablet/board", (_req, res) => {
+    const plan = getCachedPlan();
+    if (plan.tabletSlots <= 0) {
+      return res.status(403).json({
+        error: "TABLET_NOT_ENABLED",
+        message: "Tablet boards are not enabled for this office.",
+      });
+    }
+
+    // Check active session count before serving
+    const activeCount = getActiveTabletSessionCount();
+    if (activeCount >= plan.tabletSlots) {
+      return res.status(403).json({
+        error: "TABLET_LIMIT_REACHED",
+        message: `This office has reached its tablet limit (${plan.tabletSlots} tablets). To add more, visit the Otto portal and add a tablet to your subscription.`,
+      });
+    }
+
+    // Placeholder page — full tablet UI will be built in a follow-up task.
+    res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Otto Job Board</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8f9fa; color: #333; }
+    .container { text-align: center; max-width: 480px; padding: 2rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    p { color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Otto Job Board</h1>
+    <p>The tablet job board is coming soon. This endpoint is reserved for a future interactive view.</p>
+  </div>
+</body>
+</html>`);
   });
 
   const server = createAppServer(app);

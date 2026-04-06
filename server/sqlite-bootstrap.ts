@@ -225,6 +225,7 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     }
 
     sqlite.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS users_login_id_unique ON users (login_id);`).run();
+    sqlite.prepare(`CREATE INDEX IF NOT EXISTS users_office_id_idx ON users (office_id);`).run();
   };
 
   const ensureAccountSignupRequestAuthColumns = (): void => {

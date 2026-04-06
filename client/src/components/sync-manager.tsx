@@ -171,8 +171,30 @@ export default function SyncManager() {
       ? "bg-emerald-500"
       : "bg-destructive";
 
+  // Payment required banner — shown when portal indicates trial expired or subscription issue
+  const paymentRequired = licenseSnapshot?.paymentRequired === true;
+  const isDisabled = String(licenseSnapshot?.mode || "") === "DISABLED" || String(licenseSnapshot?.mode || "") === "READ_ONLY";
+
   return (
     <>
+      {/* Payment required banner — non-blocking, visible on all screens */}
+      {paymentRequired && !isDisabled && (
+        <div className="fixed top-0 left-0 right-0 z-50">
+          <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <span className="flex-1">Your free trial has ended. Visit the Otto portal to subscribe and keep using Otto.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Disabled/read-only banner for expired trial + grace */}
+      {isDisabled && paymentRequired && (
+        <div className="fixed top-0 left-0 right-0 z-50">
+          <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+            <span className="flex-1 font-medium">Your Otto trial has expired. Subscribe in the Otto portal to resume full access. Your data is safe and will be here when you return.</span>
+          </div>
+        </div>
+      )}
+
       {/* Offline banner for Client mode */}
       {modeIsClient && !connected && (
         <div className="fixed bottom-[33px] left-0 right-0 z-50">

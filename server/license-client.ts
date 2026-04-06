@@ -29,6 +29,11 @@ export type LicenseCheckinResult = {
   status: "ACTIVE" | "DISABLED";
   currentInviteCodeLast4?: string;
   currentPeriodEnd?: number | null;
+  paymentRequired?: boolean;
+  plan?: {
+    clientSlots: number;
+    tabletSlots: number;
+  };
 };
 
 export type LicenseRequestError = {
@@ -234,14 +239,36 @@ export async function portalCheckin(payload: {
     };
   }
 
-  return {
+  const result: LicenseCheckinResult = {
     ok: true,
     serverTime,
     nextCheckinDueAt,
     status: officeStatus,
     currentInviteCodeLast4: typeof json?.currentInviteCodeLast4 === "string" ? json.currentInviteCodeLast4 : undefined,
     currentPeriodEnd: typeof json?.currentPeriodEnd === "number" ? json.currentPeriodEnd : null,
+    paymentRequired: typeof json?.paymentRequired === "boolean" ? json.paymentRequired : undefined,
   };
+
+  // Parse plan field if present (backward compat: older portals may not send this)
+  const plan = json?.plan;
+  if (plan && typeof plan === "object") {
+    // New seat-based fields
+    if (typeof plan.clientSlots === "number") {
+      result.plan = {
+        clientSlots: plan.clientSlots,
+        tabletSlots: typeof plan.tabletSlots === "number" ? plan.tabletSlots : 0,
+      };
+    } else if (plan.tier === "core" || plan.tier === "pro") {
+      // Backward compat: older portals send tier/maxClients/tabletAddonEnabled
+      const maxClients = typeof plan.maxClients === "number" ? plan.maxClients : (plan.tier === "core" ? 2 : 999);
+      result.plan = {
+        clientSlots: maxClients === -1 ? 999 : maxClients,
+        tabletSlots: Boolean(plan.tabletAddonEnabled) ? 999 : 0,
+      };
+    }
+  }
+
+  return result;
 }
 
 export type InviteCodeValidationResult =
