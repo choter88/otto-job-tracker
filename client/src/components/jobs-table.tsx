@@ -13,6 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -69,7 +70,7 @@ const COLUMN_TYPE_PLACEHOLDER: Record<string, string> = {
   date: "Select date...",
 };
 
-/** Inline-editable cell for text, number, and date custom columns */
+/** Popover-based editable cell for text, number, and date custom columns */
 function EditableCell({
   jobId, columnId, columnType, value, onSave,
 }: {
@@ -79,8 +80,9 @@ function EditableCell({
   value: any;
   onSave: (jobId: string, columnId: string, newValue: any) => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(String(value ?? ""));
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const inputType = columnType === "number" ? "number" : columnType === "date" ? "date" : "text";
   const Icon = COLUMN_TYPE_ICON[columnType as keyof typeof COLUMN_TYPE_ICON] || Type;
@@ -92,31 +94,8 @@ function EditableCell({
     if (newValue !== (value ?? null)) {
       onSave(jobId, columnId, newValue);
     }
-    setEditing(false);
+    setOpen(false);
   };
-
-  const cancel = () => {
-    setDraft(String(value ?? ""));
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <Input
-        type={inputType}
-        autoFocus
-        defaultValue={value ?? ""}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") { e.preventDefault(); save(); }
-          if (e.key === "Escape") { e.preventDefault(); cancel(); }
-        }}
-        className="h-7 text-sm w-full"
-        onClick={(e) => e.stopPropagation()}
-      />
-    );
-  }
 
   const hasValue = value !== null && value !== undefined && value !== "";
   const display = columnType === "date" && hasValue
@@ -124,18 +103,47 @@ function EditableCell({
     : hasValue ? String(value) : "";
 
   return (
-    <button
-      type="button"
-      className={cn(
-        "flex items-center gap-1.5 w-full rounded px-1.5 py-0.5 text-left text-sm transition-colors",
-        "border border-transparent hover:border-border hover:bg-muted/50",
-        hasValue ? "text-foreground" : "text-muted-foreground/60",
-      )}
-      onClick={() => { setDraft(String(value ?? "")); setEditing(true); }}
-    >
-      <Icon className="h-3 w-3 shrink-0 text-muted-foreground/40" />
-      <span className="truncate">{display || placeholder}</span>
-    </button>
+    <Popover open={open} onOpenChange={(next) => {
+      if (next) setDraft(String(value ?? ""));
+      if (!next && open) save();
+      setOpen(next);
+    }}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "flex items-center gap-1.5 w-full rounded px-1.5 py-0.5 text-left text-sm transition-colors",
+            "border border-transparent hover:border-border hover:bg-muted/50",
+            hasValue ? "text-foreground" : "text-muted-foreground/60",
+          )}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Icon className="h-3 w-3 shrink-0 text-muted-foreground/40" />
+          <span className="truncate">{display || placeholder}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-48 p-2"
+        align="start"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Input
+          ref={inputRef}
+          type={inputType}
+          defaultValue={value ?? ""}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); save(); }
+            if (e.key === "Escape") { e.preventDefault(); setDraft(String(value ?? "")); setOpen(false); }
+          }}
+          className="h-8 text-sm"
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
