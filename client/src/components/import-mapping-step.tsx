@@ -3,6 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Info } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { OTTO_IMPORT_FIELDS, OTTO_IMPORT_FIELD_LABELS } from "@shared/import-types";
 import type { OttoImportField, CsvParseResult } from "@shared/import-types";
 
@@ -203,20 +204,20 @@ export default function ImportMappingStep({
 
       {/* Info banners */}
       {notesFromColumns && notesFromColumns.length > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
-          <Info className="h-3.5 w-3.5 text-blue-600 mt-0.5 shrink-0" />
-          <span className="text-blue-700">
+        <Alert variant="info" className="py-2 px-3 text-xs">
+          <Info className="h-3.5 w-3.5" />
+          <AlertDescription>
             <span className="font-medium">Notes:</span> {notesFromColumns.join(", ")} will be combined into the Notes field.
-          </span>
-        </div>
+          </AlertDescription>
+        </Alert>
       )}
       {destinationFallbackColumn && (
-        <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
-          <Info className="h-3.5 w-3.5 text-blue-600 mt-0.5 shrink-0" />
-          <span className="text-blue-700">
+        <Alert variant="info" className="py-2 px-3 text-xs">
+          <Info className="h-3.5 w-3.5" />
+          <AlertDescription>
             <span className="font-medium">Destination fallback:</span> If empty, <span className="font-medium">{destinationFallbackColumn}</span> will be used.
-          </span>
-        </div>
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* ── Step 3: Status Mapping ── */}

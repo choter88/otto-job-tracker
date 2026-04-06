@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import CommentsSidebar from "@/components/comments-sidebar";
 import { useAuth } from "@/hooks/use-auth";
-import { getColorForBadge, getDefaultDestinationColor, getDefaultJobTypeColor, getDefaultStatusColor } from "@/lib/default-colors";
+import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 
 interface FlaggedJob {
   id: string;
@@ -124,41 +124,18 @@ export default function ImportantJobs() {
     return destination?.label || destId.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
   };
 
-  const getStatusBadgeStyle = (statusId: string) => {
-    const customStatus = office?.settings?.customStatuses?.find((s: any) => s.id === statusId);
-    if (customStatus) {
-      const colorValue = customStatus.hsl || customStatus.color || customStatus.hex;
-      if (colorValue) return getColorForBadge(colorValue);
-    }
+  const customStatuses = office?.settings?.customStatuses || [];
+  const customJobTypes = office?.settings?.customJobTypes || [];
+  const customOrderDestinations = office?.settings?.customOrderDestinations || [];
 
-    const def = getDefaultStatusColor(statusId);
-    if (def) return getColorForBadge(def.hsl);
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
+  const getStatusStyle = (statusId: string) =>
+    getStatusBadgeStyle(statusId, customStatuses as any);
 
-  const getJobTypeBadgeStyle = (jobTypeId: string) => {
-    const customType = office?.settings?.customJobTypes?.find((t: any) => t.id === jobTypeId);
-    if (customType) {
-      const colorValue = customType.hsl || customType.color || customType.hex;
-      if (colorValue) return getColorForBadge(colorValue);
-    }
+  const getJobTypeStyle = (jobTypeId: string) =>
+    getTypeBadgeStyle(jobTypeId, customJobTypes as any);
 
-    const def = getDefaultJobTypeColor(jobTypeId);
-    if (def) return getColorForBadge(def.hsl);
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
-
-  const getDestinationBadgeStyle = (destId: string) => {
-    const customDestination = office?.settings?.customOrderDestinations?.find((d: any) => d.id === destId || d.label === destId);
-    if (customDestination) {
-      const colorValue = customDestination.hsl || customDestination.color || customDestination.hex;
-      if (colorValue) return getColorForBadge(colorValue);
-    }
-
-    const def = getDefaultDestinationColor(destId);
-    if (def) return getColorForBadge(def.hsl);
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
+  const getDestinationStyle = (destId: string) =>
+    getDestinationBadgeStyle(destId, customOrderDestinations as any);
 
   if (isLoading) {
     return (
@@ -209,9 +186,9 @@ export default function ImportantJobs() {
             getStatusLabel={getStatusLabel}
             getJobTypeLabel={getJobTypeLabel}
             getDestinationLabel={getDestinationLabel}
-            getStatusBadgeStyle={getStatusBadgeStyle}
-            getJobTypeBadgeStyle={getJobTypeBadgeStyle}
-            getDestinationBadgeStyle={getDestinationBadgeStyle}
+            getStatusBadgeStyle={getStatusStyle}
+            getJobTypeBadgeStyle={getJobTypeStyle}
+            getDestinationBadgeStyle={getDestinationStyle}
           />
         ))}
       </div>

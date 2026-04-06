@@ -3,35 +3,17 @@ import type { ReactNode } from "react";
 
 function ErrorFallback() {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100vh",
-        padding: "2rem",
-        textAlign: "center",
-        fontFamily: "system-ui, -apple-system, sans-serif",
-      }}
-    >
-      <h1 style={{ fontSize: "1.5rem", marginBottom: "1rem" }}>
+    <div className="flex flex-col items-center justify-center h-screen p-8 text-center font-sans bg-background text-foreground">
+      <h1 className="text-2xl font-semibold mb-4">
         Something went wrong
       </h1>
-      <p style={{ color: "#666", marginBottom: "1.5rem", maxWidth: "400px" }}>
+      <p className="text-muted-foreground mb-6 max-w-[400px]">
         An unexpected error occurred. Please restart the app. If the problem
         persists, contact support.
       </p>
       <button
         onClick={() => window.location.reload()}
-        style={{
-          padding: "0.5rem 1.5rem",
-          fontSize: "1rem",
-          borderRadius: "6px",
-          border: "1px solid #ccc",
-          background: "#fff",
-          cursor: "pointer",
-        }}
+        className="px-6 py-2 text-base rounded-md border border-border bg-card text-foreground cursor-pointer hover:bg-accent transition-colors"
       >
         Reload
       </button>

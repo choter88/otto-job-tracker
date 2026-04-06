@@ -1385,6 +1385,8 @@
             const errMsg = registerResult?.error || "Registration failed.";
             if (errMsg === "login_id_taken") {
               setStatus(clientAccountStatus, "That Login ID is already taken. Choose a different one.", "err");
+            } else if (errMsg === "CLIENT_LIMIT_REACHED") {
+              setStatus(clientAccountStatus, "This office has reached its workstation limit. Ask the office administrator to upgrade through the Otto portal.", "err");
             } else {
               setStatus(clientAccountStatus, errMsg, "err");
             }

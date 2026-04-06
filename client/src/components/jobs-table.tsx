@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuCheckboxItem,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -16,9 +17,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, SlidersHorizontal, CheckSquare, Link2, X } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
@@ -26,7 +28,7 @@ import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
 import ImportWizard from "./import-wizard";
 import type { Job, Office } from "@shared/schema";
 import { format } from "date-fns";
-import { getDefaultStatusColor, getDefaultJobTypeColor, getDefaultDestinationColor, getColorForBadge } from "@/lib/default-colors";
+import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { cn } from "@/lib/utils";
 import { formatPatientDisplayName } from "@shared/name-format";
 import { renderMessageTemplate } from "@/lib/message-templates";
@@ -55,6 +57,88 @@ function getLabelFromSettings(list: any[], value: string): string {
   return value;
 }
 
+const COLUMN_TYPE_ICON = {
+  text: Type,
+  number: Hash,
+  date: CalendarDays,
+} as const;
+
+const COLUMN_TYPE_PLACEHOLDER: Record<string, string> = {
+  text: "Add text...",
+  number: "0",
+  date: "Select date...",
+};
+
+/** Inline-editable cell for text, number, and date custom columns */
+function EditableCell({
+  jobId, columnId, columnType, value, onSave,
+}: {
+  jobId: string;
+  columnId: string;
+  columnType: string;
+  value: any;
+  onSave: (jobId: string, columnId: string, newValue: any) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value ?? ""));
+
+  const inputType = columnType === "number" ? "number" : columnType === "date" ? "date" : "text";
+  const Icon = COLUMN_TYPE_ICON[columnType as keyof typeof COLUMN_TYPE_ICON] || Type;
+  const placeholder = COLUMN_TYPE_PLACEHOLDER[columnType] || "Add text...";
+
+  const save = () => {
+    const trimmed = draft.trim();
+    const newValue = columnType === "number" && trimmed ? Number(trimmed) : trimmed || null;
+    if (newValue !== (value ?? null)) {
+      onSave(jobId, columnId, newValue);
+    }
+    setEditing(false);
+  };
+
+  const cancel = () => {
+    setDraft(String(value ?? ""));
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <Input
+        type={inputType}
+        autoFocus
+        defaultValue={value ?? ""}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); save(); }
+          if (e.key === "Escape") { e.preventDefault(); cancel(); }
+        }}
+        className="h-7 text-sm w-full"
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  }
+
+  const hasValue = value !== null && value !== undefined && value !== "";
+  const display = columnType === "date" && hasValue
+    ? (() => { try { return format(new Date(value), "MMM d, yyyy"); } catch { return String(value); } })()
+    : hasValue ? String(value) : "";
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex items-center gap-1.5 w-full rounded px-1.5 py-0.5 text-left text-sm transition-colors",
+        "border border-transparent hover:border-border hover:bg-muted/50",
+        hasValue ? "text-foreground" : "text-muted-foreground/60",
+      )}
+      onClick={() => { setDraft(String(value ?? "")); setEditing(true); }}
+    >
+      <Icon className="h-3 w-3 shrink-0 text-muted-foreground/40" />
+      <span className="truncate">{display || placeholder}</span>
+    </button>
+  );
+}
+
 export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -64,12 +148,17 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [linkMode, setLinkMode] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [destinationFilter, setDestinationFilter] = useState("all");
-  const [overdueOnly, setOverdueOnly] = useState(false);
   const [customColumnFilters, setCustomColumnFilters] = useState<Record<string, any>>({});
+  const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = window.localStorage.getItem("otto.worklist.columnVisibility");
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  });
   const [sortBy, setSortBy] = useState("createdAt");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
@@ -81,6 +170,19 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [messageTemplatesOpen, setMessageTemplatesOpen] = useState(false);
   const [selectedMessagesJobId, setSelectedMessagesJobId] = useState<string | null>(null);
   const tableViewportRef = useRef<HTMLDivElement | null>(null);
+
+  // Column visibility persistence
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("otto.worklist.columnVisibility", JSON.stringify(columnVisibility));
+    } catch {}
+  }, [columnVisibility]);
+
+  const isColumnVisible = useCallback((key: string) => columnVisibility[key] !== false, [columnVisibility]);
+
+  const toggleColumnVisibility = useCallback((key: string) => {
+    setColumnVisibility((prev) => ({ ...prev, [key]: prev[key] === false }));
+  }, []);
 
   const selectedJobForDetails = useMemo(
     () => jobs.find((job) => job.id === selectedDetailsJobId),
@@ -384,10 +486,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         return true;
       });
       
-      // Overdue filter
-      const matchesOverdue = !overdueOnly || overdueJobIds.has(job.id);
-      
-      return matchesSearch && matchesStatus && matchesType && matchesDestination && matchesCustomColumns && matchesOverdue;
+      return matchesSearch && matchesStatus && matchesType && matchesDestination && matchesCustomColumns;
     }).sort((a, b) => {
       // Check if sorting by custom column
       if (sortBy.startsWith('custom-')) {
@@ -444,7 +543,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         return aValue < bValue ? 1 : -1;
       }
     });
-  }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, customColumnFilters, sortBy, sortOrder, customColumns, overdueOnly, overdueJobIds]);
+  }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, customColumnFilters, sortBy, sortOrder, customColumns]);
 
   // Count jobs per patient for the "related" indicator
   const patientJobCounts = useMemo(() => {
@@ -602,47 +701,11 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     }
   }, [sortBy, sortOrder]);
 
-  const getStatusBadgeColor = (status: string) => {
-    // Check if there's a custom color defined in settings
-    const customStatus = customStatuses.find((s: any) => s.id === status);
-    if (customStatus) {
-      // Prefer HSL for accuracy, fall back to hex/color
-      const colorValue = customStatus.hsl || customStatus.color || customStatus.hex;
-      if (colorValue) {
-        return getColorForBadge(colorValue);
-      }
-    }
-    
-    // Fall back to default colors
-    const defaultColor = getDefaultStatusColor(status);
-    if (defaultColor) {
-      return getColorForBadge(defaultColor.hsl);
-    }
-    
-    // Final fallback
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
+  const getStatusBadgeColor = (status: string) =>
+    getStatusBadgeStyle(status, customStatuses);
 
-  const getTypeBadgeColor = (type: string) => {
-    // Check if there's a custom color defined in settings
-    const customType = customJobTypes.find((t: any) => t.id === type);
-    if (customType) {
-      // Prefer HSL for accuracy, fall back to hex/color
-      const colorValue = customType.hsl || customType.color || customType.hex;
-      if (colorValue) {
-        return getColorForBadge(colorValue);
-      }
-    }
-    
-    // Fall back to default colors
-    const defaultColor = getDefaultJobTypeColor(type);
-    if (defaultColor) {
-      return getColorForBadge(defaultColor.hsl);
-    }
-    
-    // Final fallback
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
+  const getTypeBadgeColor = (type: string) =>
+    getTypeBadgeStyle(type, customJobTypes);
 
   // Memoize notification rules as a dictionary for O(1) lookup
   const notificationRulesMap = useMemo(() => {
@@ -671,28 +734,17 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     return statusDate <= cutoffDate;
   }, [notificationRulesMap]);
 
-  const getDestinationBadgeColor = (destination: string) => {
-    // Check if there's a custom color defined in settings (by ID or label)
-    const customDestination = customOrderDestinations.find((d: any) => 
-      d.id === destination || d.label === destination
-    );
-    if (customDestination) {
-      // Prefer HSL for accuracy, fall back to hex/color
-      const colorValue = customDestination.hsl || customDestination.color || customDestination.hex;
-      if (colorValue) {
-        return getColorForBadge(colorValue);
-      }
-    }
-    
-    // Fall back to default colors
-    const defaultColor = getDefaultDestinationColor(destination);
-    if (defaultColor) {
-      return getColorForBadge(defaultColor.hsl);
-    }
-    
-    // Final fallback
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
+  const getDestinationBadgeColor = (destination: string) =>
+    getDestinationBadgeStyle(destination, customOrderDestinations);
+
+  const handleCustomColumnSave = useCallback((jobId: string, columnId: string, newValue: any) => {
+    const job = jobs.find(j => j.id === jobId);
+    const currentValues = (job?.customColumnValues as Record<string, any>) || {};
+    updateJobMutation.mutate({
+      id: jobId,
+      updates: { customColumnValues: { ...currentValues, [columnId]: newValue } as any }
+    });
+  }, [jobs, updateJobMutation]);
 
   const getPatientLabel = useCallback(
     (job: Job) =>
@@ -775,9 +827,41 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   if (loading) {
     return (
       <Card>
-        <CardContent className="p-8">
-          <div className="text-center">Loading jobs...</div>
-        </CardContent>
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+          <Skeleton className="h-8 w-56" />
+          <div className="flex gap-2">
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-8 w-24" />
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_td]:px-3 [&_td]:py-3">
+            <TableHeader className="bg-muted/50">
+              <TableRow>
+                <TableHead className="w-10" />
+                <TableHead className="min-w-[160px]">Patient</TableHead>
+                <TableHead className="min-w-[120px]">Job Type</TableHead>
+                <TableHead className="min-w-[120px]">Status</TableHead>
+                <TableHead className="min-w-[120px]">Destination</TableHead>
+                <TableHead>Order Date</TableHead>
+                <TableHead className="w-20" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <TableRow key={i}>
+                  <TableCell><Skeleton className="h-4 w-4 mx-auto" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                  <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                  <TableCell><Skeleton className="h-5 w-24 rounded-full" /></TableCell>
+                  <TableCell><Skeleton className="h-5 w-24 rounded-full" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-8 mx-auto" /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </Card>
     );
   }
@@ -785,8 +869,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   return (
     <>
       <Card data-testid="card-jobs-table">
-        {/* Table Header with Actions */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+        {/* Row 1: Search + Select/Link + Actions */}
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-border">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
@@ -798,38 +882,15 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setImportWizardOpen(true)} data-testid="button-import-ehr">
-              <Upload className="mr-1.5 h-3.5 w-3.5" />
-              Import from EHR
-            </Button>
-            <Button size="sm" className="h-8 text-xs" onClick={() => {
-              setEditingJob(undefined);
-              setJobDialogOpen(true);
-            }} data-testid="button-new-job">
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              New Job
-            </Button>
-          </div>
-        </div>
+          <div className="w-px h-4 bg-border" />
 
-        {/* Toolbar: Select + Link Jobs + Filters */}
-        <div className="flex flex-wrap items-center gap-2 px-5 py-2">
-          {/* Select mode button */}
           <Button
             variant={selectionMode ? "secondary" : "ghost"}
-            size="sm"
-            className="h-7 text-xs gap-1.5"
+            size="xs"
+            className="gap-1.5"
             onClick={() => {
-              if (selectionMode) {
-                setSelectionMode(false);
-                setSelectedJobs([]);
-              } else {
-                setSelectionMode(true);
-                setLinkMode(false);
-                setSelectedJobs([]);
-                setFiltersOpen(false);
-              }
+              if (selectionMode) { setSelectionMode(false); setSelectedJobs([]); }
+              else { setSelectionMode(true); setLinkMode(false); setSelectedJobs([]); }
             }}
           >
             <CheckSquare className="h-3.5 w-3.5" />
@@ -841,21 +902,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             )}
           </Button>
 
-          {/* Link Jobs mode button */}
           <Button
             variant={linkMode ? "secondary" : "ghost"}
-            size="sm"
-            className="h-7 text-xs gap-1.5"
+            size="xs"
+            className="gap-1.5"
             onClick={() => {
-              if (linkMode) {
-                setLinkMode(false);
-                setSelectedJobs([]);
-              } else {
-                setLinkMode(true);
-                setSelectionMode(false);
-                setSelectedJobs([]);
-                setFiltersOpen(false);
-              }
+              if (linkMode) { setLinkMode(false); setSelectedJobs([]); }
+              else { setLinkMode(true); setSelectionMode(false); setSelectedJobs([]); }
             }}
           >
             <Link2 className="h-3.5 w-3.5" />
@@ -871,14 +924,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           {linkMode && (
             <>
               <div className="w-px h-4 bg-border" />
-              <span className="text-xs text-muted-foreground">Select 2 or more jobs to link</span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                disabled={selectedJobs.length < 2}
-                onClick={() => linkJobsMutation.mutate(selectedJobs)}
-              >
+              <span className="text-xs text-muted-foreground">Select 2+ to link</span>
+              <Button variant="outline" size="xs" disabled={selectedJobs.length < 2} onClick={() => linkJobsMutation.mutate(selectedJobs)}>
                 <Link2 className="mr-1.5 h-3.5 w-3.5" />
                 Link {selectedJobs.length > 0 ? `(${selectedJobs.length})` : ""}
               </Button>
@@ -917,165 +964,154 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   ))}
                 </SelectContent>
               </Select>
-              <Button
-                variant="destructive"
-                size="sm"
-                className="h-7 text-xs"
-                disabled={selectedJobs.length === 0}
-                onClick={() => {
-                  if (confirm(`Delete ${selectedJobs.length} job${selectedJobs.length !== 1 ? "s" : ""}? This cannot be undone.`)) {
-                    bulkDeleteMutation.mutate(selectedJobs);
-                  }
-                }}
-              >
+              <Button variant="destructive" size="xs" disabled={selectedJobs.length === 0} onClick={() => setBulkDeleteConfirmOpen(true)}>
                 Delete
               </Button>
             </>
           )}
 
-          {/* Filters — hidden when in selection or link mode */}
-          {!selectionMode && !linkMode && (
-            <>
-              <div className="w-px h-4 bg-border" />
-              <Button
-                variant={filtersOpen ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 text-xs gap-1.5"
-                onClick={() => setFiltersOpen((v) => !v)}
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                Filters
-                {!filtersOpen && (statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
-                  <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
-                    {[statusFilter !== "all", typeFilter !== "all", destinationFilter !== "all", overdueOnly].filter(Boolean).length}
-                  </span>
-                )}
-              </Button>
+          <div className="flex-1" />
 
-              {filtersOpen && <>
-                <div className="flex flex-wrap items-center gap-2">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
-                  <SelectValue placeholder="All Statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  {customStatuses.length > 0 ? (
-                    customStatuses.map((status: any) => (
-                      <SelectItem key={status.id} value={status.id}>
-                        {status.label}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <>
-                      <SelectItem value="job_created">Job Created</SelectItem>
-                      <SelectItem value="ordered">Ordered</SelectItem>
-                      <SelectItem value="in_progress">In Progress</SelectItem>
-                      <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
-                    </>
-                  )}
-                </SelectContent>
-              </Select>
+          <Button variant="outline" size="xs" onClick={() => setImportWizardOpen(true)} data-testid="button-import-ehr">
+            <Upload className="mr-1.5 h-3.5 w-3.5" />
+            Import from EHR
+          </Button>
+          <Button size="xs" onClick={() => { setEditingJob(undefined); setJobDialogOpen(true); }} data-testid="button-new-job">
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            New Job
+          </Button>
+        </div>
 
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-type-filter">
-                  <SelectValue placeholder="All Types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  {customJobTypes.length > 0 ? (
-                    customJobTypes.map((type: any) => (
-                      <SelectItem key={type.id} value={type.id}>
-                        {type.label}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <>
-                      <SelectItem value="contacts">Contacts</SelectItem>
-                      <SelectItem value="glasses">Glasses</SelectItem>
-                      <SelectItem value="sunglasses">Sunglasses</SelectItem>
-                    </>
-                  )}
-                </SelectContent>
-              </Select>
+        {/* Row 2: Persistent Filters + Column Toggle */}
+        <div className="flex flex-wrap items-center gap-2 px-5 py-2 border-b border-border">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
+              <SelectValue placeholder="All Statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {customStatuses.length > 0 ? (
+                customStatuses.map((status: any) => (
+                  <SelectItem key={status.id} value={status.id}>{status.label}</SelectItem>
+                ))
+              ) : (
+                <>
+                  <SelectItem value="job_created">Job Created</SelectItem>
+                  <SelectItem value="ordered">Ordered</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
+                </>
+              )}
+            </SelectContent>
+          </Select>
 
-              <Select value={destinationFilter} onValueChange={setDestinationFilter}>
-                <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-destination-filter">
-                  <SelectValue placeholder="All Destinations" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Destinations</SelectItem>
-                  {customOrderDestinations.length > 0 ? (
-                    customOrderDestinations.map((dest: any) => (
-                      <SelectItem key={dest.id} value={dest.label}>
-                        {dest.label}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <>
-                      <SelectItem value="Vision Lab">Vision Lab</SelectItem>
-                      <SelectItem value="EyeTech Labs">EyeTech Labs</SelectItem>
-                      <SelectItem value="Premium Optics">Premium Optics</SelectItem>
-                    </>
-                  )}
-                </SelectContent>
-              </Select>
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-type-filter">
+              <SelectValue placeholder="All Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              {customJobTypes.length > 0 ? (
+                customJobTypes.map((type: any) => (
+                  <SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>
+                ))
+              ) : (
+                <>
+                  <SelectItem value="contacts">Contacts</SelectItem>
+                  <SelectItem value="glasses">Glasses</SelectItem>
+                  <SelectItem value="sunglasses">Sunglasses</SelectItem>
+                </>
+              )}
+            </SelectContent>
+          </Select>
 
-              <label className="flex items-center gap-2 px-3 py-2 bg-muted rounded-md cursor-pointer">
+          <Select value={destinationFilter} onValueChange={setDestinationFilter}>
+            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-destination-filter">
+              <SelectValue placeholder="All Destinations" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Destinations</SelectItem>
+              {customOrderDestinations.length > 0 ? (
+                customOrderDestinations.map((dest: any) => (
+                  <SelectItem key={dest.id} value={dest.label}>{dest.label}</SelectItem>
+                ))
+              ) : (
+                <>
+                  <SelectItem value="Vision Lab">Vision Lab</SelectItem>
+                  <SelectItem value="EyeTech Labs">EyeTech Labs</SelectItem>
+                  <SelectItem value="Premium Optics">Premium Optics</SelectItem>
+                </>
+              )}
+            </SelectContent>
+          </Select>
+
+          {customColumns
+            .filter((col: any) => col.type === 'checkbox')
+            .map((column: any) => (
+              <label key={column.id} className="flex items-center gap-2 px-3 py-2 bg-muted rounded-md cursor-pointer">
                 <Checkbox
-                  checked={overdueOnly}
-                  onCheckedChange={(checked) => setOverdueOnly(!!checked)}
-                  data-testid="checkbox-overdue-only"
+                  checked={customColumnFilters[column.id] === 'unchecked'}
+                  onCheckedChange={(checked) => setCustomColumnFilters({ ...customColumnFilters, [column.id]: checked ? 'unchecked' : null })}
+                  data-testid={`checkbox-filter-custom-${column.id}`}
                 />
-                <span className="text-xs">Overdue Only</span>
+                <span className="text-xs">{column.name} (unchecked only)</span>
               </label>
+            ))}
 
-              {customColumns
-                .filter((col: any) => col.type === 'checkbox')
-                .map((column: any) => (
-                  <label
-                    key={column.id}
-                    className="flex items-center gap-2 px-3 py-2 bg-muted rounded-md cursor-pointer"
-                  >
-                    <Checkbox
-                      checked={customColumnFilters[column.id] === 'unchecked'}
-                      onCheckedChange={(checked) => {
-                        setCustomColumnFilters({
-                          ...customColumnFilters,
-                          [column.id]: checked ? 'unchecked' : null
-                        });
-                      }}
-                      data-testid={`checkbox-filter-custom-${column.id}`}
-                    />
-                    <span className="text-xs">{column.name} (unchecked only)</span>
-                  </label>
-                ))}
-                </div>
-
-                {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || overdueOnly) && (
-                  <button
-                    type="button"
-                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                    onClick={() => {
-                      setStatusFilter("all");
-                      setTypeFilter("all");
-                      setDestinationFilter("all");
-                      setOverdueOnly(false);
-                      setCustomColumnFilters({});
-                    }}
-                  >
-                    <X className="h-3 w-3" />
-                    Clear
-                  </button>
-                )}
-              </>}
-            </>
+          {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || Object.keys(customColumnFilters).some(k => customColumnFilters[k])) && (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              onClick={() => {
+                setStatusFilter("all");
+                setTypeFilter("all");
+                setDestinationFilter("all");
+                setCustomColumnFilters({});
+              }}
+            >
+              <X className="h-3 w-3" />
+              Clear
+            </button>
           )}
+
+          <div className="flex-1" />
+
+          {/* Column Visibility Toggle */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="xs" className="gap-1.5">
+                <Columns3 className="h-3.5 w-3.5" />
+                Columns
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuCheckboxItem checked={isColumnVisible('jobType')} onCheckedChange={() => toggleColumnVisibility('jobType')}>
+                Job Type
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColumnVisible('status')} onCheckedChange={() => toggleColumnVisibility('status')}>
+                Status
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColumnVisible('destination')} onCheckedChange={() => toggleColumnVisibility('destination')}>
+                Destination
+              </DropdownMenuCheckboxItem>
+              {customColumns.map((col: any) => (
+                <DropdownMenuCheckboxItem key={col.id} checked={isColumnVisible(col.id)} onCheckedChange={() => toggleColumnVisibility(col.id)}>
+                  {col.name}
+                </DropdownMenuCheckboxItem>
+              ))}
+              <DropdownMenuCheckboxItem checked={isColumnVisible('createdAt')} onCheckedChange={() => toggleColumnVisibility('createdAt')}>
+                Created
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={isColumnVisible('statusChangedAt')} onCheckedChange={() => toggleColumnVisibility('statusChangedAt')}>
+                Last Updated
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Jobs Table */}
         <div ref={tableViewportRef} className="overflow-x-auto">
-          <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
+          <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_td]:px-3 [&_td]:py-3">
             <TableHeader className="bg-muted/50">
               <TableRow>
                 <TableHead className="w-10 text-center">
@@ -1092,32 +1128,32 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     )}
                   </div>
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("jobType")}>
-                  <div className="flex items-center gap-1">
-                    Job Type
-                    {sortBy === "jobType" && (
-                      sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
-                    )}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("status")}>
-                  <div className="flex items-center gap-1">
-                    Status
-                    {sortBy === "status" && (
-                      sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
-                    )}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("orderDestination")}>
-                  <div className="flex items-center gap-1">
-                    Destination
-                    {sortBy === "orderDestination" && (
-                      sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
-                    )}
-                  </div>
-                </TableHead>
-                {customColumns.map((column: any) => (
-                  <TableHead 
+                {isColumnVisible('jobType') && (
+                  <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("jobType")}>
+                    <div className="flex items-center gap-1">
+                      Job Type
+                      {sortBy === "jobType" && (sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
+                    </div>
+                  </TableHead>
+                )}
+                {isColumnVisible('status') && (
+                  <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("status")}>
+                    <div className="flex items-center gap-1">
+                      Status
+                      {sortBy === "status" && (sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
+                    </div>
+                  </TableHead>
+                )}
+                {isColumnVisible('destination') && (
+                  <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("orderDestination")}>
+                    <div className="flex items-center gap-1">
+                      Destination
+                      {sortBy === "orderDestination" && (sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
+                    </div>
+                  </TableHead>
+                )}
+                {customColumns.filter((col: any) => isColumnVisible(col.id)).map((column: any) => (
+                  <TableHead
                     key={column.id}
                     className="cursor-pointer hover:text-primary min-w-[96px]"
                     onClick={() => handleSort(`custom-${column.id}`)}
@@ -1126,22 +1162,22 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     <span className="truncate block">{column.name}</span>
                   </TableHead>
                 ))}
-                <TableHead className="cursor-pointer hover:text-primary min-w-[104px]" onClick={() => handleSort("createdAt")}>
-                  <div className="flex items-center gap-1">
-                    Created
-                    {sortBy === "createdAt" && (
-                      sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
-                    )}
-                  </div>
-                </TableHead>
-                <TableHead className="cursor-pointer hover:text-primary min-w-[116px]" onClick={() => handleSort("statusChangedAt")}>
-                  <div className="flex items-center gap-1">
-                    Last Updated
-                    {sortBy === "statusChangedAt" && (
-                      sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
-                    )}
-                  </div>
-                </TableHead>
+                {isColumnVisible('createdAt') && (
+                  <TableHead className="cursor-pointer hover:text-primary min-w-[104px]" onClick={() => handleSort("createdAt")}>
+                    <div className="flex items-center gap-1">
+                      Created
+                      {sortBy === "createdAt" && (sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
+                    </div>
+                  </TableHead>
+                )}
+                {isColumnVisible('statusChangedAt') && (
+                  <TableHead className="cursor-pointer hover:text-primary min-w-[116px]" onClick={() => handleSort("statusChangedAt")}>
+                    <div className="flex items-center gap-1">
+                      Last Updated
+                      {sortBy === "statusChangedAt" && (sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
+                    </div>
+                  </TableHead>
+                )}
                 <TableHead className="w-12 text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -1165,13 +1201,34 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 <TableRow>
                   <TableCell colSpan={99} className="h-48">
                     <div className="flex flex-col items-center justify-center text-center py-8">
-                      <Briefcase className="h-10 w-10 text-muted-foreground/40 mb-3" />
-                      <p className="text-sm font-medium text-muted-foreground">No jobs found</p>
-                      <p className="text-xs text-muted-foreground/70 mt-1">
-                        {searchQuery || statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all"
-                          ? "Try adjusting your filters"
-                          : "Create your first job to get started"}
-                      </p>
+                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+                        <Briefcase className="h-6 w-6 text-primary" />
+                      </div>
+                      {searchQuery || statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" ? (
+                        <>
+                          <p className="text-sm font-medium text-foreground">No jobs match your filters</p>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Try adjusting or clearing your filters to see more results.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm font-medium text-foreground">No jobs yet</p>
+                          <p className="text-sm text-muted-foreground mt-1 max-w-xs">
+                            Create your first job or import jobs from your EHR system to get started.
+                          </p>
+                          <div className="flex items-center gap-2 mt-4">
+                            <Button variant="outline" size="sm" onClick={() => setImportWizardOpen(true)}>
+                              <Upload className="mr-1.5 h-4 w-4" />
+                              Import from EHR
+                            </Button>
+                            <Button size="sm" onClick={() => { setEditingJob(undefined); setJobDialogOpen(true); }}>
+                              <Plus className="mr-1.5 h-4 w-4" />
+                              New Job
+                            </Button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -1220,7 +1277,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       {linkedJobIds.has(job.id) && (
                         <span
                           className="inline-flex items-center gap-0.5 text-[10px] cursor-pointer"
-                          style={{ color: 'hsl(221 83% 53%)' }}
+                          style={{ color: 'hsl(var(--primary))' }}
                           title="Manually linked to other jobs"
                           onClick={(e) => { e.stopPropagation(); handleOpenJobDetails(job, "related"); }}
                         >
@@ -1243,23 +1300,15 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       })()}
                       {job.isRedoJob && (
                         <Badge
-                          className="text-[10px] px-1.5 py-0 h-5 border-0"
-                          style={{
-                            backgroundColor: 'hsl(38 92% 50% / 0.15)',
-                            color: 'hsl(38 92% 40%)'
-                          }}
+                          className="text-[11px] px-1.5 py-0 h-5 border-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
                           data-testid={`badge-redo-${job.id}`}
                         >
                           REDO
                         </Badge>
                       )}
                       {isJobOverdue(job) && (
-                        <Badge 
-                          className="text-[10px] px-1.5 py-0 h-5 border-0"
-                          style={{
-                            backgroundColor: 'hsl(0 84% 60% / 0.15)',
-                            color: 'hsl(0 84% 50%)'
-                          }}
+                        <Badge
+                          className="text-[11px] px-1.5 py-0 h-5 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
                           data-testid={`badge-overdue-${job.id}`}
                         >
                           OVERDUE
@@ -1267,74 +1316,62 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <Badge 
-                      className="status-badge border-0 max-w-[130px] truncate"
-                      style={{
-                        backgroundColor: getTypeBadgeColor(job.jobType).background,
-                        color: getTypeBadgeColor(job.jobType).text
-                      }}
-                    >
-                      {customJobTypes.find((t: any) => t.id === job.jobType)?.label || 
-                       job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Select
-                      value={job.status}
-                      onValueChange={(newStatus) => handleStatusChange(job.id, newStatus)}
-                    >
-                      <SelectTrigger className="w-auto border-none p-0 h-auto min-h-0">
-                        <Badge 
-                          className="status-badge border-0 max-w-[136px] truncate"
-                          style={{
-                            backgroundColor: 'transparent',
-                            color: getStatusBadgeColor(job.status).text
-                          }}
-                        >
-                          {customStatuses.find((s: any) => s.id === job.status)?.label || 
-                           job.status.replace('_', ' ').split(' ').map(word => 
-                             word.charAt(0).toUpperCase() + word.slice(1)
-                           ).join(' ')}
-                        </Badge>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {customStatuses.length > 0 ? (
-                          customStatuses.map((status: any) => (
-                            <SelectItem key={status.id} value={status.id}>
-                              {status.label}
-                            </SelectItem>
-                          ))
-                        ) : (
-                          <>
-                            <SelectItem value="job_created">Job Created</SelectItem>
-                            <SelectItem value="ordered">Ordered</SelectItem>
-                            <SelectItem value="in_progress">In Progress</SelectItem>
-                            <SelectItem value="quality_check">Quality Check</SelectItem>
-                            <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
-                          </>
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell>
-                    <Badge 
-                      className="status-badge border-0 max-w-[140px] truncate"
-                      style={{
-                        backgroundColor: getDestinationBadgeColor(job.orderDestination).background,
-                        color: getDestinationBadgeColor(job.orderDestination).text
-                      }}
-                    >
-                      {customOrderDestinations.find((d: any) => d.id === job.orderDestination)?.label || 
-                       job.orderDestination}
-                    </Badge>
-                  </TableCell>
-                  {customColumns.map((column: any) => (
-                    <TableCell 
+                  {isColumnVisible('jobType') && (
+                    <TableCell>
+                      <Badge
+                        className="status-badge border-0 max-w-[130px] truncate"
+                        style={{ backgroundColor: getTypeBadgeColor(job.jobType).background, color: getTypeBadgeColor(job.jobType).text }}
+                      >
+                        {customJobTypes.find((t: any) => t.id === job.jobType)?.label || job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1)}
+                      </Badge>
+                    </TableCell>
+                  )}
+                  {isColumnVisible('status') && (
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Select value={job.status} onValueChange={(newStatus) => handleStatusChange(job.id, newStatus)}>
+                        <SelectTrigger className="w-auto border-none p-0 h-auto min-h-0 focus:ring-0 focus:ring-offset-0 shadow-none">
+                          <Badge
+                            className="status-badge border-0 max-w-[136px] truncate"
+                            style={{ backgroundColor: getStatusBadgeColor(job.status).background, color: getStatusBadgeColor(job.status).text }}
+                          >
+                            {customStatuses.find((s: any) => s.id === job.status)?.label ||
+                             job.status.replace('_', ' ').split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
+                          </Badge>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {customStatuses.length > 0 ? (
+                            customStatuses.map((status: any) => (
+                              <SelectItem key={status.id} value={status.id}>{status.label}</SelectItem>
+                            ))
+                          ) : (
+                            <>
+                              <SelectItem value="job_created">Job Created</SelectItem>
+                              <SelectItem value="ordered">Ordered</SelectItem>
+                              <SelectItem value="in_progress">In Progress</SelectItem>
+                              <SelectItem value="quality_check">Quality Check</SelectItem>
+                              <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
+                            </>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                  )}
+                  {isColumnVisible('destination') && (
+                    <TableCell>
+                      <Badge
+                        className="status-badge border-0 max-w-[140px] truncate"
+                        style={{ backgroundColor: getDestinationBadgeColor(job.orderDestination).background, color: getDestinationBadgeColor(job.orderDestination).text }}
+                      >
+                        {customOrderDestinations.find((d: any) => d.id === job.orderDestination)?.label || job.orderDestination}
+                      </Badge>
+                    </TableCell>
+                  )}
+                  {customColumns.filter((col: any) => isColumnVisible(col.id)).map((column: any) => (
+                    <TableCell
                       key={column.id}
                       className="max-w-[140px]"
                       data-testid={`table-cell-custom-${column.id}-${job.id}`}
-                      onClick={column.type === 'checkbox' ? (e) => e.stopPropagation() : undefined}
+                      onClick={(e) => e.stopPropagation()}
                     >
                       {column.type === 'checkbox' ? (
                         <Checkbox
@@ -1342,32 +1379,36 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                           checked={!!(job.customColumnValues as Record<string, any>)?.[column.id]}
                           onCheckedChange={(checked) => {
                             const currentValues = (job.customColumnValues as Record<string, any>) || {};
-                            const newCustomColumnValues = {
-                              ...currentValues,
-                              [column.id]: checked
-                            };
                             updateJobMutation.mutate({
                               id: job.id,
-                              updates: { customColumnValues: newCustomColumnValues as any }
+                              updates: { customColumnValues: { ...currentValues, [column.id]: checked } as any }
                             });
                           }}
                           data-testid={`checkbox-custom-${column.id}-${job.id}`}
                         />
                       ) : (
-                        <span className="truncate block">
-                          {(job.customColumnValues as Record<string, any>)?.[column.id] || '-'}
-                        </span>
+                        <EditableCell
+                          jobId={job.id}
+                          columnId={column.id}
+                          columnType={column.type}
+                          value={(job.customColumnValues as Record<string, any>)?.[column.id]}
+                          onSave={handleCustomColumnSave}
+                        />
                       )}
                     </TableCell>
                   ))}
-                  <TableCell className="text-muted-foreground leading-tight">
-                    <div>{format(new Date(job.createdAt), 'MMM d, yyyy')}</div>
-                    <div className="text-[11px]">{format(new Date(job.createdAt), 'h:mm a')}</div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground leading-tight">
-                    <div>{format(new Date(job.statusChangedAt || job.createdAt), 'MMM d, yyyy')}</div>
-                    <div className="text-[11px]">{format(new Date(job.statusChangedAt || job.createdAt), 'h:mm a')}</div>
-                  </TableCell>
+                  {isColumnVisible('createdAt') && (
+                    <TableCell className="text-muted-foreground leading-tight">
+                      <div>{format(new Date(job.createdAt), 'MMM d, yyyy')}</div>
+                      <div className="text-xs">{format(new Date(job.createdAt), 'h:mm a')}</div>
+                    </TableCell>
+                  )}
+                  {isColumnVisible('statusChangedAt') && (
+                    <TableCell className="text-muted-foreground leading-tight">
+                      <div>{format(new Date(job.statusChangedAt || job.createdAt), 'MMM d, yyyy')}</div>
+                      <div className="text-xs">{format(new Date(job.statusChangedAt || job.createdAt), 'h:mm a')}</div>
+                    </TableCell>
+                  )}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center gap-1">
                       <Button
@@ -1381,7 +1422,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         {commentCounts[job.id] > 0 && (
                           <span 
                             className={cn(
-                              "absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full text-[9px] font-semibold px-1",
+                              "absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full text-[10px] font-semibold px-1",
                               unreadCommentJobIds.includes(job.id) 
                                 ? "bg-red-500 text-white" 
                                 : "bg-gray-400 dark:bg-gray-600 text-white"
@@ -1516,6 +1557,27 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Delete Confirmation */}
+      <AlertDialog open={bulkDeleteConfirmOpen} onOpenChange={setBulkDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedJobs.length} job{selectedJobs.length !== 1 ? "s" : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. The selected job{selectedJobs.length !== 1 ? "s" : ""} will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => bulkDeleteMutation.mutate(selectedJobs)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

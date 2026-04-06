@@ -167,11 +167,14 @@ export default function NotificationBell() {
             </div>
           ) : notifications.length === 0 ? (
             <div
-              className="p-8 text-center text-muted-foreground"
+              className="flex flex-col items-center justify-center p-8 text-center"
               data-testid="empty-notifications"
             >
-              <Bell className="h-8 w-8 mx-auto mb-2 opacity-20" />
-              <p className="text-xs">No notifications</p>
+              <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center mb-2">
+                <Bell className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <p className="text-sm font-medium text-foreground">No notifications</p>
+              <p className="text-xs text-muted-foreground mt-0.5">You're all caught up.</p>
             </div>
           ) : (
             <div>

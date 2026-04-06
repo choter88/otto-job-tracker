@@ -223,7 +223,7 @@ export default function JobCommentsPanel({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         if (newComment.trim()) {
           const id =
@@ -277,8 +277,12 @@ export default function JobCommentsPanel({
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">Loading comments...</div>
         ) : comments.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            No comments yet. Be the first to add one!
+          <div className="flex flex-col items-center justify-center text-center py-8">
+            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center mb-2">
+              <Send className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-medium text-foreground">No comments yet</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Be the first to add one.</p>
           </div>
         ) : (
           comments.map((comment: JobComment & { author: any }) => (
@@ -372,7 +376,7 @@ export default function JobCommentsPanel({
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Add a comment... (Press Enter to send, Shift+Enter for new line)"
+            placeholder="Add a comment... (⌘Enter to send)"
             className="flex-1 resize-none"
             rows={2}
             data-testid="textarea-new-comment"
