@@ -8,12 +8,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Undo, RotateCcw, CheckCircle, XCircle, Search, Calendar } from "lucide-react";
+import { Undo, RotateCcw, CheckCircle, XCircle, Search, Calendar, Archive } from "lucide-react";
 import { format, startOfMonth, startOfQuarter, startOfYear, subMonths } from "date-fns";
 import { useState, useMemo } from "react";
 import type { ArchivedJob, Office } from "@shared/schema";
 import { useQuery } from "@tanstack/react-query";
-import { getDefaultStatusColor, getDefaultJobTypeColor, getDefaultDestinationColor, getColorForBadge } from "@/lib/default-colors";
+import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 
 interface DateRangePreset {
   id: string;
@@ -173,61 +173,18 @@ export default function PastJobs() {
     redoJobMutation.mutate(job);
   };
 
-  const getTypeBadgeColor = (type: string) => {
-    const customJobTypes = (office?.settings as any)?.customJobTypes || [];
-    const customType = customJobTypes.find((t: any) => t.id === type);
-    if (customType) {
-      const colorValue = customType.hsl || customType.color || customType.hex;
-      if (colorValue) {
-        return getColorForBadge(colorValue);
-      }
-    }
-    
-    const defaultColor = getDefaultJobTypeColor(type);
-    if (defaultColor) {
-      return getColorForBadge(defaultColor.hsl);
-    }
-    
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
+  const customJobTypes = (office?.settings as any)?.customJobTypes || [];
+  const customStatuses = (office?.settings as any)?.customStatuses || [];
+  const customOrderDestinations = (office?.settings as any)?.customOrderDestinations || [];
 
-  const getStatusBadgeColor = (status: string) => {
-    const customStatuses = (office?.settings as any)?.customStatuses || [];
-    const customStatus = customStatuses.find((s: any) => s.id === status);
-    if (customStatus) {
-      const colorValue = customStatus.hsl || customStatus.color || customStatus.hex;
-      if (colorValue) {
-        return getColorForBadge(colorValue);
-      }
-    }
-    
-    const defaultColor = getDefaultStatusColor(status);
-    if (defaultColor) {
-      return getColorForBadge(defaultColor.hsl);
-    }
-    
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
+  const getTypeBadgeColor = (type: string) =>
+    getTypeBadgeStyle(type, customJobTypes);
 
-  const getDestinationBadgeColor = (destination: string) => {
-    const customOrderDestinations = (office?.settings as any)?.customOrderDestinations || [];
-    const customDestination = customOrderDestinations.find((d: any) => 
-      d.id === destination || d.label === destination
-    );
-    if (customDestination) {
-      const colorValue = customDestination.hsl || customDestination.color || customDestination.hex;
-      if (colorValue) {
-        return getColorForBadge(colorValue);
-      }
-    }
-    
-    const defaultColor = getDefaultDestinationColor(destination);
-    if (defaultColor) {
-      return getColorForBadge(defaultColor.hsl);
-    }
-    
-    return { background: 'hsl(0 0% 90% / 0.15)', text: 'hsl(0 0% 40%)' };
-  };
+  const getStatusBadgeColor = (status: string) =>
+    getStatusBadgeStyle(status, customStatuses);
+
+  const getDestinationBadgeColor = (destination: string) =>
+    getDestinationBadgeStyle(destination, customOrderDestinations);
 
   const getDestinationLabel = (destination: string) => {
     const customOrderDestinations = (office?.settings as any)?.customOrderDestinations || [];
@@ -311,13 +268,13 @@ export default function PastJobs() {
 
       {/* Empty State */}
       {!isLoading && filteredJobs.length === 0 && (
-        <CardContent className="p-8 text-center">
-          <div className="space-y-4">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-muted rounded-full">
-              <span className="text-2xl">📋</span>
+        <CardContent className="p-8">
+          <div className="flex flex-col items-center justify-center text-center py-8">
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+              <Archive className="h-6 w-6 text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-semibold">No Past Jobs</h3>
-            <p className="text-muted-foreground">
+            <p className="text-sm font-medium text-foreground">No Past Jobs</p>
+            <p className="text-sm text-muted-foreground mt-1">
               No jobs found for the selected date range and filters.
             </p>
           </div>

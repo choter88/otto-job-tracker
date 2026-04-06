@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -585,14 +585,14 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
   if (!open || isLoading) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(96vw,1100px)] max-w-none h-[min(90vh,820px)] p-0 overflow-hidden flex flex-col animate-fade-in">
-        <DialogHeader className="border-b border-border px-5 py-3 pr-12">
-          <DialogTitle className="flex items-center gap-2 text-lg">
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-3xl p-0 overflow-hidden flex flex-col">
+        <SheetHeader className="border-b border-border px-5 py-3 pr-12">
+          <SheetTitle className="flex items-center gap-2 text-lg">
             <Settings className="h-5 w-5" />
             Office Settings
-          </DialogTitle>
-        </DialogHeader>
+          </SheetTitle>
+        </SheetHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
           <div className="flex-1 min-h-0 flex flex-col md:flex-row">
@@ -978,7 +978,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
             </Button>
           </div>
         </Tabs>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }

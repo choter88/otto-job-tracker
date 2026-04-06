@@ -1962,7 +1962,7 @@ ipcMain.handle("otto:portal:client-register", async (_event, payload) => {
 
     if (result.status < 200 || result.status >= 300) {
       const error = result.json?.error || `Registration failed (${result.status})`;
-      return { ok: false, error, status: result.status };
+      return { ok: false, error, message: result.json?.message || null, status: result.status };
     }
 
     return { ok: true, data: result.json };

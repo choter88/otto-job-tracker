@@ -145,9 +145,12 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-background pb-[33px]">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-[200] focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:text-sm focus:font-medium">
+        Skip to main content
+      </a>
       <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onFeedbackClick={() => setFeedbackOpen(true)} onUserSettingsClick={() => setUserSettingsOpen(true)} />
-      
-      <main className="flex-1 flex flex-col overflow-hidden">
+
+      <main id="main-content" className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
         <header className="bg-card border-b border-border px-6 h-14 flex items-center justify-between">
           <div>

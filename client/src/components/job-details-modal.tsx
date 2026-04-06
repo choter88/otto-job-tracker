@@ -2,7 +2,7 @@ import { useMemo, useCallback, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Clock3, Edit, FileText, MessageSquare, History, Link2, Star, Unlink, Send, Trash2 } from "lucide-react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import JobCommentsPanel from "@/components/job-comments-panel";
-import { getColorForBadge, getDefaultDestinationColor, getDefaultJobTypeColor, getDefaultStatusColor } from "@/lib/default-colors";
+import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { formatPatientDisplayName } from "@shared/name-format";
 import { apiRequest } from "@/lib/queryClient";
 import type { Job, Office } from "@shared/schema";
@@ -175,41 +175,14 @@ export default function JobDetailsModal({
     customOrderDestinations.find((entry) => entry.id === destination || entry.label === destination)?.label ||
     toTitleCase(destination);
 
-  const getStatusBadgeColor = (status: string) => {
-    const customStatus = customStatuses.find((entry) => entry.id === status);
-    if (customStatus) {
-      const colorValue = customStatus.hsl || customStatus.color || customStatus.hex;
-      if (colorValue) return getColorForBadge(colorValue);
-    }
-    const fallback = getDefaultStatusColor(status);
-    if (fallback) return getColorForBadge(fallback.hsl);
-    return { background: "hsl(0 0% 90% / 0.15)", text: "hsl(0 0% 40%)" };
-  };
+  const getStatusBadgeColor = (status: string) =>
+    getStatusBadgeStyle(status, customStatuses);
 
-  const getJobTypeBadgeColor = (jobType: string) => {
-    const customType = customJobTypes.find((entry) => entry.id === jobType);
-    if (customType) {
-      const colorValue = customType.hsl || customType.color || customType.hex;
-      if (colorValue) return getColorForBadge(colorValue);
-    }
-    const fallback = getDefaultJobTypeColor(jobType);
-    if (fallback) return getColorForBadge(fallback.hsl);
-    return { background: "hsl(0 0% 90% / 0.15)", text: "hsl(0 0% 40%)" };
-  };
+  const getJobTypeBadgeColor = (jobType: string) =>
+    getTypeBadgeStyle(jobType, customJobTypes);
 
-  const getDestinationBadgeColor = (destination: string) => {
-    const customDestination = customOrderDestinations.find(
-      (entry) => entry.id === destination || entry.label === destination,
-    );
-    if (customDestination) {
-      const colorValue = customDestination.hsl || customDestination.color || customDestination.hex;
-      if (colorValue) return getColorForBadge(colorValue);
-    }
-    const destinationLabel = getDestinationLabel(destination);
-    const fallback = getDefaultDestinationColor(destinationLabel) || getDefaultDestinationColor(destination);
-    if (fallback) return getColorForBadge(fallback.hsl);
-    return { background: "hsl(0 0% 90% / 0.15)", text: "hsl(0 0% 40%)" };
-  };
+  const getDestinationBadgeColor = (destination: string) =>
+    getDestinationBadgeStyle(destination, customOrderDestinations);
 
   if (!job) return null;
 
@@ -222,15 +195,15 @@ export default function JobDetailsModal({
   const destinationBadgeColor = getDestinationBadgeColor(job.orderDestination);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-5xl h-[86vh] max-h-[86vh] flex flex-col" data-testid="dialog-job-details">
-        <DialogHeader className="space-y-3 pr-12">
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-5xl flex flex-col p-0" data-testid="dialog-job-details">
+        <SheetHeader className="space-y-3 p-6 pb-0 pr-12">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <DialogTitle className="text-2xl">{patientDisplayName}</DialogTitle>
-              <DialogDescription>
+              <SheetTitle className="text-2xl">{patientDisplayName}</SheetTitle>
+              <SheetDescription>
                 Created {format(new Date(job.createdAt), "MMM d, yyyy 'at' h:mm a")}
-              </DialogDescription>
+              </SheetDescription>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Badge
                   className="border-0"
@@ -263,12 +236,12 @@ export default function JobDetailsModal({
               Edit Job
             </Button>
           </div>
-        </DialogHeader>
+        </SheetHeader>
 
         <Tabs
           value={activeTab}
           onValueChange={(value) => onActiveTabChange(value as JobDetailsTab)}
-          className="flex-1 flex flex-col min-h-0"
+          className="flex-1 flex flex-col min-h-0 px-6 pb-6"
         >
           <TabsList className={`grid w-full ${relatedJobs.length > 0 ? "grid-cols-3" : "grid-cols-2"} bg-muted h-11 p-1 rounded-lg`}>
             <TabsTrigger
@@ -484,7 +457,7 @@ export default function JobDetailsModal({
                             <span className="font-medium">{patientDisplayName}</span>
                             <span className="text-muted-foreground">(This job)</span>
                             {overdueJobIds.has(job.id) && (
-                              <Badge className="text-[10px] px-1.5 py-0 h-4 border-0" style={{ backgroundColor: 'hsl(0 84% 60% / 0.15)', color: 'hsl(0 84% 50%)' }}>OVERDUE</Badge>
+                              <Badge className="text-[10px] px-1.5 py-0 h-4 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">OVERDUE</Badge>
                             )}
                           </div>
                         </td>
@@ -527,7 +500,7 @@ export default function JobDetailsModal({
                                   <Badge variant="secondary" className="text-[10px] px-1 py-0">archived</Badge>
                                 )}
                                 {overdueJobIds.has(rj.id) && (
-                                  <Badge className="text-[10px] px-1.5 py-0 h-4 border-0" style={{ backgroundColor: 'hsl(0 84% 60% / 0.15)', color: 'hsl(0 84% 50%)' }}>OVERDUE</Badge>
+                                  <Badge className="text-[10px] px-1.5 py-0 h-4 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">OVERDUE</Badge>
                                 )}
                               </div>
                             </td>
@@ -629,7 +602,7 @@ export default function JobDetailsModal({
           )}
 
         </Tabs>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }

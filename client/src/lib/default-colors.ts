@@ -253,18 +253,29 @@ function bareHsl(value: string): string {
   return value.replace(/hsl\s*\(\s*/i, "").replace(/\)\s*$/, "").trim();
 }
 
-// Helper to get color for badge styling
+// Detect dark mode at call time
+function isDarkMode(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.documentElement.classList.contains("dark");
+}
+
+// Helper to get color for badge styling (dark-mode-aware)
 export function getColorForBadge(color: string | null | undefined): { background: string; text: string } {
   const safeColor = typeof color === "string" ? color.trim() : "";
+  const dark = isDarkMode();
+  const bgOpacity = dark ? 0.25 : 0.15;
+
   if (!safeColor) {
-    return { background: "hsl(0 0% 90% / 0.15)", text: "hsl(0 0% 40%)" };
+    return dark
+      ? { background: "hsl(0 0% 50% / 0.2)", text: "hsl(0 0% 70%)" }
+      : { background: "hsl(0 0% 90% / 0.15)", text: "hsl(0 0% 40%)" };
   }
 
   // If it's in HSL format (bare "220 70% 50%" or wrapped "hsl(220, 70%, 50%)")
   if (safeColor.includes('%')) {
     const raw = bareHsl(safeColor);
     return {
-      background: `hsl(${raw} / 0.15)`,
+      background: `hsl(${raw} / ${bgOpacity})`,
       text: `hsl(${raw})`
     };
   }
@@ -272,7 +283,65 @@ export function getColorForBadge(color: string | null | undefined): { background
   // If it's hex, convert to HSL and apply
   const hsl = hexToHSL(safeColor);
   return {
-    background: `hsl(${hsl} / 0.15)`,
+    background: `hsl(${hsl} / ${bgOpacity})`,
     text: `hsl(${hsl})`
   };
+}
+
+/** Shared badge color lookups -- replaces duplicated functions across components */
+
+export interface SettingsListItem {
+  id: string;
+  label?: string;
+  hsl?: string;
+  color?: string;
+  hex?: string;
+}
+
+function resolveColorFromItem(item: SettingsListItem | undefined): string | null {
+  if (!item) return null;
+  return item.hsl || item.color || item.hex || null;
+}
+
+export function getStatusBadgeStyle(
+  statusId: string,
+  customStatuses: SettingsListItem[],
+): { background: string; text: string } {
+  const custom = customStatuses.find((s) => s.id === statusId);
+  const colorValue = resolveColorFromItem(custom);
+  if (colorValue) return getColorForBadge(colorValue);
+
+  const def = getDefaultStatusColor(statusId);
+  if (def) return getColorForBadge(def.hsl);
+  return getColorForBadge(null);
+}
+
+export function getTypeBadgeStyle(
+  typeId: string,
+  customJobTypes: SettingsListItem[],
+): { background: string; text: string } {
+  const custom = customJobTypes.find((t) => t.id === typeId);
+  const colorValue = resolveColorFromItem(custom);
+  if (colorValue) return getColorForBadge(colorValue);
+
+  const def = getDefaultJobTypeColor(typeId);
+  if (def) return getColorForBadge(def.hsl);
+  return getColorForBadge(null);
+}
+
+export function getDestinationBadgeStyle(
+  destinationId: string,
+  customOrderDestinations: SettingsListItem[],
+): { background: string; text: string } {
+  const custom = customOrderDestinations.find(
+    (d) => d.id === destinationId || d.label === destinationId,
+  );
+  const colorValue = resolveColorFromItem(custom);
+  if (colorValue) return getColorForBadge(colorValue);
+
+  // Try by ID first, then by label (destination defaults use labels)
+  const destinationLabel = custom?.label || destinationId.replace(/_/g, " ").split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const def = getDefaultDestinationColor(destinationLabel) || getDefaultDestinationColor(destinationId);
+  if (def) return getColorForBadge(def.hsl);
+  return getColorForBadge(null);
 }
