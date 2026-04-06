@@ -146,12 +146,15 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
   // Collect anonymous usage metrics (counts only, no PHI)
   try {
     const { storage } = await import("./storage");
+    const { getConnectedClientCount } = await import("./sync-websocket");
+    const { getActiveTabletSessionCount } = await import("./routes");
     const stats = await storage.getPlatformStats();
     checkinPayload.metrics = {
       activeJobs: stats.activeJobs,
       archivedJobs: stats.archivedJobs,
       totalUsers: stats.totalUsers,
-      clientCount: 0, // TODO: track connected WebSocket clients
+      clientCount: getConnectedClientCount(),
+      tabletCount: getActiveTabletSessionCount(),
       platform: process.platform,
     };
   } catch {

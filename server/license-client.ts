@@ -205,6 +205,7 @@ export type CheckinMetrics = {
   archivedJobs?: number;
   totalUsers?: number;
   clientCount?: number;
+  tabletCount?: number;
   platform?: string;
 };
 

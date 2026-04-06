@@ -45,9 +45,25 @@ import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
 import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
-import { broadcastToOffice } from "./sync-websocket";
+import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
 import type { User } from "@shared/schema";
+
+// ── Tablet session tracking (module-level for access from license check-in) ──
+const tabletSessions = new Map<string, number>();
+const TABLET_SESSION_EXPIRY_MS = 60_000; // 60 seconds without heartbeat = expired
+
+export function getActiveTabletSessionCount(): number {
+  const now = Date.now();
+  const expired: string[] = [];
+  tabletSessions.forEach((lastSeen, id) => {
+    if (now - lastSeen > TABLET_SESSION_EXPIRY_MS) {
+      expired.push(id);
+    }
+  });
+  expired.forEach((id) => tabletSessions.delete(id));
+  return tabletSessions.size;
+}
 
 // Type-safe user accessors for authenticated routes.
 // These are safe to call in handlers guarded by requireAuth / requireOffice.
@@ -3076,21 +3092,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // Serves a lightweight job board view for tablet browsers on the LAN.
   // No link or menu item in the desktop UI should reference this route.
 
-  // Tablet session tracking via heartbeat — in-memory map of sessionId → last heartbeat timestamp
-  const tabletSessions = new Map<string, number>();
-  const TABLET_SESSION_EXPIRY_MS = 60_000; // 60 seconds without heartbeat = expired
-
-  function getActiveTabletSessionCount(): number {
-    const now = Date.now();
-    const expired: string[] = [];
-    tabletSessions.forEach((lastSeen, id) => {
-      if (now - lastSeen > TABLET_SESSION_EXPIRY_MS) {
-        expired.push(id);
-      }
-    });
-    expired.forEach((id) => tabletSessions.delete(id));
-    return tabletSessions.size;
-  }
+  // Tablet session tracking uses the shared module-level counter
 
   // POST /tablet/heartbeat — tablet pings every 30s with a session ID
   app.post("/tablet/heartbeat", (req, res) => {
