@@ -62,14 +62,50 @@ jobs:
       # produces a single latest-mac.yml that references both arm64 and x64
       # ZIPs.  Splitting into separate jobs would cause the second to overwrite
       # the first's manifest, breaking auto-update for one architecture.
+      # Build WITHOUT notarization — electron-builder's built-in notarize
+      # uses `notarytool submit --wait` which can hang indefinitely when
+      # Apple's service is slow (electron/notarize#179). We notarize
+      # separately below with an explicit timeout.
       - name: Build macOS (arm64 + x64)
-        timeout-minutes: 30
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
+        run: npx electron-builder --mac --arm64 --x64 --publish never -c.mac.notarize=false
+
+      - name: Notarize x64 app
+        timeout-minutes: 15
+        env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder --mac --arm64 --x64 --publish never
+        run: |
+          ZIP_X64="release/otto-tracker-mac-x64.zip"
+          echo "Submitting x64 for notarization..."
+          xcrun notarytool submit "$ZIP_X64" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait --timeout 10m
+          echo "Stapling x64 DMG..."
+          xcrun stapler staple "release/otto-tracker-mac-x64.dmg" || true
+
+      - name: Notarize arm64 app
+        timeout-minutes: 15
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ZIP_ARM64="release/otto-tracker-mac-arm64.zip"
+          echo "Submitting arm64 for notarization..."
+          xcrun notarytool submit "$ZIP_ARM64" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait --timeout 10m
+          echo "Stapling arm64 DMG..."
+          xcrun stapler staple "release/otto-tracker-mac-arm64.dmg" || true
 
       - name: Upload Mac artifacts to GitHub Release
         env:
