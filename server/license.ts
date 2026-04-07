@@ -160,7 +160,7 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
 
     // Attach daily activity aggregates (since last successful check-in or 7 days ago)
     try {
-      const { getAggregatedDailyStats, pruneOldEvents } = await import("./usage-tracker");
+      const { getAggregatedDailyStats, getRawEventsSince, pruneOldEvents } = await import("./usage-tracker");
       const since = new Date(
         Math.max(
           current.lastSuccessfulCheckinAt || 0,
@@ -168,6 +168,7 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
         ),
       );
       checkinPayload.metrics.dailyActivity = getAggregatedDailyStats(since);
+      checkinPayload.metrics.rawEvents = getRawEventsSince(since);
       // Non-blocking cleanup of old raw events
       setTimeout(() => { try { pruneOldEvents(90); } catch {} }, 100);
     } catch {

@@ -207,6 +207,13 @@ export type DailyActivitySummary = {
   sessions: number;
 };
 
+export type RawUsageEvent = {
+  userIdHash: string;
+  eventType: string;
+  metadata: Record<string, any>;
+  occurredAt: number;
+};
+
 export type CheckinMetrics = {
   activeJobs?: number;
   archivedJobs?: number;
@@ -215,6 +222,7 @@ export type CheckinMetrics = {
   tabletCount?: number;
   platform?: string;
   dailyActivity?: DailyActivitySummary[];
+  rawEvents?: RawUsageEvent[];
 };
 
 export async function portalCheckin(payload: {

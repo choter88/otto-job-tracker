@@ -9,9 +9,10 @@
  * to the portal. Raw events are retained locally for 90 days.
  */
 
+import { createHash } from "crypto";
 import { db } from "./db";
 import { usageEvents } from "@shared/schema";
-import { sql, and, gte, lt } from "drizzle-orm";
+import { sql, and, gte, lt, asc } from "drizzle-orm";
 
 // ── Event types ──────────────────────────────────────────────────────
 
@@ -215,6 +216,58 @@ export function getAggregatedDailyStats(since: Date): DailyActivitySummary[] {
   }
 
   return Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// ── Raw event export (for check-in) ─────────────────────────────────
+
+export type RawUsageEvent = {
+  userIdHash: string;
+  eventType: string;
+  metadata: Record<string, any>;
+  occurredAt: number; // epoch ms
+};
+
+const MAX_RAW_EVENTS_PER_CHECKIN = 5000;
+
+/** Hash cache to avoid rehashing the same userId repeatedly within a batch. */
+function hashUserId(userId: string | null): string {
+  if (!userId) return "anonymous";
+  return createHash("sha256").update(userId).digest("hex");
+}
+
+/**
+ * Return raw usage events since a given date, with userIds hashed.
+ * Capped at 5000 events to bound payload size.
+ */
+export function getRawEventsSince(since: Date): RawUsageEvent[] {
+  // Flush any buffered events first so we don't miss recent ones
+  flushBuffer();
+
+  const rows = db
+    .select({
+      userId: usageEvents.userId,
+      eventType: usageEvents.eventType,
+      metadata: usageEvents.metadata,
+      createdAt: usageEvents.createdAt,
+    })
+    .from(usageEvents)
+    .where(gte(usageEvents.createdAt, since))
+    .orderBy(asc(usageEvents.createdAt))
+    .limit(MAX_RAW_EVENTS_PER_CHECKIN)
+    .all();
+
+  const hashCache = new Map<string | null, string>();
+
+  return rows.map((row) => {
+    const key = row.userId;
+    if (!hashCache.has(key)) hashCache.set(key, hashUserId(key));
+    return {
+      userIdHash: hashCache.get(key)!,
+      eventType: row.eventType,
+      metadata: (row.metadata && typeof row.metadata === "object" ? row.metadata : {}) as Record<string, any>,
+      occurredAt: row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt),
+    };
+  });
 }
 
 // ── Cleanup ──────────────────────────────────────────────────────────
