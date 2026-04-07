@@ -269,9 +269,14 @@ async function maybeCheckin(): Promise<void> {
   const lastAttempt = typeof current.lastAttemptAt === "number" ? current.lastAttemptAt : 0;
   if (lastAttempt && now - lastAttempt < 1000 * 60 * 15) return; // 15 min backoff
 
+  // Only check in during active hours (7am–9pm local time).
+  // Outside these hours, skip entirely to save resources.
+  const localHour = new Date(now).getHours();
+  if (localHour < 7 || localHour >= 21) return;
+
   const lastOk = typeof current.lastSuccessfulCheckinAt === "number" ? current.lastSuccessfulCheckinAt : 0;
-  // At most one successful check-in every 4 hours unless forced.
-  if (lastOk && now + (current.serverTimeOffsetMs || 0) - lastOk < 1000 * 60 * 60 * 4) return;
+  // At most one successful check-in per hour during active hours.
+  if (lastOk && now + (current.serverTimeOffsetMs || 0) - lastOk < 1000 * 60 * 60) return;
 
   try {
     await forceCheckin();
