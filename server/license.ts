@@ -102,6 +102,7 @@ export async function activateHostWithPortalToken(portalToken: string, officeId:
     throwLicenseRequestError(result.error);
   }
 
+  updateState({ officeId });
   const snapshot = applyActivationResult(result);
   return { snapshot, activateResult: result };
 }
@@ -219,6 +220,43 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
   }
 
   updateState(checkinPatch);
+
+  // Check if office is over the client slot limit and broadcast to clients
+  if (cachedPlan.clientSlots < 999) {
+    try {
+      const { getRegisteredDeviceCount, broadcastToOffice } = await import("./sync-websocket");
+      const { storage: store } = await import("./storage");
+      const deviceCount = getRegisteredDeviceCount();
+      const state = getState();
+
+      let officeId = state.officeId;
+      if (!officeId) {
+        const offices = await store.getAllOffices();
+        officeId = offices[0]?.id;
+        if (officeId) updateState({ officeId });
+      }
+
+      if (deviceCount > cachedPlan.clientSlots) {
+        if (!state.overLimitSince) {
+          updateState({ overLimitSince: Date.now() });
+        }
+        const graceEndsAt = (state.overLimitSince || Date.now()) + 24 * 60 * 60 * 1000;
+        if (officeId) {
+          broadcastToOffice(officeId, {
+            type: "over_limit",
+            allowed: cachedPlan.clientSlots,
+            connected: deviceCount,
+            graceEndsAt,
+          });
+        }
+      } else if (state.overLimitSince) {
+        updateState({ overLimitSince: undefined });
+        if (officeId) {
+          broadcastToOffice(officeId, { type: "under_limit" });
+        }
+      }
+    } catch { /* non-critical */ }
+  }
 
   return getLicenseSnapshot();
 }

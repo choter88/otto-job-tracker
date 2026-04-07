@@ -19,6 +19,7 @@ import {
   jobFlags,
   jobLinkGroups,
   linkGroupNotes,
+  clientDevices as clientDevicesTable,
   insertJobSchema,
   insertJobCommentSchema,
   insertNotificationRuleSchema,
@@ -3113,6 +3114,34 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   // ── Tablet Job Board (slot-gated, LAN-accessible) ──────────────────
   // Serves a lightweight job board view for tablet browsers on the LAN.
   // No link or menu item in the desktop UI should reference this route.
+
+  // ── Client device management ───────────────────────────────────────
+
+  app.get("/api/devices", async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      if (!user || !["owner", "manager"].includes(user.role || "")) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      const devices = db.select().from(clientDevicesTable).all();
+      res.json(devices);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/devices/:id/unblock", async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      if (!user || !["owner", "manager"].includes(user.role || "")) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      db.update(clientDevicesTable).set({ blocked: false }).where(eq(clientDevicesTable.id, req.params.id)).run();
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   // Tablet session tracking uses the shared module-level counter
 

@@ -3,8 +3,11 @@ import type { Server as HTTPServer } from "http";
 import type { RequestHandler } from "express";
 import type { SessionData } from "express-session";
 import { storage } from "./storage";
+import { db } from "./db";
+import { clientDevices } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
-type OttoWs = WebSocket & { ottoOfficeId?: string; ottoUserId?: string; ottoIsLocal?: boolean };
+type OttoWs = WebSocket & { ottoOfficeId?: string; ottoUserId?: string; ottoIsLocal?: boolean; ottoDeviceId?: string };
 
 const officeConnections = new Map<string, Set<OttoWs>>();
 
@@ -65,6 +68,32 @@ export function setupSyncWebSocket(httpServer: HTTPServer, sessionMiddleware: Re
     }
     officeConnections.get(officeId)!.add(ws);
 
+    ws.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(String(raw));
+        if (msg?.type === "device_register" && typeof msg.deviceId === "string" && !ws.ottoIsLocal) {
+          ws.ottoDeviceId = msg.deviceId;
+          try {
+            const existing = db.select().from(clientDevices).where(eq(clientDevices.id, msg.deviceId)).get();
+            if (existing) {
+              if (existing.blocked) {
+                ws.send(JSON.stringify({ type: "device_blocked" }));
+                return;
+              }
+              db.update(clientDevices).set({ lastSeenAt: new Date(), label: msg.label || existing.label }).where(eq(clientDevices.id, msg.deviceId)).run();
+            } else {
+              db.insert(clientDevices).values({ id: msg.deviceId, officeId, label: msg.label || null }).run();
+            }
+          } catch { /* non-critical */ }
+        } else if (msg?.type === "device_disconnect" && typeof msg.deviceId === "string") {
+          try {
+            db.update(clientDevices).set({ blocked: true }).where(eq(clientDevices.id, msg.deviceId)).run();
+            ws.send(JSON.stringify({ type: "device_blocked" }));
+          } catch { /* non-critical */ }
+        }
+      } catch { /* ignore parse errors */ }
+    });
+
     ws.on("close", () => {
       const set = officeConnections.get(officeId);
       if (!set) return;
@@ -84,6 +113,15 @@ export function setupSyncWebSocket(httpServer: HTTPServer, sessionMiddleware: Re
   });
 
   return wss;
+}
+
+/** Count non-blocked registered client devices. */
+export function getRegisteredDeviceCount(): number {
+  try {
+    return db.select({ id: clientDevices.id }).from(clientDevices).where(eq(clientDevices.blocked, false)).all().length;
+  } catch {
+    return 0;
+  }
 }
 
 /** Count remote (non-localhost) WebSocket connections — i.e. actual Client machines. */

@@ -9,12 +9,24 @@ function buildSyncWsUrl(): string {
   return `${protocol}//${window.location.host}/sync-ws`;
 }
 
+function getOrCreateDeviceId(): string {
+  const key = "otto.deviceId";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
 export default function SyncManager() {
   const { user } = useAuth();
   useTrackPage();
   const [connected, setConnected] = useState(true);
   const [desktopConfig, setDesktopConfig] = useState<any | null>(null);
   const [licenseSnapshot, setLicenseSnapshot] = useState<any | null>(null);
+  const [overLimitInfo, setOverLimitInfo] = useState<{ allowed: number; connected: number; graceEndsAt: number | null } | null>(null);
+  const [deviceBlocked, setDeviceBlocked] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -79,7 +91,13 @@ export default function SyncManager() {
         ws.onopen = () => {
           retryRef.current = 0;
           setConnected(true);
-          // Refresh all data invisibly when reconnected
+          try {
+            ws.send(JSON.stringify({
+              type: "device_register",
+              deviceId: getOrCreateDeviceId(),
+              label: navigator.userAgent.slice(0, 100),
+            }));
+          } catch { /* ignore */ }
           queryClient.invalidateQueries();
         };
 
@@ -88,6 +106,12 @@ export default function SyncManager() {
             const data = JSON.parse(String(event.data || ""));
             if (data?.type === "office_updated") {
               queryClient.invalidateQueries();
+            } else if (data?.type === "over_limit") {
+              setOverLimitInfo({ allowed: data.allowed, connected: data.connected, graceEndsAt: data.graceEndsAt });
+            } else if (data?.type === "under_limit") {
+              setOverLimitInfo(null);
+            } else if (data?.type === "device_blocked") {
+              setDeviceBlocked(true);
             }
           } catch { /* ignore */ }
         };
@@ -193,6 +217,44 @@ export default function SyncManager() {
         <div className="fixed top-0 left-0 right-0 z-50">
           <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
             <span className="flex-1 font-medium">Your Otto trial has expired. Subscribe in the Otto portal to resume full access. Your data is safe and will be here when you return.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Device blocked — permanently disconnected */}
+      {deviceBlocked && (
+        <div className="fixed top-0 left-0 right-0 z-50">
+          <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+            <span className="flex-1 font-medium">This computer has been disconnected from Otto. Contact your office administrator to reconnect.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Over-limit banner for Client mode */}
+      {!deviceBlocked && overLimitInfo && modeIsClient && (
+        <div className="fixed top-0 left-0 right-0 z-50">
+          <div className={`flex items-center gap-2 border-b px-4 py-2 text-sm ${
+            overLimitInfo.graceEndsAt && Date.now() > overLimitInfo.graceEndsAt
+              ? "bg-red-50 dark:bg-red-950/50 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200"
+              : "bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200"
+          }`}>
+            <span className="flex-1">
+              Your office has {overLimitInfo.connected} computers but your plan allows {overLimitInfo.allowed}.
+              {overLimitInfo.graceEndsAt && Date.now() < overLimitInfo.graceEndsAt
+                ? " Remove a computer within 24 hours or excess devices will become read-only."
+                : " This computer is read-only until a device is removed."}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  wsRef.current?.send(JSON.stringify({ type: "device_disconnect", deviceId: getOrCreateDeviceId() }));
+                } catch { /* ignore */ }
+              }}
+              className="shrink-0 px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700"
+            >
+              Disconnect This Computer
+            </button>
           </div>
         </div>
       )}

@@ -48,6 +48,12 @@ export type LicenseState = {
 
   // Whether the portal indicated payment is required (trial expired or subscription issue)
   paymentRequired?: boolean;
+
+  // Office ID from the portal (used for broadcasting over-limit events)
+  officeId?: string;
+
+  // When the office first exceeded its client slot limit (ms). Cleared when under limit.
+  overLimitSince?: number;
 };
 
 export type LicenseSnapshot = {
