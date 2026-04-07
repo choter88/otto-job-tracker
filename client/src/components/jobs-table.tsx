@@ -18,7 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -62,23 +62,26 @@ const COLUMN_TYPE_ICON = {
   text: Type,
   number: Hash,
   date: CalendarDays,
+  select: List,
 } as const;
 
 const COLUMN_TYPE_PLACEHOLDER: Record<string, string> = {
   text: "Add text...",
   number: "0",
   date: "Select date...",
+  select: "Select...",
 };
 
-/** Popover-based editable cell for text, number, and date custom columns */
+/** Popover-based editable cell for text, number, date, and select custom columns */
 function EditableCell({
-  jobId, columnId, columnType, value, onSave,
+  jobId, columnId, columnType, value, onSave, options,
 }: {
   jobId: string;
   columnId: string;
   columnType: string;
   value: any;
   onSave: (jobId: string, columnId: string, newValue: any) => void;
+  options?: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(String(value ?? ""));
@@ -101,6 +104,37 @@ function EditableCell({
   const display = columnType === "date" && hasValue
     ? (() => { try { return format(new Date(value), "MMM d, yyyy"); } catch { return String(value); } })()
     : hasValue ? String(value) : "";
+
+  // Select type: use a native Select dropdown instead of popover
+  if (columnType === "select" && options && options.length > 0) {
+    return (
+      <Select
+        value={String(value ?? "")}
+        onValueChange={(newValue) => {
+          if (newValue !== (value ?? "")) {
+            onSave(jobId, columnId, newValue || null);
+          }
+        }}
+      >
+        <SelectTrigger
+          className="w-auto border-none p-0 h-auto min-h-0 focus:ring-0 focus:ring-offset-0 shadow-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className={cn("text-sm truncate", hasValue ? "text-foreground" : "text-muted-foreground/60")}>
+            {display || placeholder}
+          </span>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">
+            <span className="text-muted-foreground">(none)</span>
+          </SelectItem>
+          {options.map((opt) => (
+            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={(next) => {
@@ -843,7 +877,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_td]:px-3 [&_td]:py-3">
+          <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-center [&_td]:px-3 [&_td]:py-3 [&_td]:text-center">
             <TableHeader className="bg-muted/50">
               <TableRow>
                 <TableHead className="w-10" />
@@ -1093,24 +1127,24 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuCheckboxItem checked={isColumnVisible('jobType')} onCheckedChange={() => toggleColumnVisibility('jobType')}>
+              <DropdownMenuCheckboxItem checked={isColumnVisible('jobType')} onCheckedChange={() => toggleColumnVisibility('jobType')} onSelect={(e) => e.preventDefault()}>
                 Job Type
               </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible('status')} onCheckedChange={() => toggleColumnVisibility('status')}>
+              <DropdownMenuCheckboxItem checked={isColumnVisible('status')} onCheckedChange={() => toggleColumnVisibility('status')} onSelect={(e) => e.preventDefault()}>
                 Status
               </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible('destination')} onCheckedChange={() => toggleColumnVisibility('destination')}>
+              <DropdownMenuCheckboxItem checked={isColumnVisible('destination')} onCheckedChange={() => toggleColumnVisibility('destination')} onSelect={(e) => e.preventDefault()}>
                 Destination
               </DropdownMenuCheckboxItem>
               {customColumns.map((col: any) => (
-                <DropdownMenuCheckboxItem key={col.id} checked={isColumnVisible(col.id)} onCheckedChange={() => toggleColumnVisibility(col.id)}>
+                <DropdownMenuCheckboxItem key={col.id} checked={isColumnVisible(col.id)} onCheckedChange={() => toggleColumnVisibility(col.id)} onSelect={(e) => e.preventDefault()}>
                   {col.name}
                 </DropdownMenuCheckboxItem>
               ))}
-              <DropdownMenuCheckboxItem checked={isColumnVisible('createdAt')} onCheckedChange={() => toggleColumnVisibility('createdAt')}>
+              <DropdownMenuCheckboxItem checked={isColumnVisible('createdAt')} onCheckedChange={() => toggleColumnVisibility('createdAt')} onSelect={(e) => e.preventDefault()}>
                 Created
               </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={isColumnVisible('statusChangedAt')} onCheckedChange={() => toggleColumnVisibility('statusChangedAt')}>
+              <DropdownMenuCheckboxItem checked={isColumnVisible('statusChangedAt')} onCheckedChange={() => toggleColumnVisibility('statusChangedAt')} onSelect={(e) => e.preventDefault()}>
                 Last Updated
               </DropdownMenuCheckboxItem>
             </DropdownMenuContent>
@@ -1119,14 +1153,14 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
         {/* Jobs Table */}
         <div ref={tableViewportRef} className="overflow-x-auto">
-          <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_td]:px-3 [&_td]:py-3">
+          <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-center [&_td]:px-3 [&_td]:py-3 [&_td]:text-center">
             <TableHeader className="bg-muted/50">
               <TableRow>
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
                 </TableHead>
                 <TableHead
-                  className="cursor-pointer hover:text-primary min-w-[160px]"
+                  className="cursor-pointer hover:text-primary min-w-[160px] text-left"
                   onClick={() => handleSort(useTrayNumber ? "trayNumber" : "patientLastName")}
                 >
                   <div className="flex items-center gap-1">
@@ -1212,7 +1246,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
                         <Briefcase className="h-6 w-6 text-primary" />
                       </div>
-                      {searchQuery || statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" ? (
+                      {searchQuery || statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || Object.values(customColumnFilters).some((v) => v != null) ? (
                         <>
                           <p className="text-sm font-medium text-foreground">No jobs match your filters</p>
                           <p className="text-sm text-muted-foreground mt-1">
@@ -1277,7 +1311,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       />
                     </Button>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-left">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className="font-medium truncate">
                         {getPatientLabel(job)}
@@ -1381,7 +1415,17 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       data-testid={`table-cell-custom-${column.id}-${job.id}`}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {column.type === 'checkbox' ? (
+                      {column.editableInWorklist === false ? (
+                        <span className="text-sm text-muted-foreground truncate">
+                          {(() => {
+                            const v = (job.customColumnValues as Record<string, any>)?.[column.id];
+                            if (v == null || v === "") return "—";
+                            if (column.type === "checkbox") return v ? "Yes" : "No";
+                            if (column.type === "date") { try { return format(new Date(v), "MMM d, yyyy"); } catch { return String(v); } }
+                            return String(v);
+                          })()}
+                        </span>
+                      ) : column.type === 'checkbox' ? (
                         <Checkbox
                           className="h-3.5 w-3.5 [&>span>svg]:h-3 [&>span>svg]:w-3"
                           checked={!!(job.customColumnValues as Record<string, any>)?.[column.id]}
@@ -1401,6 +1445,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                           columnType={column.type}
                           value={(job.customColumnValues as Record<string, any>)?.[column.id]}
                           onSave={handleCustomColumnSave}
+                          options={column.options}
                         />
                       )}
                     </TableCell>

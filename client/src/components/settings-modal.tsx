@@ -755,8 +755,8 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
 
                 <div className="space-y-3">
                   {customColumns.map((column) => (
+                    <div key={column.id}>
                     <div
-                      key={column.id}
                       className="flex items-center gap-3 p-4 bg-card border border-border rounded-lg hover:shadow-soft transition-shadow"
                       data-testid={`custom-column-${column.id}`}
                     >
@@ -792,6 +792,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="text">Text</SelectItem>
+                              <SelectItem value="select">Select (Dropdown)</SelectItem>
                               <SelectItem value="checkbox">Checkbox</SelectItem>
                               <SelectItem value="date">Date</SelectItem>
                               <SelectItem value="number">Number</SelectItem>
@@ -800,7 +801,17 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor={`column-worklist-${column.id}`} className="text-sm text-muted-foreground">
+                            Edit in Worklist
+                          </Label>
+                          <Switch
+                            id={`column-worklist-${column.id}`}
+                            checked={column.editableInWorklist !== false}
+                            onCheckedChange={(checked) => updateCustomColumn(column.id, { editableInWorklist: checked })}
+                          />
+                        </div>
                         <div className="flex items-center gap-2">
                           <Label htmlFor={`column-active-${column.id}`} className="text-sm text-muted-foreground">
                             Active
@@ -822,6 +833,26 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
+                    </div>
+
+                    {/* Select type: options editor */}
+                    {column.type === 'select' && (
+                      <div className="ml-8 mt-2 mb-2 p-3 bg-muted/50 rounded-md border border-border">
+                        <Label className="text-xs text-muted-foreground mb-2 block">Options (one per line)</Label>
+                        <textarea
+                          className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                          value={(column.options || []).join('\n')}
+                          onChange={(e) => {
+                            const options = e.target.value.split('\n').map((o: string) => o.trim()).filter(Boolean);
+                            updateCustomColumn(column.id, { options });
+                          }}
+                          placeholder={"Option 1\nOption 2\nOption 3"}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Users will pick from these options when setting this field.
+                        </p>
+                      </div>
+                    )}
                     </div>
                   ))}
                 </div>

@@ -688,6 +688,24 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
                             data-testid={`input-custom-number-${column.id}`}
                           />
                         )}
+                        {column.type === 'select' && Array.isArray(column.options) && (
+                          <Select
+                            value={customColumnValues[column.id] || ''}
+                            onValueChange={(val) => setCustomColumnValues({...customColumnValues, [column.id]: val || null})}
+                          >
+                            <SelectTrigger id={`custom-${column.id}`} data-testid={`select-custom-${column.id}`}>
+                              <SelectValue placeholder="Select..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="">
+                                <span className="text-muted-foreground">(none)</span>
+                              </SelectItem>
+                              {column.options.map((opt: string) => (
+                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       </>
                     )}
                   </div>
