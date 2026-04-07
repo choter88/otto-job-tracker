@@ -63,6 +63,7 @@ jobs:
       # ZIPs.  Splitting into separate jobs would cause the second to overwrite
       # the first's manifest, breaking auto-update for one architecture.
       - name: Build macOS (arm64 + x64)
+        timeout-minutes: 30
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
