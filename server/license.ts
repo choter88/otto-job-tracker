@@ -157,6 +157,22 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
       tabletCount: getActiveTabletSessionCount(),
       platform: process.platform,
     };
+
+    // Attach daily activity aggregates (since last successful check-in or 7 days ago)
+    try {
+      const { getAggregatedDailyStats, pruneOldEvents } = await import("./usage-tracker");
+      const since = new Date(
+        Math.max(
+          current.lastSuccessfulCheckinAt || 0,
+          Date.now() - 7 * 24 * 60 * 60 * 1000,
+        ),
+      );
+      checkinPayload.metrics.dailyActivity = getAggregatedDailyStats(since);
+      // Non-blocking cleanup of old raw events
+      setTimeout(() => { try { pruneOldEvents(90); } catch {} }, 100);
+    } catch {
+      // Non-critical — daily activity is optional
+    }
   } catch {
     // Non-critical — don't let metrics failure block check-in
   }

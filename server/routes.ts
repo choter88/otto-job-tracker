@@ -46,6 +46,7 @@ import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemp
 import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
+import { trackEvent, CLIENT_TRACKABLE_EVENTS } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
 import type { User } from "@shared/schema";
 
@@ -277,6 +278,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.get("/api/license/status", (_req, res) => {
     applyNoStoreHeaders(res);
     res.json(getLicenseSnapshot());
+  });
+
+  // ── Usage event tracking (client-side tab navigation, search, etc.) ──
+  app.post("/api/track", (req, res) => {
+    const eventType = typeof req.body?.eventType === "string" ? req.body.eventType : "";
+    if (!CLIENT_TRACKABLE_EVENTS.has(eventType)) {
+      return res.status(400).json({ error: "Invalid event type" });
+    }
+    const userId = getAuthUser(req)?.id ?? null;
+    const officeId = getOfficeUser(req)?.officeId ?? null;
+    trackEvent({ userId, officeId, eventType });
+    res.status(204).end();
   });
 
   app.post("/api/license/checkin", requireAuth, requireRole(["owner"]), async (req, res) => {
@@ -972,6 +985,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         patientId: job.trayNumber || `${job.patientFirstName} ${job.patientLastName}`.trim()
       });
       
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getOfficeUser(req)?.officeId, eventType: "job_created" });
       res.status(201).json(job);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1081,6 +1095,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
       
+      const hasStatusChange = req.body?.updates?.status && req.body.updates.status !== job.status;
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getOfficeUser(req)?.officeId, eventType: hasStatusChange ? "job_status_changed" : "job_updated" });
       res.json(job);
     } catch (error: any) {
       console.error("PUT /api/jobs/:id - Error:", process.env.OTTO_DEBUG === "true" ? error : error?.message);
@@ -1149,6 +1165,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
 
       broadcastToOffice(officeId, { type: "office_updated", ts: Date.now(), source: "bulk_update" });
+      trackEvent({ userId: getAuthUser(req)?.id, officeId, eventType: "job_bulk_update", metadata: { count: updated } });
       res.json({ updated, archived });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1209,6 +1226,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Delete from active jobs
       await storage.deleteJob(req.params.id);
       
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getOfficeUser(req)?.officeId, eventType: "job_archived" });
       res.json(archivedJob);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1634,6 +1652,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         await checkAndRegenerateSummary(req.params.jobId);
       }
       
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getOfficeUser(req)?.officeId, eventType: "comment_added" });
       res.status(201).json(comment);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1749,6 +1768,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         })();
       }
       
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getOfficeUser(req)?.officeId, eventType: "job_flagged" });
       res.status(201).json(flag);
     } catch (error: any) {
       console.error("Error flagging job:", error);
@@ -1790,6 +1810,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       await storage.unflagJob(getAuthUser(req).id, req.params.jobId);
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getOfficeUser(req)?.officeId, eventType: "job_unflagged" });
       res.status(204).send();
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -3081,6 +3102,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       // Notify other clients so they refresh the jobs list
       broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "csv_import" });
+      trackEvent({ userId: user.id, officeId: user.officeId, eventType: "csv_import_completed", metadata: { imported: result.imported } });
 
       res.json(result);
     } catch (error: any) {

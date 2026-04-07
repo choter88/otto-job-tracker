@@ -200,6 +200,13 @@ export async function portalIssueAndConsume(payload: {
   return parseActivationPayload(json, "Issue-and-consume response was missing required fields.");
 }
 
+export type DailyActivitySummary = {
+  date: string;
+  actions: Record<string, number>;
+  activeUsers: number;
+  sessions: number;
+};
+
 export type CheckinMetrics = {
   activeJobs?: number;
   archivedJobs?: number;
@@ -207,6 +214,7 @@ export type CheckinMetrics = {
   clientCount?: number;
   tabletCount?: number;
   platform?: string;
+  dailyActivity?: DailyActivitySummary[];
 };
 
 export async function portalCheckin(payload: {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
+import { useTrackPage } from "@/hooks/use-track-page";
 import { WifiOff } from "lucide-react";
 
 function buildSyncWsUrl(): string {
@@ -10,6 +11,7 @@ function buildSyncWsUrl(): string {
 
 export default function SyncManager() {
   const { user } = useAuth();
+  useTrackPage();
   const [connected, setConnected] = useState(true);
   const [desktopConfig, setDesktopConfig] = useState<any | null>(null);
   const [licenseSnapshot, setLicenseSnapshot] = useState<any | null>(null);

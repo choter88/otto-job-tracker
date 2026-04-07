@@ -4,6 +4,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { enforceAirgap } from "./airgap";
 import { logAudit } from "./audit-logger";
 import { getLicenseSnapshot, startLicenseScheduler, onLicenseStateChange } from "./license";
+import { startEventFlusher } from "./usage-tracker";
 import { broadcastToOffice, setupSyncWebSocket, getConnectedClientCount } from "./sync-websocket";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
@@ -106,6 +107,7 @@ const app = express();
 
 enforceAirgap();
 startLicenseScheduler();
+startEventFlusher();
 
 // Enforce licensing: after grace period, the app becomes read-only.
 // Cache the snapshot for 24 hours to avoid computing it on every single write.

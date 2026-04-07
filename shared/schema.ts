@@ -387,6 +387,21 @@ export const phiAccessLogs = sqliteTable("phi_access_logs", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
+// Usage events table — anonymous action tracking for product analytics
+export const usageEvents = sqliteTable("usage_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id"),
+  officeId: text("office_id"),
+  eventType: text("event_type").notNull(),
+  metadata: text("metadata", { mode: "json" }).$type<Record<string, any>>().default({}),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+}, (table) => ({
+  createdAtIdx: index("usage_events_created_at_idx").on(table.createdAt),
+  eventTypeCreatedAtIdx: index("usage_events_event_type_created_at_idx").on(table.eventType, table.createdAt),
+}));
+
+export type UsageEvent = typeof usageEvents.$inferSelect;
+
 // Relations
 export const userRelations = relations(users, ({ one, many }) => ({
   office: one(offices, {

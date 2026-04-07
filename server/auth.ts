@@ -314,6 +314,10 @@ export function setupAuth(app: Express) {
           if (isLocalAddress(req.ip || req.socket?.remoteAddress)) {
             localSessionIds.add(req.sessionID);
           }
+          try {
+            const { trackEvent } = require("./usage-tracker");
+            trackEvent({ userId: user.id, officeId: user.officeId, eventType: "user_login" });
+          } catch { /* non-critical */ }
           res.status(200).json(withoutPassword(user));
         });
       });
