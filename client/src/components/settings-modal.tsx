@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -359,12 +359,18 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
   }, [office]);
 
   const handleSaveSettings = () => {
+    // Clean up empty options from select columns before saving
+    const cleanedColumns = customColumns.map((col) =>
+      col.type === 'select' && col.options
+        ? { ...col, options: col.options.map((o: string) => o.trim()).filter(Boolean) }
+        : col,
+    );
     const updatedSettings = {
       ...(office?.settings || {}),
       customStatuses,
       customJobTypes,
       customOrderDestinations,
-      customColumns,
+      customColumns: cleanedColumns,
       jobIdentifierMode,
       // Desktop/offline mode: Otto Tracker does not send SMS. We keep templates as copy helpers.
       smsEnabled: false,
@@ -585,14 +591,14 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
   if (!open || isLoading) return null;
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-3xl p-0 overflow-hidden flex flex-col">
-        <SheetHeader className="border-b border-border px-5 py-3 pr-12">
-          <SheetTitle className="flex items-center gap-2 text-lg">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl h-[85vh] p-0 overflow-hidden flex flex-col gap-0">
+        <DialogHeader className="border-b border-border px-5 py-3">
+          <DialogTitle className="flex items-center gap-2 text-lg">
             <Settings className="h-5 w-5" />
             Office Settings
-          </SheetTitle>
-        </SheetHeader>
+          </DialogTitle>
+        </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
           <div className="flex-1 min-h-0 flex flex-col md:flex-row">
@@ -801,28 +807,26 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor={`column-worklist-${column.id}`} className="text-sm text-muted-foreground">
-                            Edit in Worklist
-                          </Label>
-                          <Switch
-                            id={`column-worklist-${column.id}`}
+                      <div className="flex flex-col gap-1.5 text-[11px] text-muted-foreground shrink-0">
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
                             checked={column.editableInWorklist !== false}
-                            onCheckedChange={(checked) => updateCustomColumn(column.id, { editableInWorklist: checked })}
+                            onChange={(e) => updateCustomColumn(column.id, { editableInWorklist: e.target.checked })}
+                            className="h-3.5 w-3.5 rounded border-input accent-primary"
                           />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor={`column-active-${column.id}`} className="text-sm text-muted-foreground">
-                            Active
-                          </Label>
-                          <Switch
-                            id={`column-active-${column.id}`}
+                          Worklist edit
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
                             checked={column.active}
-                            onCheckedChange={(checked) => updateCustomColumn(column.id, { active: checked })}
+                            onChange={(e) => updateCustomColumn(column.id, { active: e.target.checked })}
+                            className="h-3.5 w-3.5 rounded border-input accent-primary"
                             data-testid={`switch-column-active-${column.id}`}
                           />
-                        </div>
+                          Active
+                        </label>
                       </div>
 
                       <Button
@@ -843,7 +847,9 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                           className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                           value={(column.options || []).join('\n')}
                           onChange={(e) => {
-                            const options = e.target.value.split('\n').map((o: string) => o.trim()).filter(Boolean);
+                            // Preserve all lines including empty ones during editing
+                            // so Enter key works naturally — empty lines are cleaned on save
+                            const options = e.target.value.split('\n');
                             updateCustomColumn(column.id, { options });
                           }}
                           placeholder={"Option 1\nOption 2\nOption 3"}
@@ -1009,7 +1015,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
             </Button>
           </div>
         </Tabs>
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   );
 }
