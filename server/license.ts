@@ -1,4 +1,6 @@
 import os from "os";
+import fs from "fs";
+import path from "path";
 import { randomBytes } from "crypto";
 import { OTTO_DEFAULT_PORT } from "@shared/constants";
 import type { LicenseSnapshot, LicenseState, OttoPlan } from "./license-types";
@@ -170,7 +172,12 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
       );
       checkinPayload.metrics.dailyActivity = getAggregatedDailyStats(since);
       checkinPayload.metrics.rawEvents = getRawEventsSince(since);
-      console.log(`[checkin] Analytics: since=${since.toISOString()} dailyActivity=${checkinPayload.metrics.dailyActivity.length} days, rawEvents=${checkinPayload.metrics.rawEvents.length}`);
+      // Log to startup.log (console.log is discarded in packaged Electron)
+      const logMsg = `[${new Date().toISOString()}] [checkin] Analytics: since=${since.toISOString()} dailyActivity=${checkinPayload.metrics.dailyActivity.length} days, rawEvents=${checkinPayload.metrics.rawEvents.length}\n`;
+      try {
+        const logPath = process.env.OTTO_STARTUP_LOG_PATH || path.join(process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker"), "startup.log");
+        fs.appendFileSync(logPath, logMsg);
+      } catch { /* best-effort */ }
       // Non-blocking cleanup of old raw events
       setTimeout(() => { try { pruneOldEvents(90); } catch {} }, 100);
     } catch {
