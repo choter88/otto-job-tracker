@@ -60,24 +60,21 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   "search_performed",
 ]);
 
-// ── Buffer and flush ─────────────────────────────────────────────────
-
-interface BufferedEvent {
-  userId: string | null;
-  officeId: string | null;
-  eventType: string;
-  metadata: Record<string, any>;
-  createdAt: number;
-}
-
-const buffer: BufferedEvent[] = [];
-const FLUSH_INTERVAL_MS = 5_000;
-const FLUSH_THRESHOLD = 100;
-let flushTimer: ReturnType<typeof setInterval> | null = null;
+// ── Event persistence ────────────────────────────────────────────────
 
 /**
- * Track a usage event. Synchronous, fire-and-forget.
- * Never throws — failures are silently ignored.
+ * Prepared statement for single-row inserts. Created lazily on first use.
+ * Using a prepared statement avoids re-parsing SQL on every call.
+ */
+let insertStmt: ReturnType<typeof db.insert> | null = null;
+
+/**
+ * Track a usage event. Writes directly to SQLite on every call.
+ * No in-memory buffering — events persist immediately and survive
+ * crashes, restarts, and auto-updater cycles without data loss.
+ *
+ * Never throws — failures are silently ignored so tracking can't
+ * break the main application flow.
  */
 export function trackEvent(opts: {
   userId?: string | null;
@@ -85,51 +82,24 @@ export function trackEvent(opts: {
   eventType: UsageEventType | string;
   metadata?: Record<string, any>;
 }): void {
-  buffer.push({
-    userId: opts.userId ?? null,
-    officeId: opts.officeId ?? null,
-    eventType: opts.eventType,
-    metadata: opts.metadata ?? {},
-    createdAt: Date.now(),
-  });
-
-  if (buffer.length >= FLUSH_THRESHOLD) {
-    flushBuffer();
-  }
-}
-
-function flushBuffer(): void {
-  if (buffer.length === 0) return;
-
-  const batch = buffer.splice(0);
   try {
-    const insert = db.insert(usageEvents);
-    const values = batch.map((e) => ({
-      userId: e.userId,
-      officeId: e.officeId,
-      eventType: e.eventType,
-      metadata: e.metadata,
-      createdAt: new Date(e.createdAt),
-    }));
-    insert.values(values).run();
+    db.insert(usageEvents).values({
+      userId: opts.userId ?? null,
+      officeId: opts.officeId ?? null,
+      eventType: opts.eventType,
+      metadata: opts.metadata ?? {},
+      createdAt: new Date(),
+    }).run();
   } catch {
-    // Non-critical — silently discard on error
+    // Non-critical — never fail the caller
   }
 }
 
-export function startEventFlusher(): void {
-  if (flushTimer) return;
-  flushTimer = setInterval(flushBuffer, FLUSH_INTERVAL_MS);
-}
+/** @deprecated No-op. Events are now written directly to SQLite. Kept for backward compatibility. */
+export function startEventFlusher(): void {}
 
-export function stopEventFlusher(): void {
-  if (flushTimer) {
-    clearInterval(flushTimer);
-    flushTimer = null;
-  }
-  // Final flush on shutdown
-  flushBuffer();
-}
+/** @deprecated No-op. Events are now written directly to SQLite. Kept for backward compatibility. */
+export function stopEventFlusher(): void {}
 
 // ── Aggregation (for check-in) ───────────────────────────────────────
 
@@ -145,9 +115,6 @@ export type DailyActivitySummary = {
  * Groups by calendar date (local timezone) and event type.
  */
 export function getAggregatedDailyStats(since: Date): DailyActivitySummary[] {
-  // Flush any buffered events first so we don't miss recent ones
-  flushBuffer();
-
   const sinceMs = since.getTime();
 
   // Query raw counts grouped by date and event_type
@@ -243,9 +210,6 @@ function hashUserId(userId: string | null): string {
  * Capped at 5000 events to bound payload size.
  */
 export function getRawEventsSince(since: Date): RawUsageEvent[] {
-  // Flush any buffered events first so we don't miss recent ones
-  flushBuffer();
-
   const rows = db
     .select({
       userId: usageEvents.userId,
