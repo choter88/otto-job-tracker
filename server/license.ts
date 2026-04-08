@@ -9,6 +9,13 @@ import { ensureLicenseState, saveLicenseState, computeLicenseSnapshot } from "./
 import { portalCheckin, portalActivate } from "./license-client";
 import type { LicenseActivateResult, CheckinMetrics } from "./license-client";
 
+function logToFile(msg: string): void {
+  try {
+    const logPath = process.env.OTTO_STARTUP_LOG_PATH || path.join(process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker"), "startup.log");
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch { /* best-effort */ }
+}
+
 let state: LicenseState | null = null;
 let checkinTimer: NodeJS.Timeout | null = null;
 let _onStateChange: (() => void) | null = null;
@@ -271,30 +278,39 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
 
 async function maybeCheckin(): Promise<void> {
   const current = getState();
-  if (!current.hostToken) return;
+  if (!current.hostToken) { logToFile("[checkin] Skipped: no hostToken"); return; }
 
   const now = Date.now();
   const lastAttempt = typeof current.lastAttemptAt === "number" ? current.lastAttemptAt : 0;
-  if (lastAttempt && now - lastAttempt < 1000 * 60 * 15) return; // 15 min backoff
+  if (lastAttempt && now - lastAttempt < 1000 * 60 * 15) {
+    logToFile(`[checkin] Skipped: 15min backoff (last attempt ${Math.round((now - lastAttempt) / 1000)}s ago)`);
+    return;
+  }
 
   // Only check in during active hours (7am–9pm local time).
   // Outside these hours, skip entirely to save resources.
   const localHour = new Date(now).getHours();
-  if (localHour < 7 || localHour >= 21) return;
+  if (localHour < 7 || localHour >= 21) { logToFile(`[checkin] Skipped: outside active hours (${localHour}h)`); return; }
 
   const lastOk = typeof current.lastSuccessfulCheckinAt === "number" ? current.lastSuccessfulCheckinAt : 0;
   // At most one successful check-in per hour during active hours.
-  if (lastOk && now + (current.serverTimeOffsetMs || 0) - lastOk < 1000 * 60 * 60) return;
+  if (lastOk && now + (current.serverTimeOffsetMs || 0) - lastOk < 1000 * 60 * 60) {
+    logToFile(`[checkin] Skipped: 1hr throttle (last ok ${Math.round((now - lastOk) / 1000)}s ago)`);
+    return;
+  }
 
+  logToFile("[checkin] Running forceCheckin...");
   try {
     await forceCheckin();
-  } catch {
-    // forceCheckin handles state updates; ignore.
+    logToFile("[checkin] forceCheckin completed");
+  } catch (e: any) {
+    logToFile(`[checkin] forceCheckin error: ${e?.message}`);
   }
 }
 
 export function startLicenseScheduler(): void {
   if (checkinTimer) return;
+  logToFile("[checkin] License scheduler started, first check-in in 10s");
   // Kick off soon after startup, then periodically.
   setTimeout(() => {
     void maybeCheckin();
