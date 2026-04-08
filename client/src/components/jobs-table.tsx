@@ -910,9 +910,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
   return (
     <>
-      <Card data-testid="card-jobs-table">
-        {/* Sticky header: search, filters, and table header stay fixed while scrolling */}
-        <div className="sticky top-0 z-10 bg-card">
+      <div data-testid="card-jobs-table" className="bg-background">
+        {/* Sticky toolbar: search, filters stay fixed while scrolling */}
+        <div className="sticky top-0 z-20 bg-background">
         {/* Row 1: Search + Select/Link + Actions */}
         <div className="flex items-center gap-2 px-5 py-3 border-b border-border">
           <div className="relative">
@@ -1152,12 +1152,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        </div>{/* end sticky header */}
+        </div>{/* end sticky toolbar */}
 
         {/* Jobs Table */}
-        <div ref={tableViewportRef} className="overflow-x-auto">
+        <div ref={tableViewportRef}>
           <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-center [&_td]:px-3 [&_td]:py-3 [&_td]:text-center">
-            <TableHeader className="bg-muted/50 sticky top-0 z-10">
+            <TableHeader className="bg-muted [&_tr]:border-b [&_th]:bg-muted">
               <TableRow>
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
@@ -1538,7 +1538,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         </div>
 
         {/* Bulk actions are now inline in the toolbar above */}
-      </Card>
+      </div>
 
       {/* Job Dialog */}
       <JobDialog

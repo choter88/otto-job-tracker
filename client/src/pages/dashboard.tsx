@@ -207,7 +207,7 @@ export default function Dashboard() {
         </header>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 pb-8">
+        <div className={`flex-1 overflow-y-auto ${activeTab === "all" ? "" : "p-6 pb-8"}`}>
           {/* Tab Content */}
           {renderTabContent()}
         </div>
