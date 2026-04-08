@@ -1364,7 +1364,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         className="status-badge border-0 max-w-[130px] truncate"
                         style={{ backgroundColor: getTypeBadgeColor(job.jobType).background, color: getTypeBadgeColor(job.jobType).text }}
                       >
-                        {customJobTypes.find((t: any) => t.id === job.jobType)?.label || job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1)}
+                        {customJobTypes.find((t: any) => t.id === job.jobType)?.label || (job.jobType ? job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1) : "Unknown")}
                       </Badge>
                     </TableCell>
                   )}
@@ -1377,7 +1377,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                             style={{ backgroundColor: getStatusBadgeColor(job.status).background, color: getStatusBadgeColor(job.status).text }}
                           >
                             {customStatuses.find((s: any) => s.id === job.status)?.label ||
-                             job.status.replace('_', ' ').split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
+                             (job.status ? job.status.replace('_', ' ').split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : "Unknown")}
                           </Badge>
                         </SelectTrigger>
                         <SelectContent>
@@ -1404,7 +1404,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         className="status-badge border-0 max-w-[140px] truncate"
                         style={{ backgroundColor: getDestinationBadgeColor(job.orderDestination).background, color: getDestinationBadgeColor(job.orderDestination).text }}
                       >
-                        {customOrderDestinations.find((d: any) => d.id === job.orderDestination)?.label || job.orderDestination}
+                        {customOrderDestinations.find((d: any) => d.id === job.orderDestination)?.label || job.orderDestination || "Unknown"}
                       </Badge>
                     </TableCell>
                   )}

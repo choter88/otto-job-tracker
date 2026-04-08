@@ -187,13 +187,14 @@ export default function PastJobs() {
     getDestinationBadgeStyle(destination, customOrderDestinations);
 
   const getDestinationLabel = (destination: string) => {
+    if (!destination) return "Unknown";
     const customOrderDestinations = (office?.settings as any)?.customOrderDestinations || [];
     const customDestination = customOrderDestinations.find((d: any) => d.id === destination);
     if (customDestination) {
       return customDestination.label;
     }
     // Format default destination IDs for display
-    return destination.replace(/_/g, ' ').split(' ').map((word: string) => 
+    return destination.replace(/_/g, ' ').split(' ').map((word: string) =>
       word.charAt(0).toUpperCase() + word.slice(1)
     ).join(' ');
   };
@@ -316,7 +317,7 @@ export default function PastJobs() {
                       color: getTypeBadgeColor(job.jobType).text
                     }}
                   >
-                    {job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1)}
+                    {job.jobType ? job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1) : "Unknown"}
                   </Badge>
                 </TableCell>
                 <TableCell>

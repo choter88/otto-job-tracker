@@ -281,8 +281,8 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
   };
 
   const formatJobDisplay = (job: Job | ArchivedJob, isArchived: boolean = false) => {
-    const jobTypeLabel = customJobTypes.find((t: any) => t.id === job.jobType)?.label || 
-                         job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1);
+    const jobTypeLabel = customJobTypes.find((t: any) => t.id === job.jobType)?.label ||
+                         (job.jobType ? job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1) : "Unknown");
     const prefix = isArchived ? "[ARCHIVED] " : "";
     const patientName = formatPatientDisplayName(job.patientFirstName, job.patientLastName);
     return `${prefix}${job.orderId} - ${patientName}`.trim() + ` - ${jobTypeLabel}`;
