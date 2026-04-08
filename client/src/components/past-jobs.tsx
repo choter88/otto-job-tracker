@@ -10,8 +10,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { Undo, RotateCcw, CheckCircle, XCircle, Search, Calendar, Archive } from "lucide-react";
 import { format, startOfMonth, startOfQuarter, startOfYear, subMonths } from "date-fns";
-import { useState, useMemo } from "react";
+import { useState, useMemo, lazy, Suspense } from "react";
 import type { ArchivedJob, Office } from "@shared/schema";
+
+const JobDialog = lazy(() => import("./job-dialog"));
 import { useQuery } from "@tanstack/react-query";
 import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 
@@ -29,6 +31,7 @@ export default function PastJobs() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [nameSearch, setNameSearch] = useState("");
   const [dateRangePreset, setDateRangePreset] = useState("month");
+  const [selectedArchivedJob, setSelectedArchivedJob] = useState<ArchivedJob | null>(null);
   
   // Calculate date range presets
   const dateRangePresets = useMemo<DateRangePreset[]>(() => {
@@ -200,6 +203,7 @@ export default function PastJobs() {
   };
 
   return (
+    <>
     <Card data-testid="card-past-jobs">
       {/* Header */}
       <div className="p-6 pb-4 border-b border-border">
@@ -301,8 +305,9 @@ export default function PastJobs() {
             {filteredJobs.map((job, index) => (
               <TableRow
                 key={job.id}
-                className={index % 2 === 0 ? "bg-muted/30 hover:bg-muted/50" : "bg-card hover:bg-muted/30"}
+                className={`cursor-pointer ${index % 2 === 0 ? "bg-muted/30 hover:bg-muted/50" : "bg-card hover:bg-muted/30"}`}
                 data-testid={`row-past-job-${job.id}`}
+                onClick={() => setSelectedArchivedJob(job)}
               >
                 <TableCell>
                   <span className="font-medium">
@@ -359,7 +364,7 @@ export default function PastJobs() {
                 <TableCell className="text-sm text-muted-foreground">
                   {format(new Date(job.originalCreatedAt), 'MMM d, yyyy')}
                 </TableCell>
-                <TableCell>
+                <TableCell onClick={(e) => e.stopPropagation()}>
                   <div className="flex gap-2">
                     <Button
                       variant="secondary"
@@ -405,5 +410,18 @@ export default function PastJobs() {
         </div>
       )}
     </Card>
+
+    {/* Archived job details (read-only) */}
+    <Suspense fallback={null}>
+      {selectedArchivedJob && (
+        <JobDialog
+          open={!!selectedArchivedJob}
+          onOpenChange={(open) => !open && setSelectedArchivedJob(null)}
+          archivedJob={selectedArchivedJob}
+          readOnly
+        />
+      )}
+    </Suspense>
+    </>
   );
 }

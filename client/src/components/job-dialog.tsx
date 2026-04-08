@@ -44,9 +44,11 @@ interface JobDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   job?: Job;
+  archivedJob?: ArchivedJob;
+  readOnly?: boolean;
 }
 
-export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
+export default function JobDialog({ open, onOpenChange, job, archivedJob, readOnly }: JobDialogProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -71,24 +73,30 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
   const [duplicateTrayModalOpen, setDuplicateTrayModalOpen] = useState(false);
   const [duplicateTrayNumber, setDuplicateTrayNumber] = useState("");
 
+  // Use archivedJob as data source in read-only mode, otherwise use job
+  const source: any = readOnly && archivedJob ? archivedJob : job;
+  const sourceCreatedAt = readOnly && archivedJob
+    ? archivedJob.originalCreatedAt
+    : job?.createdAt;
+
   useEffect(() => {
-    setCustomColumnValues(job?.customColumnValues || {});
-  }, [job, open]);
+    setCustomColumnValues(source?.customColumnValues || {});
+  }, [source, open]);
 
   // Memoize form default values to prevent unnecessary re-creation
   const defaultValues = useMemo(() => ({
-    patientFirstName: job?.patientFirstName || "",
-    patientLastName: job?.patientLastName || "",
-    trayNumber: job?.trayNumber || "",
-    phone: job?.phone || "",
-    jobType: job?.jobType || undefined,
-    status: job?.status || "job_created",
-    orderDestination: job?.orderDestination || "",
-    createdAt: job?.createdAt ? new Date(job.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-    isRedoJob: job?.isRedoJob || false,
-    originalJobId: job?.originalJobId || undefined,
-    notes: job?.notes || "",
-  }), [job]);
+    patientFirstName: source?.patientFirstName || "",
+    patientLastName: source?.patientLastName || "",
+    trayNumber: source?.trayNumber || "",
+    phone: source?.phone || "",
+    jobType: source?.jobType || undefined,
+    status: readOnly && archivedJob ? archivedJob.finalStatus : source?.status || "job_created",
+    orderDestination: source?.orderDestination || "",
+    createdAt: sourceCreatedAt ? new Date(sourceCreatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+    isRedoJob: source?.isRedoJob || false,
+    originalJobId: source?.originalJobId || undefined,
+    notes: source?.notes || "",
+  }), [source, archivedJob, readOnly]);
 
   const form = useForm<JobFormData>({
     resolver: zodResolver(jobSchema),
@@ -99,17 +107,17 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
   useEffect(() => {
     if (open) {
       form.reset({
-        patientFirstName: job?.patientFirstName || "",
-        patientLastName: job?.patientLastName || "",
-        trayNumber: job?.trayNumber || "",
-        phone: job?.phone || "",
-        jobType: job?.jobType || undefined,
-        status: job?.status || "job_created",
-        orderDestination: job?.orderDestination || "",
-        createdAt: job?.createdAt ? new Date(job.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        isRedoJob: job?.isRedoJob || false,
-        originalJobId: job?.originalJobId || undefined,
-        notes: job?.notes || "",
+        patientFirstName: source?.patientFirstName || "",
+        patientLastName: source?.patientLastName || "",
+        trayNumber: source?.trayNumber || "",
+        phone: source?.phone || "",
+        jobType: source?.jobType || undefined,
+        status: readOnly && archivedJob ? archivedJob.finalStatus : source?.status || "job_created",
+        orderDestination: source?.orderDestination || "",
+        createdAt: sourceCreatedAt ? new Date(sourceCreatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        isRedoJob: source?.isRedoJob || false,
+        originalJobId: source?.originalJobId || undefined,
+        notes: source?.notes || "",
       });
     }
   }, [job, open, form]);
@@ -308,11 +316,11 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
       <DialogContent className="w-full max-w-2xl max-h-[90vh] overflow-y-auto animate-fade-in" data-testid="dialog-job">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-2xl">
-            {job ? "Edit Job" : "Create New Job"}
+            {readOnly ? "Job Details (Archived)" : job ? "Edit Job" : "Create New Job"}
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={form.handleSubmit(onSubmit, () => {
+        <form onSubmit={readOnly ? (e) => e.preventDefault() : form.handleSubmit(onSubmit, () => {
           // Scroll to first validation error
           requestAnimationFrame(() => {
             const firstError = document.querySelector('[data-testid="dialog-job"] .text-destructive');
@@ -321,6 +329,7 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
             }
           });
         })} className="space-y-6">
+          <fieldset disabled={readOnly} className={readOnly ? "opacity-80" : ""}>
           {/* Patient Information */}
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-3">
@@ -729,27 +738,31 @@ export default function JobDialog({ open, onOpenChange, job }: JobDialogProps) {
             </div>
           )}
 
+          </fieldset>
           {/* Form Actions */}
           <div className="flex gap-3 pt-4 border-t border-border">
-            <Button
-              type="submit"
-              className="flex-1"
-              disabled={createJobMutation.isPending}
-              data-testid="button-save-job"
-            >
-              {createJobMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              <Save className="mr-2 h-4 w-4" />
-              {job ? "Update Job" : "Create Job"}
-            </Button>
+            {!readOnly && (
+              <Button
+                type="submit"
+                className="flex-1"
+                disabled={createJobMutation.isPending}
+                data-testid="button-save-job"
+              >
+                {createJobMutation.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                <Save className="mr-2 h-4 w-4" />
+                {job ? "Update Job" : "Create Job"}
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
+              className={readOnly ? "flex-1" : ""}
               onClick={() => onOpenChange(false)}
               data-testid="button-cancel"
             >
-              Cancel
+              {readOnly ? "Close" : "Cancel"}
             </Button>
           </div>
         </form>

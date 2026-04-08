@@ -1137,6 +1137,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const officeId = getOfficeUser(req).officeId;
+      const userId = getAuthUser(req)?.id;
       let updated = 0;
       let archived = 0;
 
@@ -1145,7 +1146,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         const job = await storage.getJob(jobId);
         if (!job || job.officeId !== officeId) continue;
 
-        await storage.updateJob(jobId, updates);
+        await storage.updateJob(jobId, updates, userId);
         updated++;
 
         // Auto-archive if status changed to completed/cancelled
