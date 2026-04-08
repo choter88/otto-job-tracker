@@ -311,9 +311,10 @@ async function maybeCheckin(): Promise<void> {
 export function startLicenseScheduler(): void {
   if (checkinTimer) return;
   logToFile("[checkin] License scheduler started, first check-in in 10s");
-  // Kick off soon after startup, then periodically.
+  // Kick off soon after startup — skip the 15min backoff for the initial check-in
+  // since the app just launched and may have been restarted by the auto-updater.
   setTimeout(() => {
-    void maybeCheckin();
+    void forceCheckin().catch((e) => logToFile(`[checkin] Initial forceCheckin error: ${e?.message}`));
   }, 10_000);
 
   checkinTimer = setInterval(() => {
