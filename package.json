@@ -58,6 +58,7 @@
       "desktop/**",
       "!desktop/lib/update-token.js",
       "desktop/lib/update-token.js",
+      "server/migrations/**",
       "node_modules/**",
       "package.json"
     ],
