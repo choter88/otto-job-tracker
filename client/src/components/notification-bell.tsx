@@ -119,7 +119,7 @@ export default function NotificationBell() {
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
             <Badge
-              className="absolute -top-1 -right-1 h-5 w-5 rounded-full p-0 text-xs flex items-center justify-center"
+              className="absolute -top-1 -right-1 h-5 w-5 rounded-full p-0 text-xs flex items-center justify-center bg-red-500 text-white border-0 hover:bg-red-500"
               data-testid="badge-unread-count"
             >
               {unreadCount > 9 ? '9+' : unreadCount}
@@ -183,7 +183,7 @@ export default function NotificationBell() {
                   <button
                     onClick={() => handleNotificationClick(notification)}
                     className={`w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors flex items-start gap-2 ${
-                      !notification.readAt ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''
+                      !notification.readAt ? 'bg-red-50/50 dark:bg-red-950/20' : ''
                     }`}
                     data-testid={`notification-item-${notification.id}`}
                   >
@@ -200,7 +200,7 @@ export default function NotificationBell() {
                         </span>
                         {!notification.readAt && (
                           <div
-                            className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0"
+                            className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0"
                             data-testid={`unread-indicator-${notification.id}`}
                           />
                         )}

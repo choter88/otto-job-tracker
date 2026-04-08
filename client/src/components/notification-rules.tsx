@@ -91,7 +91,7 @@ export default function NotificationRules() {
     onSuccess: () => {
       toast({
         title: "Success",
-        description: "Notification rule created successfully.",
+        description: "Overdue rule created successfully.",
       });
       setShowAddForm(false);
       form.reset();
@@ -129,7 +129,7 @@ export default function NotificationRules() {
     onSuccess: () => {
       toast({
         title: "Success",
-        description: "Notification rule updated successfully.",
+        description: "Overdue rule updated successfully.",
       });
       setEditingRule(null);
     },
@@ -165,7 +165,7 @@ export default function NotificationRules() {
     onSuccess: () => {
       toast({
         title: "Success",
-        description: "Notification rule deleted successfully.",
+        description: "Overdue rule deleted successfully.",
       });
     },
     onSettled: () => {
@@ -202,7 +202,7 @@ export default function NotificationRules() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm("Are you sure you want to delete this notification rule?")) {
+    if (confirm("Are you sure you want to delete this overdue rule?")) {
       deleteRuleMutation.mutate(id);
     }
   };
@@ -233,7 +233,7 @@ export default function NotificationRules() {
   if (isLoading) {
     return (
       <div className="flex justify-center py-8">
-        <div className="text-muted-foreground">Loading notification rules...</div>
+        <div className="text-muted-foreground">Loading overdue rules...</div>
       </div>
     );
   }
@@ -259,7 +259,7 @@ export default function NotificationRules() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               <Bell className="h-5 w-5" />
-              {editingRule ? "Edit Notification Rule" : "Add Notification Rule"}
+              {editingRule ? "Edit Overdue Rule" : "Add Overdue Rule"}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -329,7 +329,7 @@ export default function NotificationRules() {
                       Enable Rule
                     </Label>
                     <p className="text-sm text-muted-foreground">
-                      Turn this notification rule on or off
+                      Turn this overdue rule on or off
                     </p>
                   </div>
                   <Controller
@@ -413,9 +413,9 @@ export default function NotificationRules() {
                 <div className="inline-flex items-center justify-center w-16 h-16 bg-muted rounded-full">
                   <AlertTriangle className="h-8 w-8 text-muted-foreground" />
                 </div>
-                <h3 className="text-lg font-semibold">No Notification Rules</h3>
+                <h3 className="text-lg font-semibold">No Overdue Rules</h3>
                 <p className="text-muted-foreground">
-                  Create notification rules to get alerts when jobs are overdue.
+                  Create overdue rules to get alerts when jobs are overdue.
                 </p>
                 <Button onClick={handleAddNew}>
                   <Plus className="mr-2 h-4 w-4" />

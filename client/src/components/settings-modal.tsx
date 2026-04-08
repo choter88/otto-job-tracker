@@ -850,7 +850,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                   data-testid="tab-notifications"
                 >
                   <Bell className="h-4 w-4" />
-                  <span className="truncate">Notifications</span>
+                  <span className="truncate">Overdue Rules</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="messages"
@@ -860,16 +860,6 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                   <MessageSquare className="h-4 w-4" />
                   <span className="truncate">Messages</span>
                 </TabsTrigger>
-                {user?.role === "owner" && (
-                  <TabsTrigger
-                    value="inviteCode"
-                    className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
-                    data-testid="tab-invite-code"
-                  >
-                    <KeyRound className="h-4 w-4" />
-                    <span className="truncate">Invite Code</span>
-                  </TabsTrigger>
-                )}
               </TabsList>
             </div>
 
@@ -1076,12 +1066,6 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
             <TabsContent value="notifications" className="mt-0">
               <NotificationRules />
             </TabsContent>
-
-            {user?.role === "owner" && (
-              <TabsContent value="inviteCode" className="mt-0">
-                <InviteCodeSection />
-              </TabsContent>
-            )}
 
             <TabsContent value="messages" className="mt-0">
               <div className="space-y-6">
