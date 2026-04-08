@@ -1033,6 +1033,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         "isRedoJob",
         "originalJobId",
         "notes",
+        "createdAt",
       ];
 
       const updates: Record<string, any> = {};
@@ -1054,6 +1055,14 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
       if (typeof updates.patientLastName === "string") {
         updates.patientLastName = normalizePatientNamePart(updates.patientLastName);
+      }
+      // Convert createdAt string to Date for SQLite timestamp_ms column
+      if (typeof updates.createdAt === "string") {
+        const parsed = new Date(updates.createdAt);
+        if (isNaN(parsed.getTime())) {
+          return res.status(400).json({ error: "Invalid createdAt date" });
+        }
+        updates.createdAt = parsed;
       }
 
       for (const requiredKey of ["patientFirstName", "patientLastName", "jobType", "status", "orderDestination"]) {
