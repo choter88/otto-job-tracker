@@ -16,22 +16,27 @@ export async function notifyJobStatusChange(
 ): Promise<void> {
   try {
     debugLog(`[notifyJobStatusChange] jobId=${job.id} status=${oldStatus}→${job.status}`);
-    
-    const officeUsers = await storage.getUsersInOffice(job.officeId);
-    
-    const recipients = officeUsers.filter(user => user.id !== changedBy.id);
-    debugLog(`[notifyJobStatusChange] recipients=${recipients.length}`);
-    
-    if (recipients.length === 0) {
+
+    // Only notify users who have flagged this job as important (not all office users)
+    const flaggedBy = await storage.getJobFlaggedBy(job.id);
+    const recipientIds = flaggedBy
+      .map(f => f.userId)
+      .filter(id => id !== changedBy.id);
+
+    debugLog(`[notifyJobStatusChange] flagged recipients=${recipientIds.length}`);
+
+    if (recipientIds.length === 0) {
       return;
     }
-    
+
+    const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
+
     const notifications = await Promise.all(
-      recipients.map(async (user) => {
+      recipientIds.map(async (userId) => {
         return storage.createNotification({
-          userId: user.id,
+          userId,
           type: "status_change",
-          title: `${`${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient"} — status changed`,
+          title: `${patientName} — status changed`,
           message: `${changedBy.firstName} changed: ${oldStatus} → ${job.status}`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
@@ -44,10 +49,9 @@ export async function notifyJobStatusChange(
         });
       })
     );
-    
+
     debugLog(`[notifyJobStatusChange] created=${notifications.length}`);
-    
-    
+
   } catch (error) {
     console.error("Error sending job status change notifications:", error);
     // Notification delivery is best-effort and should not fail job updates.
@@ -61,20 +65,25 @@ export async function notifyNewComment(
   storage: IStorage
 ): Promise<void> {
   try {
-    const officeUsers = await storage.getUsersInOffice(job.officeId);
-    
-    const recipients = officeUsers.filter(user => user.id !== author.id);
-    
-    const truncatedContent = comment.content.length > 100 
-      ? `${comment.content.substring(0, 100)}...` 
+    // Only notify users who have flagged this job as important
+    const flaggedBy = await storage.getJobFlaggedBy(job.id);
+    const recipientIds = flaggedBy
+      .map(f => f.userId)
+      .filter(id => id !== author.id);
+
+    if (recipientIds.length === 0) return;
+
+    const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
+    const truncatedContent = comment.content.length > 100
+      ? `${comment.content.substring(0, 100)}...`
       : comment.content;
-    
-    const notifications = await Promise.all(
-      recipients.map(user => 
+
+    await Promise.all(
+      recipientIds.map(userId =>
         storage.createNotification({
-          userId: user.id,
+          userId,
           type: "comment",
-          title: `${`${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient"} — new comment`,
+          title: `${patientName} — new comment`,
           message: `${author.firstName}: ${truncatedContent}`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
@@ -86,7 +95,7 @@ export async function notifyNewComment(
         })
       )
     );
-    
+
   } catch (error) {
     console.error("Error sending new comment notifications:", error);
   }
