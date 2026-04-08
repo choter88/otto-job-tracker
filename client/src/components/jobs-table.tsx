@@ -878,7 +878,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         </div>
         <div className="overflow-x-auto">
           <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-center [&_td]:px-3 [&_td]:py-3 [&_td]:text-center">
-            <TableHeader className="[&_th]:bg-indigo-100/60">
+            <TableHeader className="[&_th]:bg-primary/[0.06] dark:[&_th]:bg-primary/[0.10]">
               <TableRow>
                 <TableHead className="w-10" />
                 <TableHead className="min-w-[160px]">Patient</TableHead>
@@ -910,11 +910,11 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
   return (
     <>
-      <div data-testid="card-jobs-table" className="bg-background">
+      <div data-testid="card-jobs-table" className="bg-background min-h-full">
         {/* Sticky toolbar: search, filters stay fixed while scrolling */}
-        <div className="sticky top-0 z-20 bg-indigo-50/80 backdrop-blur-sm">
+        <div className="sticky top-0 z-20 bg-primary/[0.04] dark:bg-primary/[0.08] backdrop-blur-md border-b border-border/60">
         {/* Row 1: Search + Select/Link + Actions */}
-        <div className="flex items-center gap-2 px-5 py-3 border-b border-border">
+        <div className="flex items-center gap-2 px-5 py-2.5">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
@@ -1027,7 +1027,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         </div>
 
         {/* Row 2: Persistent Filters + Column Toggle */}
-        <div className="flex flex-wrap items-center gap-2 px-5 py-2 border-b border-border">
+        <div className="flex flex-wrap items-center gap-2 px-5 py-2">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
               <SelectValue placeholder="All Statuses" />
@@ -1156,8 +1156,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
         {/* Jobs Table */}
         <div ref={tableViewportRef}>
-          <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-center [&_td]:px-3 [&_td]:py-3 [&_td]:text-center">
-            <TableHeader className="[&_tr]:border-b [&_th]:bg-indigo-100/60">
+          <Table className="text-[13px] [&_th]:h-9 [&_th]:px-3 [&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_td]:px-3 [&_td]:py-2.5">
+            <TableHeader className="[&_tr]:border-b [&_tr]:border-border/60 [&_th]:bg-primary/[0.06] dark:[&_th]:bg-primary/[0.10]">
               <TableRow>
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
@@ -1282,10 +1282,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 <TableRow
                   key={job.id}
                   className={cn(
-                    "cursor-pointer transition-colors",
+                    "cursor-pointer transition-colors border-b border-border/30",
                     (selectionMode || linkMode) && selectedJobs.includes(job.id)
-                      ? "bg-blue-100/50 dark:bg-blue-950/30 border-l-[3px] border-l-primary"
-                      : index % 2 === 0 ? "bg-white hover:bg-blue-50/50" : "bg-blue-50/20 hover:bg-blue-50/40",
+                      ? "bg-primary/10 dark:bg-primary/15 border-l-[3px] border-l-primary"
+                      : index % 2 === 0
+                        ? "bg-card dark:bg-card hover:bg-primary/[0.03] dark:hover:bg-primary/[0.06]"
+                        : "bg-primary/[0.02] dark:bg-primary/[0.04] hover:bg-primary/[0.05] dark:hover:bg-primary/[0.08]",
                   )}
                   onClick={() => {
                     if (selectionMode || linkMode) {
