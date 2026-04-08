@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -246,11 +246,197 @@ function InviteCodeSection() {
   );
 }
 
+// ── Sub-modal: Add Status / Job Type / Destination ────────────────────
+
+function AddItemModal({
+  open,
+  onOpenChange,
+  type,
+  existingColors,
+  onAdd,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  type: 'statuses' | 'jobTypes' | 'destinations';
+  existingColors: string[];
+  onAdd: (item: { id: string; label: string; color: string; hsl: string; order: number }) => void;
+}) {
+  const [label, setLabel] = useState('');
+  const [color, setColor] = useState(() => chooseHighContrastColor(existingColors));
+
+  const typeLabel = type === 'statuses' ? 'Status' : type === 'jobTypes' ? 'Job Type' : 'Destination';
+  const isValid = label.trim().length > 0;
+
+  const handleSubmit = () => {
+    if (!isValid) return;
+    onAdd({
+      id: `custom_${Date.now()}`,
+      label: label.trim(),
+      color,
+      hsl: hexToHSL(color),
+      order: 999,
+    });
+    setLabel('');
+    setColor(chooseHighContrastColor(existingColors));
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle>Add {typeLabel}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div>
+            <Label className="text-sm font-medium">Name</Label>
+            <Input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder={`Enter ${typeLabel.toLowerCase()} name`}
+              autoFocus
+              onKeyDown={(e) => e.key === 'Enter' && isValid && handleSubmit()}
+            />
+          </div>
+          <div>
+            <Label className="text-sm font-medium">Color</Label>
+            <div className="flex items-center gap-3 mt-1">
+              <label
+                className="w-10 h-10 rounded-lg cursor-pointer border border-border shadow-sm"
+                style={{ backgroundColor: color }}
+              >
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="absolute opacity-0 w-0 h-0"
+                />
+              </label>
+              <span className="text-sm text-muted-foreground">{color}</span>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!isValid}>Add {typeLabel}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Sub-modal: Add Custom Column ──────────────────────────────────────
+
+function AddColumnModal({
+  open,
+  onOpenChange,
+  onAdd,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAdd: (col: { id: string; name: string; type: string; order: number; active: boolean; editableInWorklist: boolean; options?: string[] }) => void;
+}) {
+  const [name, setName] = useState('');
+  const [colType, setColType] = useState('text');
+  const [optionsText, setOptionsText] = useState('');
+  const [editableInWorklist, setEditableInWorklist] = useState(true);
+
+  const options = optionsText.split('\n').map(o => o.trim()).filter(Boolean);
+  const isValid = name.trim().length > 0 && (colType !== 'select' || options.length > 0);
+
+  const handleSubmit = () => {
+    if (!isValid) return;
+    onAdd({
+      id: `col_${Date.now()}`,
+      name: name.trim(),
+      type: colType,
+      order: 999,
+      active: true,
+      editableInWorklist,
+      ...(colType === 'select' ? { options } : {}),
+    });
+    setName('');
+    setColType('text');
+    setOptionsText('');
+    setEditableInWorklist(true);
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md" onClick={(e) => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle>Add Custom Column</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div>
+            <Label className="text-sm font-medium">Column Name</Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Enter column name"
+              autoFocus
+            />
+          </div>
+          <div>
+            <Label className="text-sm font-medium">Column Type</Label>
+            <Select value={colType} onValueChange={setColType}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="text">Text</SelectItem>
+                <SelectItem value="select">Select (Dropdown)</SelectItem>
+                <SelectItem value="checkbox">Checkbox</SelectItem>
+                <SelectItem value="date">Date</SelectItem>
+                <SelectItem value="number">Number</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {colType === 'select' && (
+            <div>
+              <Label className="text-sm font-medium">Options (one per line)</Label>
+              <textarea
+                className="w-full min-h-[100px] mt-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                value={optionsText}
+                onChange={(e) => setOptionsText(e.target.value)}
+                placeholder={"Option 1\nOption 2\nOption 3"}
+              />
+              {optionsText.length > 0 && options.length === 0 && (
+                <p className="text-xs text-destructive mt-1">Add at least one option</p>
+              )}
+              {options.length === 0 && optionsText.length === 0 && (
+                <p className="text-xs text-muted-foreground mt-1">At least one option is required</p>
+              )}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="new-col-worklist"
+              checked={editableInWorklist}
+              onChange={(e) => setEditableInWorklist(e.target.checked)}
+              className="h-4 w-4 rounded border-input accent-primary"
+            />
+            <Label htmlFor="new-col-worklist" className="text-sm">Editable in worklist</Label>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!isValid}>Add Column</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("general");
+  const [addItemModal, setAddItemModal] = useState<{ type: 'statuses' | 'jobTypes' | 'destinations' } | null>(null);
+  const [addColumnModalOpen, setAddColumnModalOpen] = useState(false);
 
   const { data: office, isLoading } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
@@ -365,6 +551,20 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
         ? { ...col, options: col.options.map((o: string) => o.trim()).filter(Boolean) }
         : col,
     );
+
+    // Validate: select columns must have at least one option
+    const emptySelectCol = cleanedColumns.find(
+      (col) => col.type === 'select' && (!col.options || col.options.length === 0),
+    );
+    if (emptySelectCol) {
+      toast({
+        title: "Missing options",
+        description: `Select column "${emptySelectCol.name}" needs at least one option.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     const updatedSettings = {
       ...(office?.settings || {}),
       customStatuses,
@@ -538,7 +738,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
           <Button
             size="sm"
             className="h-8 text-xs"
-            onClick={() => addCustomItem(type)}
+            onClick={() => setAddItemModal({ type })}
             data-testid={`button-add-${type}`}
           >
             <Plus className="mr-1.5 h-3.5 w-3.5" />
@@ -751,7 +951,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                     Create custom columns to track additional information for your jobs.
                   </p>
                   <Button
-                    onClick={addCustomColumn}
+                    onClick={() => setAddColumnModalOpen(true)}
                     data-testid="button-add-custom-column"
                   >
                     <Plus className="mr-2 h-4 w-4" />
@@ -1016,6 +1216,35 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
           </div>
         </Tabs>
       </DialogContent>
+
+      {/* Sub-modals for adding items */}
+      <AddItemModal
+        open={!!addItemModal}
+        onOpenChange={(open) => !open && setAddItemModal(null)}
+        type={addItemModal?.type || 'statuses'}
+        existingColors={
+          addItemModal?.type === 'statuses'
+            ? customStatuses.map(s => s.color)
+            : addItemModal?.type === 'jobTypes'
+              ? customJobTypes.map(t => t.color)
+              : customOrderDestinations.map(d => d.color)
+        }
+        onAdd={(item) => {
+          if (addItemModal?.type === 'statuses') {
+            setCustomStatuses([...customStatuses, item]);
+          } else if (addItemModal?.type === 'jobTypes') {
+            setCustomJobTypes([...customJobTypes, item]);
+          } else {
+            setCustomOrderDestinations([...customOrderDestinations, item]);
+          }
+        }}
+      />
+
+      <AddColumnModal
+        open={addColumnModalOpen}
+        onOpenChange={setAddColumnModalOpen}
+        onAdd={(col) => setCustomColumns([...customColumns, col])}
+      />
     </Dialog>
   );
 }
