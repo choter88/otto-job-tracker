@@ -878,7 +878,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         </div>
         <div className="overflow-x-auto">
           <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-center [&_td]:px-3 [&_td]:py-3 [&_td]:text-center">
-            <TableHeader className="bg-muted/50">
+            <TableHeader className="[&_th]:bg-indigo-100/60">
               <TableRow>
                 <TableHead className="w-10" />
                 <TableHead className="min-w-[160px]">Patient</TableHead>
@@ -912,7 +912,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     <>
       <div data-testid="card-jobs-table" className="bg-background">
         {/* Sticky toolbar: search, filters stay fixed while scrolling */}
-        <div className="sticky top-0 z-20 bg-background">
+        <div className="sticky top-0 z-20 bg-indigo-50/80 backdrop-blur-sm">
         {/* Row 1: Search + Select/Link + Actions */}
         <div className="flex items-center gap-2 px-5 py-3 border-b border-border">
           <div className="relative">
@@ -1157,7 +1157,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         {/* Jobs Table */}
         <div ref={tableViewportRef}>
           <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-center [&_td]:px-3 [&_td]:py-3 [&_td]:text-center">
-            <TableHeader className="bg-muted [&_tr]:border-b [&_th]:bg-muted">
+            <TableHeader className="[&_tr]:border-b [&_th]:bg-indigo-100/60">
               <TableRow>
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
@@ -1284,8 +1284,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   className={cn(
                     "cursor-pointer transition-colors",
                     (selectionMode || linkMode) && selectedJobs.includes(job.id)
-                      ? "bg-blue-50 dark:bg-blue-950/30 border-l-[3px] border-l-primary"
-                      : index % 2 === 0 ? "bg-muted/30 hover:bg-muted/50" : "bg-card hover:bg-muted/30",
+                      ? "bg-blue-100/50 dark:bg-blue-950/30 border-l-[3px] border-l-primary"
+                      : index % 2 === 0 ? "bg-white hover:bg-blue-50/50" : "bg-blue-50/20 hover:bg-blue-50/40",
                   )}
                   onClick={() => {
                     if (selectionMode || linkMode) {
