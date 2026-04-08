@@ -170,6 +170,7 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
       );
       checkinPayload.metrics.dailyActivity = getAggregatedDailyStats(since);
       checkinPayload.metrics.rawEvents = getRawEventsSince(since);
+      console.log(`[checkin] Analytics: since=${since.toISOString()} dailyActivity=${checkinPayload.metrics.dailyActivity.length} days, rawEvents=${checkinPayload.metrics.rawEvents.length}`);
       // Non-blocking cleanup of old raw events
       setTimeout(() => { try { pruneOldEvents(90); } catch {} }, 100);
     } catch {

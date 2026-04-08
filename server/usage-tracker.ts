@@ -145,6 +145,9 @@ export type DailyActivitySummary = {
  * Groups by calendar date (local timezone) and event type.
  */
 export function getAggregatedDailyStats(since: Date): DailyActivitySummary[] {
+  // Flush any buffered events first so we don't miss recent ones
+  flushBuffer();
+
   const sinceMs = since.getTime();
 
   // Query raw counts grouped by date and event_type
