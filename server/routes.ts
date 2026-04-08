@@ -20,6 +20,7 @@ import {
   jobLinkGroups,
   linkGroupNotes,
   clientDevices as clientDevicesTable,
+  usageEvents,
   insertJobSchema,
   insertJobCommentSchema,
   insertNotificationRuleSchema,
@@ -47,7 +48,7 @@ import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemp
 import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
-import { trackEvent, CLIENT_TRACKABLE_EVENTS } from "./usage-tracker";
+import { trackEvent, CLIENT_TRACKABLE_EVENTS, getAggregatedDailyStats, getRawEventsSince } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
 import type { User } from "@shared/schema";
 
@@ -279,6 +280,25 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   app.get("/api/license/status", (_req, res) => {
     applyNoStoreHeaders(res);
     res.json(getLicenseSnapshot());
+  });
+
+  // ── Analytics diagnostic endpoint ──
+  app.get("/api/analytics/debug", (_req, res) => {
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const dailyStats = getAggregatedDailyStats(sevenDaysAgo);
+      const rawEvents = getRawEventsSince(sevenDaysAgo);
+      const totalEventsInDb = db.select({ count: sql`count(*)` }).from(usageEvents).all();
+      res.json({
+        totalEventsInDb: totalEventsInDb[0]?.count ?? 0,
+        dailyStats,
+        rawEventsCount: rawEvents.length,
+        hostToken: getHostToken() ? "present" : "MISSING",
+        lastCheckinAt: getLicenseSnapshot().lastSuccessfulCheckinAt,
+      });
+    } catch (e: any) {
+      res.json({ error: e.message });
+    }
   });
 
   // ── Usage event tracking (client-side tab navigation, search, etc.) ──
