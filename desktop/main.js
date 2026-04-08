@@ -2021,6 +2021,10 @@ app.whenReady().then(async () => {
   // Start silent auto-update checks (no-ops in dev / unpackaged mode).
   initAutoUpdater();
 
+  // Track whether a launch-time auto-install is handling the update
+  // to prevent the background notification from showing a duplicate dialog.
+  let launchInstallHandled = false;
+
   // Rebuild menu when update state changes (e.g. "ready" enables the install button).
   // Also show a notification dialog when a background download finishes.
   onUpdateStateChange((state) => {
@@ -2031,8 +2035,9 @@ app.whenReady().then(async () => {
       // ignore — config may not exist during setup
     }
 
-    // Notify user when a background download completes
-    if (state.status === "ready" && state.version) {
+    // Notify user when a background download completes — but NOT if the
+    // launch-time auto-install already handled this update.
+    if (state.status === "ready" && state.version && !launchInstallHandled) {
       dialog.showMessageBox({
         type: "info",
         title: "Update Ready",
@@ -2041,42 +2046,21 @@ app.whenReady().then(async () => {
         buttons: ["Install Now", "Later"],
         defaultId: 0,
       }).then(({ response }) => {
-        if (response === 0) _installUpdate();
+        if (response === 0) installUpdateRaw();
       }).catch(() => {});
     }
   });
 
   // Auto-install on launch: if a previously-downloaded update is cached,
   // electron-updater detects it immediately and fires "update-downloaded".
-  // Show a brief dialog and install without requiring user action.
+  // Install directly without requiring user action.
   onUpdateReadyAtLaunch(async (version) => {
-    const { dialog } = await import("electron");
+    launchInstallHandled = true;
     console.log(`[auto-updater] Update v${version} ready at launch — auto-installing.`);
-
-    // Brief 2-second notification so the user knows what's happening,
-    // then install. Use a non-blocking approach: show the dialog and
-    // install after a short delay regardless of user interaction.
-    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-    const dialogOpts = {
-      type: "info",
-      title: "Installing Update",
-      message: `Installing Otto Tracker v${version}...`,
-      detail: "The app will restart in a moment.",
-      buttons: ["OK"],
-      noLink: true,
-    };
-
-    // Show dialog (non-blocking on purpose — install proceeds regardless)
-    if (win) {
-      dialog.showMessageBox(win, dialogOpts).catch(() => {});
-    } else {
-      dialog.showMessageBox(dialogOpts).catch(() => {});
-    }
-
-    // Give the dialog a moment to render, then install
+    // Small delay for the app window to settle, then install silently
     setTimeout(() => {
       installUpdateRaw();
-    }, 1500);
+    }, 2000);
   });
 });
 
