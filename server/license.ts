@@ -279,27 +279,49 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
   return getLicenseSnapshot();
 }
 
-async function maybeCheckin(): Promise<void> {
+/**
+ * Check-in scheduling rules:
+ *
+ * 1. MINIMUM_INTERVAL (2 min) — hard floor between any two check-in attempts
+ *    to prevent flooding the portal during error loops or rapid restarts.
+ *
+ * 2. ROUTINE_INTERVAL (30 min) — normal cadence during active hours. Frequent
+ *    enough for fresh analytics without excessive load.
+ *
+ * 3. Active hours: 7am–9pm local time. Outside this window, check-ins are
+ *    skipped entirely (office is closed, no new data to send).
+ *
+ * 4. On startup: first check-in fires after 10 seconds, subject only to the
+ *    2-minute minimum interval — NOT the 30-minute routine interval. This
+ *    ensures a freshly launched app checks in quickly.
+ */
+const MINIMUM_INTERVAL_MS = 1000 * 60 * 2;   // 2 minutes — hard floor
+const ROUTINE_INTERVAL_MS = 1000 * 60 * 30;  // 30 minutes — normal cadence
+const POLL_INTERVAL_MS    = 1000 * 60 * 5;   // 5 minutes — how often we evaluate
+
+async function maybeCheckin(isStartup = false): Promise<void> {
   const current = getState();
   if (!current.hostToken) { logToFile("[checkin] Skipped: no hostToken"); return; }
 
   const now = Date.now();
+
+  // Hard floor: never check in more often than every 2 minutes
   const lastAttempt = typeof current.lastAttemptAt === "number" ? current.lastAttemptAt : 0;
-  if (lastAttempt && now - lastAttempt < 1000 * 60 * 15) {
-    logToFile(`[checkin] Skipped: 15min backoff (last attempt ${Math.round((now - lastAttempt) / 1000)}s ago)`);
+  if (lastAttempt && now - lastAttempt < MINIMUM_INTERVAL_MS) {
+    logToFile(`[checkin] Skipped: minimum interval (last attempt ${Math.round((now - lastAttempt) / 1000)}s ago)`);
     return;
   }
 
-  // Only check in during active hours (7am–9pm local time).
-  // Outside these hours, skip entirely to save resources.
+  // Active hours: 7am–9pm local time
   const localHour = new Date(now).getHours();
   if (localHour < 7 || localHour >= 21) { logToFile(`[checkin] Skipped: outside active hours (${localHour}h)`); return; }
 
-  const lastOk = typeof current.lastSuccessfulCheckinAt === "number" ? current.lastSuccessfulCheckinAt : 0;
-  // At most one successful check-in per hour during active hours.
-  if (lastOk && now + (current.serverTimeOffsetMs || 0) - lastOk < 1000 * 60 * 60) {
-    logToFile(`[checkin] Skipped: 1hr throttle (last ok ${Math.round((now - lastOk) / 1000)}s ago)`);
-    return;
+  // Routine cadence: every 30 minutes (startup bypasses this)
+  if (!isStartup) {
+    const lastOk = typeof current.lastSuccessfulCheckinAt === "number" ? current.lastSuccessfulCheckinAt : 0;
+    if (lastOk && now + (current.serverTimeOffsetMs || 0) - lastOk < ROUTINE_INTERVAL_MS) {
+      return; // Silent skip — routine interval not yet reached
+    }
   }
 
   logToFile("[checkin] Running forceCheckin...");
@@ -314,14 +336,16 @@ async function maybeCheckin(): Promise<void> {
 export function startLicenseScheduler(): void {
   if (checkinTimer) return;
   logToFile("[checkin] License scheduler started, first check-in in 10s");
-  // Kick off soon after startup, then periodically.
+
+  // Initial check-in soon after startup (bypasses routine interval, respects minimum)
   setTimeout(() => {
-    void maybeCheckin();
+    void maybeCheckin(true);
   }, 10_000);
 
+  // Periodic evaluation — checks every 5 minutes whether a check-in is due
   checkinTimer = setInterval(() => {
     void maybeCheckin();
-  }, 1000 * 60 * 60); // hourly (internal throttles)
+  }, POLL_INTERVAL_MS);
 }
 
 export function stopLicenseScheduler(): void {
