@@ -38,7 +38,10 @@ export function onLicenseStateChange(cb: () => void): void {
 }
 
 function getState(): LicenseState {
-  if (!state) state = ensureLicenseState();
+  if (!state) {
+    state = ensureLicenseState();
+    logToFile(`[checkin] License state loaded from ${process.env.OTTO_DATA_DIR || "~/.otto-job-tracker"} — hostToken=${state.hostToken ? "present" : "MISSING"}`);
+  }
   return state;
 }
 
