@@ -570,6 +570,19 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     );`,
 
+    `CREATE TABLE IF NOT EXISTS tablet_sessions (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      office_id TEXT NOT NULL REFERENCES offices(id),
+      user_agent TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+      expires_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    );`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS tablet_sessions_token_unique ON tablet_sessions (token);`,
+    `CREATE INDEX IF NOT EXISTS tablet_sessions_user_idx ON tablet_sessions (user_id);`,
+
     `CREATE TABLE IF NOT EXISTS phi_access_logs (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),

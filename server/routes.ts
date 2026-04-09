@@ -50,23 +50,12 @@ import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults"
 import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
 import { trackEvent, CLIENT_TRACKABLE_EVENTS, getAggregatedDailyStats, getRawEventsSince } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
+import { registerTabletRoutes } from "./tablet-routes";
+import { invalidateTabletSessionsForUser } from "./tablet-auth";
 import type { User } from "@shared/schema";
 
-// ── Tablet session tracking (module-level for access from license check-in) ──
-const tabletSessions = new Map<string, number>();
-const TABLET_SESSION_EXPIRY_MS = 60_000; // 60 seconds without heartbeat = expired
-
-export function getActiveTabletSessionCount(): number {
-  const now = Date.now();
-  const expired: string[] = [];
-  tabletSessions.forEach((lastSeen, id) => {
-    if (now - lastSeen > TABLET_SESSION_EXPIRY_MS) {
-      expired.push(id);
-    }
-  });
-  expired.forEach((id) => tabletSessions.delete(id));
-  return tabletSessions.size;
-}
+// ── Tablet session tracking (delegated to tablet-auth module) ──
+export { getActiveTabletSessionCount } from "./tablet-auth";
 
 // Type-safe user accessors for authenticated routes.
 // These are safe to call in handlers guarded by requireAuth / requireOffice.
@@ -2298,11 +2287,20 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     requireRole(["owner", "manager"]),
     async (req, res) => {
       try {
+        // Look up the request to get the userId before approving (for tablet session invalidation)
+        const pendingRequests = await storage.getPinResetRequestsByOffice(getOfficeUser(req).officeId);
+        const targetRequest = pendingRequests.find((r) => r.id === req.params.id);
+
         await storage.approvePinResetRequest(
           req.params.id,
           getOfficeUser(req).officeId,
           getAuthUser(req).id,
         );
+
+        // Invalidate tablet sessions when PIN changes
+        if (targetRequest?.userId) {
+          await invalidateTabletSessionsForUser(targetRequest.userId);
+        }
 
         broadcastToOffice(getOfficeUser(req).officeId, { type: "office_updated", ts: Date.now(), source: "pin_reset_request" });
         res.status(200).json({ ok: true });
@@ -2384,6 +2382,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // Reset the PIN
       const newPinHash = await hashSecret(newPin);
       await storage.updateUser(user.id, { pinHash: newPinHash });
+
+      // Invalidate tablet sessions when PIN changes
+      await invalidateTabletSessionsForUser(user.id);
 
       res.json({ ok: true, message: "PIN has been reset successfully. You can now sign in." });
     } catch (error: any) {
@@ -3142,8 +3143,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // ── Tablet Job Board (slot-gated, LAN-accessible) ──────────────────
-  // Serves a lightweight job board view for tablet browsers on the LAN.
-  // No link or menu item in the desktop UI should reference this route.
+  // Full tablet API + SPA serving is handled by tablet-routes.ts.
+  registerTabletRoutes(app);
 
   // ── Client device management ───────────────────────────────────────
 
@@ -3173,75 +3174,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  // Tablet session tracking uses the shared module-level counter
-
-  // POST /tablet/heartbeat — tablet pings every 30s with a session ID
-  app.post("/tablet/heartbeat", (req, res) => {
-    const plan = getCachedPlan();
-    if (plan.tabletSlots <= 0) {
-      return res.status(403).json({ error: "TABLET_NOT_ENABLED", message: "Tablet boards are not enabled for this office." });
-    }
-
-    const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId : "";
-    if (!sessionId) {
-      return res.status(400).json({ error: "sessionId is required" });
-    }
-
-    // If this is a new session, check the limit
-    if (!tabletSessions.has(sessionId)) {
-      const activeCount = getActiveTabletSessionCount();
-      if (activeCount >= plan.tabletSlots) {
-        return res.status(403).json({
-          error: "TABLET_LIMIT_REACHED",
-          message: `This office has reached its tablet limit (${plan.tabletSlots} tablets). To add more, visit the Otto portal and add a tablet to your subscription.`,
-        });
-      }
-    }
-
-    tabletSessions.set(sessionId, Date.now());
-    res.json({ ok: true });
-  });
-
-  app.get("/tablet/board", (_req, res) => {
-    const plan = getCachedPlan();
-    if (plan.tabletSlots <= 0) {
-      return res.status(403).json({
-        error: "TABLET_NOT_ENABLED",
-        message: "Tablet boards are not enabled for this office.",
-      });
-    }
-
-    // Check active session count before serving
-    const activeCount = getActiveTabletSessionCount();
-    if (activeCount >= plan.tabletSlots) {
-      return res.status(403).json({
-        error: "TABLET_LIMIT_REACHED",
-        message: `This office has reached its tablet limit (${plan.tabletSlots} tablets). To add more, visit the Otto portal and add a tablet to your subscription.`,
-      });
-    }
-
-    // Placeholder page — full tablet UI will be built in a follow-up task.
-    res.type("html").send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Otto Job Board</title>
-  <style>
-    body { font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8f9fa; color: #333; }
-    .container { text-align: center; max-width: 480px; padding: 2rem; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    p { color: #666; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>Otto Job Board</h1>
-    <p>The tablet job board is coming soon. This endpoint is reserved for a future interactive view.</p>
-  </div>
-</body>
-</html>`);
-  });
+  // Legacy /tablet/heartbeat and /tablet/board routes removed — now handled by registerTabletRoutes() above.
 
   const server = createAppServer(app);
   return { server, sessionMiddleware };

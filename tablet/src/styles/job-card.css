@@ -1,0 +1,154 @@
+.job-card {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  background: var(--otto-card);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-lg);
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+  min-height: 120px;
+  position: relative;
+}
+
+.job-card:active {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.job-card.age-warning {
+  background: var(--otto-card-warning);
+  border-color: hsl(38, 70%, 80%);
+}
+
+.job-card.age-alert {
+  background: var(--otto-card-alert);
+  border-color: hsl(0, 70%, 85%);
+}
+
+.job-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.job-card-patient {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--otto-text);
+  line-height: 1.2;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-card-badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.badge-overdue {
+  background: hsl(0, 84%, 60%);
+  color: white;
+}
+
+.badge-redo {
+  background: hsl(38, 92%, 50%);
+  color: white;
+}
+
+.job-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: auto;
+}
+
+.job-type-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: white;
+}
+
+.job-card-destination {
+  font-size: 0.75rem;
+  color: var(--otto-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--otto-border);
+}
+
+.job-card-age {
+  font-size: 0.6875rem;
+  color: var(--otto-text-muted);
+  flex-shrink: 0;
+}
+
+.job-card-comments {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.6875rem;
+  color: var(--otto-text-muted);
+  flex-shrink: 0;
+}
+
+.job-card-comments svg {
+  width: 12px;
+  height: 12px;
+}
+
+.job-card-spacer {
+  flex: 1;
+}
+
+.advance-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--otto-primary);
+  color: white;
+  border-radius: var(--otto-radius);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.advance-btn:active {
+  opacity: 0.85;
+}
+
+.advance-btn.dispense {
+  background: var(--otto-success);
+}

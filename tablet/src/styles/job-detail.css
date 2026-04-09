@@ -1,0 +1,231 @@
+.job-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--otto-bg);
+}
+
+.job-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--otto-card);
+  border-bottom: 1px solid var(--otto-border);
+  flex-shrink: 0;
+}
+
+.job-detail-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.875rem;
+  color: var(--otto-primary);
+  padding: 8px;
+  margin: -8px;
+  min-height: 48px;
+}
+
+.job-detail-title {
+  flex: 1;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.job-detail-order-id {
+  font-size: 0.75rem;
+  color: var(--otto-text-muted);
+}
+
+.job-detail-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+  display: flex;
+  gap: 16px;
+}
+
+@media (orientation: portrait) {
+  .job-detail-body {
+    flex-direction: column;
+  }
+}
+
+.job-detail-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.job-detail-card {
+  background: var(--otto-card);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-lg);
+  padding: 16px;
+}
+
+.job-detail-card h3 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--otto-text-muted);
+  margin-bottom: 12px;
+}
+
+.detail-field {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--otto-border);
+}
+
+.detail-field:last-child {
+  border-bottom: none;
+}
+
+.detail-field-label {
+  font-size: 0.8125rem;
+  color: var(--otto-text-muted);
+}
+
+.detail-field-value {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--otto-text);
+  text-align: right;
+}
+
+/* Status actions */
+.status-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.status-action-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  border-radius: var(--otto-radius);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+
+.status-action-btn.backward {
+  background: var(--otto-bg);
+  border: 1px solid var(--otto-border);
+  color: var(--otto-text);
+}
+
+.status-action-btn.forward {
+  background: var(--otto-primary);
+  color: white;
+}
+
+.status-action-btn.dispense {
+  background: var(--otto-success);
+  color: white;
+}
+
+.status-action-btn:active {
+  opacity: 0.85;
+}
+
+/* Notes section */
+.job-detail-notes {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.note-item {
+  background: var(--otto-card);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  padding: 10px 12px;
+}
+
+.note-author {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--otto-text);
+}
+
+.note-time {
+  font-size: 0.6875rem;
+  color: var(--otto-text-muted);
+  margin-left: 8px;
+}
+
+.note-content {
+  font-size: 0.8125rem;
+  color: var(--otto-text);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.note-input-row {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.note-input {
+  flex: 1;
+  height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  background: var(--otto-card);
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.note-input:focus {
+  border-color: var(--otto-primary);
+}
+
+.note-submit-btn {
+  height: 48px;
+  padding: 0 20px;
+  background: var(--otto-primary);
+  color: white;
+  border-radius: var(--otto-radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.note-submit-btn:active {
+  opacity: 0.85;
+}
+
+/* Linked jobs */
+.linked-job-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--otto-border);
+  font-size: 0.8125rem;
+}
+
+.linked-job-item:last-child {
+  border-bottom: none;
+}

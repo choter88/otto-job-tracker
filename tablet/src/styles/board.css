@@ -1,0 +1,136 @@
+/* Status tabs */
+.status-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px;
+  background: var(--otto-card);
+  border-bottom: 1px solid var(--otto-border);
+  overflow-x: auto;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.status-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.status-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  min-height: 40px;
+}
+
+.status-tab.active {
+  color: white;
+}
+
+.status-tab:not(.active) {
+  background: var(--otto-bg);
+  color: var(--otto-text);
+  border-color: var(--otto-border);
+}
+
+.status-tab:not(.active):active {
+  background: var(--otto-border);
+}
+
+.status-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.status-tab.active .status-tab-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+}
+
+.status-tab:not(.active) .status-tab-count {
+  background: var(--otto-border);
+  color: var(--otto-text-muted);
+}
+
+/* Card grid area */
+.board-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 16px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  flex: 1;
+  align-content: start;
+}
+
+@media (orientation: portrait) {
+  .card-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.board-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--otto-text-muted);
+  font-size: 0.9375rem;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 12px 0 4px;
+  flex-shrink: 0;
+}
+
+.pagination-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  padding: 0 20px;
+  background: var(--otto-card);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--otto-text);
+  transition: background 0.15s;
+}
+
+.pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pagination-btn:not(:disabled):active {
+  background: var(--otto-bg);
+}
+
+.pagination-info {
+  font-size: 0.8125rem;
+  color: var(--otto-text-muted);
+}

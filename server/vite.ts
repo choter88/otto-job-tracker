@@ -53,6 +53,15 @@ export async function setupVite(app: Express, server: HttpServer | HttpsServer) 
     appType: "custom",
   });
 
+  // In dev mode, serve the tablet build if it exists (run `npm run build:tablet` first)
+  const devTabletDistPath = path.resolve(__dirname, "..", "dist", "tablet");
+  if (fs.existsSync(devTabletDistPath)) {
+    app.use("/tablet", express.static(devTabletDistPath));
+    app.use(/^\/tablet(?!\/api\/)/, (_req, res) => {
+      res.sendFile(path.resolve(devTabletDistPath, "index.html"));
+    });
+  }
+
   app.use(vite.middlewares);
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
@@ -81,6 +90,20 @@ export async function setupVite(app: Express, server: HttpServer | HttpsServer) 
 }
 
 export function serveStatic(app: Express) {
+  // ── Tablet SPA (must be registered before the desktop catch-all) ──
+  const bundledTabletPath = path.resolve(__dirname, "tablet");
+  const devTabletPath = path.resolve(__dirname, "..", "dist", "tablet");
+  const tabletDistPath = fs.existsSync(bundledTabletPath) ? bundledTabletPath : devTabletPath;
+
+  if (fs.existsSync(tabletDistPath)) {
+    app.use("/tablet", express.static(tabletDistPath));
+    // SPA catch-all for tablet routes (skip /tablet/api/ — handled by Express routes)
+    app.use(/^\/tablet(?!\/api\/)/, (_req, res) => {
+      res.sendFile(path.resolve(tabletDistPath, "index.html"));
+    });
+  }
+
+  // ── Desktop SPA ──
   const bundledDistPath = path.resolve(__dirname, "public");
   const devDistPath = path.resolve(__dirname, "..", "dist", "public");
   const distPath = fs.existsSync(bundledDistPath) ? bundledDistPath : devDistPath;

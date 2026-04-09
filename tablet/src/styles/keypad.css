@@ -1,0 +1,36 @@
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.keypad-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 64px;
+  background: var(--otto-card);
+  border: 1px solid var(--otto-border);
+  border-radius: var(--otto-radius-lg);
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: var(--otto-text);
+  transition: background 0.1s;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.keypad-btn:active {
+  background: var(--otto-primary-light);
+}
+
+.keypad-btn.backspace {
+  font-size: 1.25rem;
+  color: var(--otto-text-muted);
+}
+
+.keypad-btn.empty {
+  visibility: hidden;
+}

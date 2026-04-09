@@ -414,6 +414,27 @@ export const clientDevices = sqliteTable("client_devices", {
 
 export type ClientDevice = typeof clientDevices.$inferSelect;
 
+// Tablet sessions — per-user auth tokens for the tablet lab board
+export const tabletSessions = sqliteTable(
+  "tablet_sessions",
+  {
+    id: text("id").primaryKey(),
+    token: text("token").notNull(),
+    userId: text("user_id").references(() => users.id).notNull(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    userAgent: text("user_agent"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    tokenIdx: uniqueIndex("tablet_sessions_token_unique").on(table.token),
+    userIdx: index("tablet_sessions_user_idx").on(table.userId),
+  }),
+);
+
+export type TabletSession = typeof tabletSessions.$inferSelect;
+
 // Relations
 export const userRelations = relations(users, ({ one, many }) => ({
   office: one(offices, {

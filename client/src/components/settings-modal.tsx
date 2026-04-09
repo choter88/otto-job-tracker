@@ -27,7 +27,8 @@ import {
   KeyRound,
   RefreshCw,
   Copy,
-  Check
+  Check,
+  Tablet,
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
 import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, DEFAULT_DESTINATION_COLORS, chooseHighContrastColor, getColorForBadge, hexToHSL, normalizeToHex } from "@/lib/default-colors";
@@ -247,6 +248,93 @@ function InviteCodeSection() {
 }
 
 // ── Sub-modal: Add Status / Job Type / Destination ────────────────────
+
+function TabletSettingsContent() {
+  const [tabletUrl, setTabletUrl] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    fetch("/tablet/api/qr-setup")
+      .then((r) => r.json())
+      .then((data) => setTabletUrl(data.url))
+      .catch(() => {});
+    fetch("/tablet/api/sessions")
+      .then((r) => r.json())
+      .then((data) => Array.isArray(data) ? setSessions(data) : null)
+      .catch(() => {});
+  }, []);
+
+  const handleCopy = () => {
+    if (tabletUrl) {
+      navigator.clipboard.writeText(tabletUrl).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold mb-2">Tablet Lab Board</h3>
+        <p className="text-sm text-muted-foreground">
+          Set up a tablet in your lab for technicians to view and manage jobs.
+          Open the URL below on your tablet's browser, or scan the QR code.
+        </p>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+        <div>
+          <Label className="text-sm font-medium">Tablet URL</Label>
+          <div className="flex items-center gap-2 mt-1">
+            <code className="flex-1 bg-muted px-3 py-2 rounded text-sm font-mono break-all">
+              {tabletUrl || "Loading..."}
+            </code>
+            <Button variant="outline" size="sm" onClick={handleCopy} disabled={!tabletUrl}>
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            The tablet must be on the same network as this computer.
+          </p>
+        </div>
+
+        <div>
+          <Label className="text-sm font-medium">Setup Instructions</Label>
+          <ol className="mt-1 text-sm text-muted-foreground space-y-1 list-decimal list-inside">
+            <li>Open Chrome on the tablet</li>
+            <li>Navigate to the URL above</li>
+            <li>Tap the browser menu and select "Add to Home Screen"</li>
+            <li>Select your name and enter your PIN to sign in</li>
+          </ol>
+        </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+        <h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Connected Tablets
+        </h4>
+        {sessions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No tablets currently connected.</p>
+        ) : (
+          <div className="space-y-2">
+            {sessions.map((s: any) => (
+              <div key={s.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                <div>
+                  <span className="text-sm font-medium">{s.firstName} {s.lastName}</span>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  Last seen {new Date(s.lastSeenAt).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function AddItemModal({
   open,
@@ -860,6 +948,14 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                   <MessageSquare className="h-4 w-4" />
                   <span className="truncate">Messages</span>
                 </TabsTrigger>
+                <TabsTrigger
+                  value="tablet"
+                  className="shrink-0 justify-start gap-2 md:w-full md:justify-start border-l-[3px] border-l-transparent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:border-l-primary data-[state=active]:shadow-none"
+                  data-testid="tab-tablet"
+                >
+                  <Tablet className="h-4 w-4" />
+                  <span className="truncate">Tablet</span>
+                </TabsTrigger>
               </TabsList>
             </div>
 
@@ -1065,6 +1161,10 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
 
             <TabsContent value="notifications" className="mt-0">
               <NotificationRules />
+            </TabsContent>
+
+            <TabsContent value="tablet" className="mt-0">
+              <TabletSettingsContent />
             </TabsContent>
 
             <TabsContent value="messages" className="mt-0">

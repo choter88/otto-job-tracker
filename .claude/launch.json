@@ -8,6 +8,12 @@
       "port": 5150
     },
     {
+      "name": "otto-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start"],
+      "port": 5150
+    },
+    {
       "name": "otto-desktop",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "desktop"],

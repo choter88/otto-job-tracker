@@ -1,0 +1,129 @@
+.login-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  background: var(--otto-bg);
+}
+
+.login-logo {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 12px;
+}
+
+.login-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--otto-text);
+}
+
+.login-subtitle {
+  font-size: 0.875rem;
+  color: var(--otto-text-muted);
+  margin-bottom: 32px;
+}
+
+/* User grid */
+.user-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  max-width: 600px;
+  width: 100%;
+}
+
+@media (orientation: portrait) {
+  .user-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.user-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 16px;
+  background: var(--otto-card);
+  border: 2px solid var(--otto-border);
+  border-radius: var(--otto-radius-lg);
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--otto-text);
+  text-align: center;
+  min-height: 64px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.user-card:active {
+  border-color: var(--otto-primary);
+  box-shadow: 0 0 0 3px var(--otto-primary-light);
+}
+
+/* PIN entry */
+.pin-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 320px;
+}
+
+.pin-back-btn {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.875rem;
+  color: var(--otto-text-muted);
+  padding: 8px 0;
+  margin-bottom: 16px;
+}
+
+.pin-user-name {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 24px;
+}
+
+.pin-dots {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.pin-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--otto-border);
+  background: transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.pin-dot.filled {
+  background: var(--otto-primary);
+  border-color: var(--otto-primary);
+}
+
+.pin-error {
+  height: 24px;
+  font-size: 0.8125rem;
+  color: var(--otto-destructive);
+  margin-bottom: 8px;
+}
+
+.pin-error.shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-6px); }
+  80% { transform: translateX(6px); }
+}
