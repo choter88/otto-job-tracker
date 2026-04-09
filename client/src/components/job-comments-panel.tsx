@@ -223,7 +223,7 @@ export default function JobCommentsPanel({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         if (newComment.trim()) {
           const id =
@@ -376,9 +376,10 @@ export default function JobCommentsPanel({
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Add a comment... (⌘Enter to send)"
+            placeholder="Add a comment... (Enter to send, Shift+Enter for new line)"
             className="flex-1 resize-none"
             rows={2}
+            autoFocus
             data-testid="textarea-new-comment"
           />
           <Button

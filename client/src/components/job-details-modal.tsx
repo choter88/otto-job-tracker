@@ -414,7 +414,7 @@ export default function JobDetailsModal({
           </TabsContent>
 
           <TabsContent value="comments" className="flex-1 min-h-0 mt-4 overflow-hidden">
-            <div className="h-full rounded-md border border-border overflow-hidden">
+            <div className="h-full rounded-md border border-border overflow-hidden bg-white dark:bg-card">
               <JobCommentsPanel
                 job={job}
                 header={
@@ -434,7 +434,7 @@ export default function JobDetailsModal({
                 <p className="text-xs text-muted-foreground">
                   Related jobs for this patient (auto-detected by name match and manually linked).
                 </p>
-                <div className="border rounded-lg overflow-hidden">
+                <div className="border rounded-lg overflow-hidden bg-white dark:bg-card">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-muted/50 border-b">
@@ -579,7 +579,7 @@ export default function JobDetailsModal({
                         placeholder="Add a note for this group of linked jobs..."
                         value={newGroupNote}
                         onChange={(e) => setNewGroupNote(e.target.value)}
-                        className="min-h-[60px] text-sm resize-none"
+                        className="min-h-[60px] text-sm resize-none bg-white dark:bg-card"
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && newGroupNote.trim()) {
                             addGroupNoteMutation.mutate(newGroupNote);
