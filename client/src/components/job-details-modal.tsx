@@ -539,61 +539,70 @@ export default function JobDetailsModal({
 
                 {/* Group Notes — shared across all linked jobs */}
                 {linkGroupId && (
-                  <div className="mt-6 space-y-3">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
-                      <MessageSquare className="h-3.5 w-3.5" />
-                      Group Notes
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Notes shared across all linked jobs in this group.
-                    </p>
-
-                    {/* Existing notes */}
-                    {groupNotes.length > 0 && (
-                      <div className="space-y-2">
-                        {groupNotes.map((note: any) => (
-                          <div key={note.id} className="rounded-md border border-border bg-card p-3 text-sm">
-                            <p className="whitespace-pre-wrap">{note.content}</p>
-                            <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                              <span>
-                                {note.createdByName} &middot; {format(new Date(note.createdAt), "MMM d, yyyy h:mm a")}
-                              </span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
-                                onClick={() => deleteGroupNoteMutation.mutate(note.id)}
-                                disabled={deleteGroupNoteMutation.isPending}
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
+                  <div className="mt-6 rounded-lg border border-border bg-white dark:bg-card overflow-hidden">
+                    {/* Section header */}
+                    <div className="px-4 py-3 border-b border-border bg-muted/30 dark:bg-muted/10">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="h-4 w-4 text-primary" />
+                        <h3 className="text-sm font-semibold text-foreground">Group Notes</h3>
                       </div>
-                    )}
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Shared across all linked jobs in this group.
+                      </p>
+                    </div>
 
-                    {/* Add new note */}
-                    <div className="flex gap-2">
-                      <Textarea
-                        placeholder="Add a note for this group of linked jobs..."
-                        value={newGroupNote}
-                        onChange={(e) => setNewGroupNote(e.target.value)}
-                        className="min-h-[60px] text-sm resize-none bg-white dark:bg-card"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && newGroupNote.trim()) {
-                            addGroupNoteMutation.mutate(newGroupNote);
-                          }
-                        }}
-                      />
-                      <Button
-                        size="sm"
-                        className="shrink-0 h-auto"
-                        disabled={!newGroupNote.trim() || addGroupNoteMutation.isPending}
-                        onClick={() => addGroupNoteMutation.mutate(newGroupNote)}
-                      >
-                        <Send className="h-3.5 w-3.5" />
-                      </Button>
+                    {/* Notes list */}
+                    <div className="divide-y divide-border/50">
+                      {groupNotes.length === 0 && (
+                        <div className="px-4 py-6 text-center text-xs text-muted-foreground">
+                          No notes yet. Add one below.
+                        </div>
+                      )}
+                      {groupNotes.map((note: any) => (
+                        <div key={note.id} className="px-4 py-3 group hover:bg-muted/20 transition-colors">
+                          <p className="text-sm whitespace-pre-wrap">{note.content}</p>
+                          <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                            <span>
+                              {note.createdByName} &middot; {format(new Date(note.createdAt), "MMM d, yyyy h:mm a")}
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => deleteGroupNoteMutation.mutate(note.id)}
+                              disabled={deleteGroupNoteMutation.isPending}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Composer */}
+                    <div className="px-4 py-3 border-t border-border bg-muted/10">
+                      <div className="flex gap-2">
+                        <Textarea
+                          placeholder="Add a note..."
+                          value={newGroupNote}
+                          onChange={(e) => setNewGroupNote(e.target.value)}
+                          className="min-h-[48px] text-sm resize-none bg-white dark:bg-background"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey && newGroupNote.trim()) {
+                              e.preventDefault();
+                              addGroupNoteMutation.mutate(newGroupNote);
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          className="shrink-0 h-auto"
+                          disabled={!newGroupNote.trim() || addGroupNoteMutation.isPending}
+                          onClick={() => addGroupNoteMutation.mutate(newGroupNote)}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
