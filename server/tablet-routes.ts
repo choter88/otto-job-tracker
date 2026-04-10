@@ -10,6 +10,7 @@ import { normalizePatientNamePart } from "@shared/name-format";
 import { insertJobSchema } from "@shared/schema";
 import { getCachedPlan } from "./license";
 import { requireAuth, requireRole } from "./middleware";
+import { OTTO_DEFAULT_TABLET_PORT } from "@shared/constants";
 import {
   createTabletSession,
   validateTabletToken,
@@ -23,8 +24,13 @@ import {
 } from "./tablet-auth";
 
 function getTabletLanUrl(): string {
-  const port = process.env.PORT || "5150";
-  const protocol = process.env.OTTO_TLS === "true" ? "https" : "https";
+  // When TLS is active (self-signed certs), Safari on iOS can't connect.
+  // Direct tablets to the plain-HTTP listener on the tablet port instead.
+  const isTls = process.env.OTTO_TLS === "true";
+  const port = isTls
+    ? (process.env.OTTO_TABLET_PORT || String(OTTO_DEFAULT_TABLET_PORT))
+    : (process.env.PORT || "5150");
+  const protocol = isTls ? "http" : "https";
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] || []) {

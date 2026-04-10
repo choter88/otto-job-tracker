@@ -9,7 +9,8 @@ import { broadcastToOffice, setupSyncWebSocket, getConnectedClientCount } from "
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
-import { OTTO_DEFAULT_PORT } from "@shared/constants";
+import { createServer as createPlainHttpServer } from "http";
+import { OTTO_DEFAULT_PORT, OTTO_DEFAULT_TABLET_PORT } from "@shared/constants";
 
 // ── PHI scrubbing helpers ──
 // Ensures no Protected Health Information leaves the device via Sentry.
@@ -484,6 +485,37 @@ function logStartupProgress(msg: string) {
   }, () => {
     logStartupProgress(`Server listening on ${host}:${port}`);
     log(`serving on ${host}:${port}`);
+
+    // ── Tablet HTTP listener ──
+    // When the main server uses HTTPS (self-signed certs), Safari on iOS
+    // refuses to connect.  Start a plain HTTP server on a second port so
+    // tablets can reach /tablet/* without certificate issues.
+    if (process.env.OTTO_TLS === "true") {
+      const tabletPort = parseInt(process.env.OTTO_TABLET_PORT || String(OTTO_DEFAULT_TABLET_PORT), 10);
+      const tabletHttp = createPlainHttpServer(app);
+      const tabletConns = new Set<import("net").Socket>();
+      tabletHttp.on("connection", (socket) => {
+        tabletConns.add(socket);
+        socket.on("close", () => tabletConns.delete(socket));
+      });
+      // Extend force-shutdown to also close the tablet listener.
+      const prevShutdown = (globalThis as any).__ottoForceShutdown;
+      (globalThis as any).__ottoForceShutdown = () => {
+        for (const s of tabletConns) { try { s.destroy(); } catch {} }
+        tabletConns.clear();
+        try { tabletHttp.close(); } catch {}
+        if (typeof prevShutdown === "function") prevShutdown();
+      };
+      tabletHttp.listen({ port: tabletPort, host }, () => {
+        logStartupProgress(`Tablet HTTP listener on ${host}:${tabletPort}`);
+        log(`tablet (HTTP) on ${host}:${tabletPort}`);
+      });
+      tabletHttp.on("error", (err: any) => {
+        console.error(`Tablet HTTP listener failed on port ${tabletPort}:`, err?.message || err);
+        // Non-fatal — the tablet can still connect via HTTPS if the user installs the cert.
+      });
+    }
+
     if (process.env.OTTO_ENABLE_BACKGROUND_JOBS !== "false") {
       void import("./background-jobs")
         .then(({ startBackgroundJobs }) => startBackgroundJobs())
