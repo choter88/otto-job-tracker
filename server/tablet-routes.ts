@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import os from "os";
+import QRCode from "qrcode";
 import { db } from "./db";
 import { storage } from "./storage";
 import { jobs, jobComments, jobStatusHistory, jobLinkGroups, linkGroupNotes, notificationRules } from "@shared/schema";
@@ -42,23 +43,8 @@ function getTabletLanUrl(): string {
   return `${protocol}://localhost:${port}/tablet/`;
 }
 
-// Minimal QR code generator (numeric mode, version auto-detected)
-// Generates SVG directly without external dependencies
-function generateQrSvg(data: string, moduleSize = 4, margin = 4): string {
-  // Use a simple alphanumeric encoding for URL data
-  // For a production QR code we'd use a library, but to avoid new dependencies
-  // we generate a placeholder SVG with the URL text
-  const size = moduleSize * 33 + margin * 2;
-  // Encode URL as a simple visual representation with the URL displayed
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
-  <rect width="${size}" height="${size}" fill="white"/>
-  <text x="${size / 2}" y="${size / 2}" text-anchor="middle" dominant-baseline="middle" font-family="system-ui" font-size="10" fill="#333">
-    Scan QR in browser
-  </text>
-  <text x="${size / 2}" y="${size / 2 + 16}" text-anchor="middle" dominant-baseline="middle" font-family="monospace" font-size="8" fill="#666">
-    ${data.length > 40 ? data.slice(0, 40) + "..." : data}
-  </text>
-</svg>`;
+async function generateQrSvg(data: string): Promise<string> {
+  return QRCode.toString(data, { type: "svg", margin: 2, width: 200 });
 }
 
 function checkTabletEnabled(): { enabled: boolean; plan: ReturnType<typeof getCachedPlan> } {
@@ -422,10 +408,10 @@ export function registerTabletRoutes(app: Express): void {
   // ── Desktop-authed endpoints (for settings panel) ──
 
   // QR code setup endpoint
-  app.get("/tablet/api/qr-setup", (_req, res) => {
+  app.get("/tablet/api/qr-setup", async (_req, res) => {
     try {
       const url = getTabletLanUrl();
-      const svg = generateQrSvg(url);
+      const svg = await generateQrSvg(url);
       res.json({ url, svg });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

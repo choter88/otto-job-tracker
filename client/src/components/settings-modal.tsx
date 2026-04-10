@@ -251,13 +251,14 @@ function InviteCodeSection() {
 
 function TabletSettingsContent() {
   const [tabletUrl, setTabletUrl] = useState<string | null>(null);
+  const [qrSvg, setQrSvg] = useState<string | null>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetch("/tablet/api/qr-setup")
       .then((r) => r.json())
-      .then((data) => setTabletUrl(data.url))
+      .then((data) => { setTabletUrl(data.url); setQrSvg(data.svg); })
       .catch(() => {});
     fetch("/tablet/api/sessions")
       .then((r) => r.json())
@@ -280,13 +281,29 @@ function TabletSettingsContent() {
         <h3 className="text-lg font-semibold mb-2">Tablet Lab Board</h3>
         <p className="text-sm text-muted-foreground">
           Set up a tablet in your lab for technicians to view and manage jobs.
-          Open the URL below on your tablet's browser, or scan the QR code.
+          Scan the QR code with the tablet's camera to open the board instantly.
         </p>
       </div>
 
-      <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+      <div className="bg-card border border-border rounded-lg p-5 space-y-5">
+        {/* QR Code */}
+        <div className="flex flex-col items-center gap-3">
+          {qrSvg ? (
+            <div
+              className="bg-white p-3 rounded-lg border border-border"
+              dangerouslySetInnerHTML={{ __html: qrSvg }}
+            />
+          ) : (
+            <div className="w-[200px] h-[200px] bg-muted rounded-lg animate-pulse" />
+          )}
+          <p className="text-xs text-muted-foreground text-center">
+            Point the tablet's camera at this code
+          </p>
+        </div>
+
+        {/* URL + Copy */}
         <div>
-          <Label className="text-sm font-medium">Tablet URL</Label>
+          <Label className="text-sm font-medium">Or open this URL manually</Label>
           <div className="flex items-center gap-2 mt-1">
             <code className="flex-1 bg-muted px-3 py-2 rounded text-sm font-mono break-all">
               {tabletUrl || "Loading..."}
@@ -296,15 +313,16 @@ function TabletSettingsContent() {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            The tablet must be on the same network as this computer.
+            The tablet must be on the same Wi-Fi network as this computer.
           </p>
         </div>
 
+        {/* Setup steps */}
         <div>
           <Label className="text-sm font-medium">Setup Instructions</Label>
           <ol className="mt-1 text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-            <li>Open Chrome on the tablet</li>
-            <li>Navigate to the URL above</li>
+            <li>Scan the QR code above with the tablet's camera</li>
+            <li>Tap the link that appears to open the board</li>
             <li>Tap the browser menu and select "Add to Home Screen"</li>
             <li>Select your name and enter your PIN to sign in</li>
           </ol>
