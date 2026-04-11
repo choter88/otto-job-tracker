@@ -31,10 +31,20 @@ export type UsageEventType =
   | "job_archived"
   | "job_deleted"
   | "job_bulk_update"
+  | "job_restored"
+  | "job_linked"
+  | "job_unlinked"
+  // Job detail views
+  | "job_detail_viewed"
+  | "job_detail_tab_overview"
+  | "job_detail_tab_comments"
+  | "job_detail_tab_related"
   // Comments
   | "comment_added"
   | "comment_edited"
   | "comment_deleted"
+  // Custom columns
+  | "custom_column_edited"
   // Search
   | "search_performed"
   // Import
@@ -47,7 +57,11 @@ export type UsageEventType =
   | "job_flagged"
   | "job_unflagged"
   // Settings
-  | "settings_changed";
+  | "settings_changed"
+  // Notification rules
+  | "notification_rule_created"
+  | "notification_rule_updated"
+  | "notification_rule_deleted";
 
 /** Allowlist for client-side event types (POST /api/track). */
 export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
@@ -58,6 +72,11 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   "tab_analytics",
   "tab_team",
   "search_performed",
+  "job_detail_viewed",
+  "job_detail_tab_overview",
+  "job_detail_tab_comments",
+  "job_detail_tab_related",
+  "custom_column_edited",
 ]);
 
 // ── Event persistence ────────────────────────────────────────────────

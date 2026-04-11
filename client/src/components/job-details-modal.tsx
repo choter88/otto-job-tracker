@@ -240,7 +240,11 @@ export default function JobDetailsModal({
 
         <Tabs
           value={activeTab}
-          onValueChange={(value) => onActiveTabChange(value as JobDetailsTab)}
+          onValueChange={(value) => {
+            onActiveTabChange(value as JobDetailsTab);
+            const tabEvent = value === "comments" ? "job_detail_tab_comments" : value === "related" ? "job_detail_tab_related" : "job_detail_tab_overview";
+            fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ eventType: tabEvent }) }).catch(() => {});
+          }}
           className="flex-1 flex flex-col min-h-0 px-6 pb-6"
         >
           <TabsList className={`grid w-full ${relatedJobs.length > 0 ? "grid-cols-3" : "grid-cols-2"} bg-muted h-11 p-1 rounded-lg`}>

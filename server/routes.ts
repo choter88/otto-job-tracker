@@ -1134,6 +1134,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       await logPhiAccess(req, 'delete', 'job', job.id, job.orderId);
       
       await storage.deleteJob(job.id);
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getAuthUser(req).officeId, eventType: "job_deleted" });
       res.status(204).send();
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1293,6 +1294,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const job = await storage.restoreArchivedJob(req.params.id, newStatus);
 
       await logPhiAccess(req, "update", "archived_job", archived.id, archived.orderId, { restoredJobId: job.id });
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getAuthUser(req).officeId, eventType: "job_restored" });
       res.json(job);
     } catch (error: any) {
       console.error(
@@ -1537,6 +1539,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "job_link" });
+      trackEvent({ userId: user.id, officeId: user.officeId, eventType: "job_linked", metadata: { count: linked } });
       res.json({ ok: true, groupId, linked });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1554,6 +1557,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       await db.delete(jobLinkGroups).where(eq(jobLinkGroups.jobId, job.id));
 
       broadcastToOffice(job.officeId, { type: "office_updated", ts: Date.now(), source: "job_unlink" });
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: job.officeId, eventType: "job_unlinked" });
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1706,10 +1710,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
       
       const updatedComment = await storage.updateJobComment(req.params.id, { content: content.trim() });
-      
+
       // Log PHI access for updating comment
       await logPhiAccess(req, 'update', 'comment', req.params.id, job.orderId, { jobId: job.id });
-      
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getAuthUser(req).officeId, eventType: "comment_edited" });
+
       res.json(updatedComment);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1962,6 +1967,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const office = await storage.updateOffice(req.params.id, updates);
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: req.params.id, eventType: "settings_changed" });
       res.json(office);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -2651,6 +2657,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
       
       const rule = await storage.createNotificationRule(ruleData);
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getAuthUser(req).officeId, eventType: "notification_rule_created" });
       res.status(201).json(rule);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -2685,6 +2692,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const rule = await storage.updateNotificationRule(req.params.id, updates);
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getAuthUser(req).officeId, eventType: "notification_rule_updated" });
       res.json(rule);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -2700,6 +2708,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
       
       await storage.deleteNotificationRule(req.params.id);
+      trackEvent({ userId: getAuthUser(req)?.id, officeId: getAuthUser(req).officeId, eventType: "notification_rule_deleted" });
       res.status(204).send();
     } catch (error: any) {
       res.status(400).json({ error: error.message });

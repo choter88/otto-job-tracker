@@ -620,6 +620,10 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     setSelectedDetailsJobId(job.id);
     setJobDetailsTab(panel);
     setJobDetailsOpen(true);
+    // Track detail view + specific tab
+    fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ eventType: "job_detail_viewed" }) }).catch(() => {});
+    const tabEvent = panel === "comments" ? "job_detail_tab_comments" : panel === "related" ? "job_detail_tab_related" : "job_detail_tab_overview";
+    fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ eventType: tabEvent }) }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -786,6 +790,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
       id: jobId,
       updates: { customColumnValues: { ...currentValues, [columnId]: newValue } as any }
     });
+    fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ eventType: "custom_column_edited" }) }).catch(() => {});
   }, [jobs, updateJobMutation]);
 
   const getPatientLabel = useCallback(
