@@ -366,6 +366,9 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/logout", (req, res, next) => {
+    const user = req.user as SelectUser | undefined;
+    const { trackEvent } = require("./usage-tracker");
+    trackEvent({ userId: user?.id, officeId: user?.officeId, eventType: "user_logout" });
     req.logout((err) => {
       if (err) return next(err);
       res.sendStatus(200);
