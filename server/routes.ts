@@ -161,6 +161,7 @@ function hashSnapshotPayload(payload: unknown): string {
 
 // Mutex to prevent concurrent bootstrap requests (Part 1.3 fix)
 let setupBootstrapInProgress = false;
+let reactivateInProgress = false;
 
 function withDefaultMessageTemplates(settingsInput: unknown): Record<string, any> {
   const settings =
@@ -621,6 +622,90 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.status(status).json({ error: error?.message || "Setup failed" });
     } finally {
       setupBootstrapInProgress = false;
+    }
+  });
+
+  // ── Re-activation (preserves all existing data) ─────────────────────
+  app.post("/api/setup/reactivate", async (req, res) => {
+    const remote = normalizeRemoteIp(req.socket.remoteAddress || "");
+    if (!isLoopbackIp(remote)) {
+      return res.status(403).json({ error: "Re-activation must be completed on the Host computer." });
+    }
+
+    // C-1: Concurrency mutex — prevent parallel activations
+    if (reactivateInProgress) {
+      return res.status(409).json({ error: "Re-activation already in progress." });
+    }
+    reactivateInProgress = true;
+
+    try {
+      const portalToken = typeof req.body?.portalToken === "string" ? req.body.portalToken.trim() : "";
+      const officeId = typeof req.body?.officeId === "string" ? req.body.officeId.trim() : "";
+      const forceReplace = req.body?.forceReplace === true;
+
+      if (!portalToken || !officeId) {
+        return res.status(400).json({ error: "Portal token and office ID are required." });
+      }
+
+      // Guard: require existing data (opposite of bootstrap — this is for recovery, not fresh installs)
+      const [userStats] = db.select({ count: sql`count(*)` }).from(users).all();
+      if (Number(userStats?.count) === 0) {
+        return res.status(400).json({
+          error: "No existing data found. Use initial setup instead.",
+          code: "NO_EXISTING_DATA",
+        });
+      }
+
+      // C-2: Block reactivation when license is already ACTIVE
+      const currentSnapshot = getLicenseSnapshot();
+      if (currentSnapshot.mode === "ACTIVE") {
+        return res.status(400).json({
+          error: "License is already active. Re-activation is only available when the license is invalid or expired.",
+          code: "ALREADY_ACTIVE",
+        });
+      }
+
+      // Activate with portal — gets fresh hostToken, clears tokenInvalid
+      let licenseSnapshot = currentSnapshot;
+      try {
+        const activation = await activateHostWithPortalToken(portalToken, officeId, { forceReplace });
+        licenseSnapshot = activation.snapshot;
+      } catch (error: any) {
+        const failure = parseSetupActivationFailure(error);
+        return res.status(failure.status).json({ error: failure.message, code: failure.code });
+      }
+
+      // Update local office metadata to reference the new portal office
+      // C-3: If this fails, activation is still valid — log warning but return success
+      const allOffices = await storage.getAllOffices();
+      const localOffice = allOffices[0];
+      if (localOffice) {
+        try {
+          const existingSettings = (localOffice.settings && typeof localOffice.settings === "object" ? localOffice.settings : {}) as Record<string, any>;
+          await storage.updateOffice(localOffice.id, {
+            settings: {
+              ...existingSettings,
+              licensing: {
+                ...(existingSettings.licensing || {}),
+                officeId,
+                reactivatedAt: new Date().toISOString(),
+              },
+            },
+          });
+        } catch (metadataError: any) {
+          console.error("[reactivate] License activated but failed to update local office metadata:", metadataError?.message);
+          // Continue — license is valid, metadata is non-critical
+        }
+      } else {
+        // M-2: No local office found — log warning
+        console.warn("[reactivate] No local office found to update metadata. License activated but settings.licensing not updated.");
+      }
+
+      res.json({ ok: true, license: licenseSnapshot });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Re-activation failed" });
+    } finally {
+      reactivateInProgress = false;
     }
   });
 

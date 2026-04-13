@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useTrackPage } from "@/hooks/use-track-page";
-import { WifiOff } from "lucide-react";
+import { KeyRound, WifiOff } from "lucide-react";
+import { ReactivateDialog } from "./reactivate-dialog";
 
 function buildSyncWsUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -200,26 +201,47 @@ export default function SyncManager() {
   // Payment required banner — shown when portal indicates trial expired or subscription issue
   const paymentRequired = licenseSnapshot?.paymentRequired === true;
   const isDisabled = String(licenseSnapshot?.mode || "") === "DISABLED" || String(licenseSnapshot?.mode || "") === "READ_ONLY";
+  const isInvalid = String(licenseSnapshot?.mode || "") === "INVALID";
+  const [reactivateOpen, setReactivateOpen] = useState(false);
+
+  // H-5: Single dialog instance — listen for open events from other components (e.g. HealthModal)
+  useEffect(() => {
+    const handler = () => setReactivateOpen(true);
+    window.addEventListener("otto:openReactivate", handler);
+    return () => window.removeEventListener("otto:openReactivate", handler);
+  }, []);
 
   return (
     <>
-      {/* Payment required banner — non-blocking, visible on all screens */}
-      {paymentRequired && !isDisabled && (
+      {/* License banners — mutually exclusive, INVALID takes priority */}
+      {isInvalid ? (
         <div className="fixed top-0 left-0 right-0 z-50">
-          <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
-            <span className="flex-1">Your free trial has ended. Visit the Otto portal to subscribe and keep using Otto.</span>
+          <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+            <KeyRound className="h-4 w-4 shrink-0" />
+            <span className="flex-1 font-medium">License is no longer valid. Re-activate to restore full access. Your data is safe.</span>
+            <button
+              type="button"
+              onClick={() => setReactivateOpen(true)}
+              className="shrink-0 px-3 py-1 text-xs font-semibold rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors"
+            >
+              Re-activate
+            </button>
           </div>
         </div>
-      )}
-
-      {/* Disabled/read-only banner for expired trial + grace */}
-      {isDisabled && paymentRequired && (
+      ) : isDisabled && paymentRequired ? (
         <div className="fixed top-0 left-0 right-0 z-50">
           <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
             <span className="flex-1 font-medium">Your Otto trial has expired. Subscribe in the Otto portal to resume full access. Your data is safe and will be here when you return.</span>
           </div>
         </div>
-      )}
+      ) : paymentRequired ? (
+        <div className="fixed top-0 left-0 right-0 z-50">
+          <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <span className="flex-1">Your free trial has ended. Visit the Otto portal to subscribe and keep using Otto.</span>
+          </div>
+        </div>
+      ) : null}
+      <ReactivateDialog open={reactivateOpen} onOpenChange={setReactivateOpen} />
 
       {/* Device blocked — permanently disconnected */}
       {deviceBlocked && (

@@ -7,7 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 // Offline outbox removed — read-only offline mode
 import { useAuth } from "@/hooks/use-auth";
-import { Activity, ClipboardList, FileDown } from "lucide-react";
+import { Activity, ClipboardList, FileDown, KeyRound } from "lucide-react";
 
 type MaybeBridge = {
   getConfig?: () => Promise<any>;
@@ -25,7 +25,6 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
   const { toast } = useToast();
   const [desktopConfig, setDesktopConfig] = useState<any | null>(null);
   const [licenseSnapshot, setLicenseSnapshot] = useState<any | null>(null);
-  // outbox removed
 
   const bridge: MaybeBridge | null = useMemo(() => {
     try {
@@ -161,6 +160,19 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
               {licenseSnapshot?.graceEndsAt ? (
                 <div className="text-xs text-muted-foreground">Grace ends: {formatWhen(Number(licenseSnapshot.graceEndsAt))}</div>
               ) : null}
+              {String(licenseSnapshot?.mode || "") === "INVALID" && (
+                <Button
+                  size="sm"
+                  className="w-full mt-2"
+                  onClick={() => {
+                    // Dispatch event to the single ReactivateDialog instance in SyncManager (H-5: no duplicate)
+                    window.dispatchEvent(new CustomEvent("otto:openReactivate"));
+                  }}
+                >
+                  <KeyRound className="h-3.5 w-3.5 mr-1.5" />
+                  Re-activate License
+                </Button>
+              )}
             </CardContent>
           </Card>
 
