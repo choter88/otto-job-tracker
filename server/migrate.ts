@@ -83,20 +83,14 @@ export function runMigrations(db: Database.Database): number {
     const sql = fs.readFileSync(migration.filePath, "utf-8").trim();
     if (!sql) continue;
 
-    // Run each migration inside its own transaction.
+    // Run each migration inside its own transaction. We hand the whole file
+    // to SQLite via db.exec() instead of splitting on `;` ourselves — that
+    // naive split mis-parses semicolons inside string literals AND inside
+    // `--` comments, which previously crashed startup with "supplied SQL
+    // string contains no statements" when a comment happened to contain a
+    // colon-then-semicolon. Native SQLite parsing handles all of those.
     db.transaction(() => {
-      // Split on semicolons to support multi-statement migration files.
-      // This is a simple split — it won't handle semicolons inside strings,
-      // but that's fine for DDL-only migration files.
-      const statements = sql
-        .split(";")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-
-      for (const statement of statements) {
-        db.prepare(statement).run();
-      }
-
+      db.exec(sql);
       insertMigration.run(migration.version, migration.name, new Date().toISOString());
     })();
 
