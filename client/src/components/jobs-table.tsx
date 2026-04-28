@@ -1319,8 +1319,10 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           {/* Cell heights are pinned to two rows of leading-tight body text
               + vertical padding, scaled by --ui-scale so the row grows with
               the user's font-size preference but never extends to a third
-              row. align-middle keeps single-line cells visually centered. */}
-          <Table className="text-[calc(13px*var(--ui-scale))] [&_th]:h-[34px] [&_th]:px-[14px] [&_th]:text-[calc(10.5px*var(--ui-scale))] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-[0.10em] [&_th]:text-ink-mute [&_td]:px-[14px] [&_td]:py-2 [&_td]:h-[calc(48px*var(--ui-scale))] [&_td]:max-h-[calc(48px*var(--ui-scale))] [&_td]:align-middle [&_td]:overflow-hidden">
+              row. align-middle keeps single-line cells visually centered.
+              52px gives 2 lines of 13px text @ 1.25 line-height plus py-2
+              with a hair of breathing room. */}
+          <Table className="text-[calc(13px*var(--ui-scale))] [&_th]:h-[34px] [&_th]:px-[14px] [&_th]:text-[calc(10.5px*var(--ui-scale))] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-[0.10em] [&_th]:text-ink-mute [&_td]:px-[14px] [&_td]:py-2 [&_td]:h-[calc(52px*var(--ui-scale))] [&_td]:max-h-[calc(52px*var(--ui-scale))] [&_td]:align-middle [&_td]:overflow-hidden">
             <TableHeader className="[&_tr]:border-b [&_tr]:border-line [&_th]:bg-panel">
               <TableRow>
                 <TableHead className="w-10 text-center">
@@ -1442,17 +1444,29 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   </TableCell>
                 </TableRow>
               )}
-              {filteredJobs.map((job) => (
+              {filteredJobs.map((job) => {
+                const inMultiSelect = selectionMode || linkMode;
+                // In Select / Link mode, the entire row is the click target —
+                // we neutralize every interactive descendant inside any td so
+                // dropdowns, popovers, and action buttons don't intercept the
+                // click. The cell-level stopPropagation handlers below also
+                // short-circuit so the click bubbles to the row.
+                const cellGuard = (e: React.MouseEvent) => {
+                  if (inMultiSelect) return;
+                  e.stopPropagation();
+                };
+                return (
                 <TableRow
                   key={job.id}
                   className={cn(
                     "cursor-pointer transition-colors border-b border-line-2 last:border-b-0",
-                    (selectionMode || linkMode) && selectedJobs.includes(job.id)
+                    inMultiSelect && selectedJobs.includes(job.id)
                       ? "bg-otto-accent-soft hover:bg-otto-accent-soft"
                       : "bg-panel hover:bg-panel-2",
+                    inMultiSelect && "[&_td_*]:pointer-events-none [&_td_*]:select-none",
                   )}
                   onClick={() => {
-                    if (selectionMode || linkMode) {
+                    if (inMultiSelect) {
                       setSelectedJobs((prev) =>
                         prev.includes(job.id) ? prev.filter((id) => id !== job.id) : [...prev, job.id]
                       );
@@ -1462,7 +1476,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   }}
                   data-testid={`row-job-${job.id}`}
                 >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
+                  <TableCell onClick={cellGuard}>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1488,7 +1502,11 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                           className="inline-flex items-center gap-0.5 text-[calc(10px*var(--ui-scale))] cursor-pointer"
                           style={{ color: 'hsl(var(--primary))' }}
                           title="Manually linked to other jobs"
-                          onClick={(e) => { e.stopPropagation(); handleOpenJobDetails(job, "related"); }}
+                          onClick={(e) => {
+                            if (inMultiSelect) return;
+                            e.stopPropagation();
+                            handleOpenJobDetails(job, "related");
+                          }}
                         >
                           <Link2 className="h-3 w-3" />
                         </span>
@@ -1500,7 +1518,11 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                           <span
                             className="inline-flex items-center gap-0.5 text-[calc(10px*var(--ui-scale))] text-muted-foreground hover:text-primary cursor-pointer"
                             title={`${count - 1} other job${count > 2 ? "s" : ""} for this patient`}
-                            onClick={(e) => { e.stopPropagation(); handleOpenJobDetails(job, "related"); }}
+                            onClick={(e) => {
+                              if (inMultiSelect) return;
+                              e.stopPropagation();
+                              handleOpenJobDetails(job, "related");
+                            }}
                           >
                             <Link2 className="h-3 w-3" />
                             {count - 1}
@@ -1537,7 +1559,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   )}
                   {isColumnVisible('status') && (
                     <TableCell
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={cellGuard}
                       className="min-w-[180px] max-w-[260px]"
                       data-testid={`cell-lifecycle-${job.id}`}
                     >
@@ -1564,7 +1586,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       key={column.id}
                       className="max-w-[140px]"
                       data-testid={`table-cell-custom-${column.id}-${job.id}`}
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={cellGuard}
                     >
                       {column.editableInWorklist === false ? (
                         <span className="text-sm text-muted-foreground line-clamp-2 break-words">
@@ -1603,17 +1625,17 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   ))}
                   {isColumnVisible('createdAt') && (
                     <TableCell className="text-muted-foreground leading-tight">
-                      <div>{format(new Date(job.createdAt), 'MMM d, yyyy')}</div>
-                      <div className="text-xs">{format(new Date(job.createdAt), 'h:mm a')}</div>
+                      <div className="whitespace-nowrap">{format(new Date(job.createdAt), 'MMM d, yyyy')}</div>
+                      <div className="text-xs whitespace-nowrap">{format(new Date(job.createdAt), 'h:mm a')}</div>
                     </TableCell>
                   )}
                   {isColumnVisible('statusChangedAt') && (
                     <TableCell className="text-muted-foreground leading-tight">
-                      <div>{format(new Date(job.statusChangedAt || job.createdAt), 'MMM d, yyyy')}</div>
-                      <div className="text-xs">{format(new Date(job.statusChangedAt || job.createdAt), 'h:mm a')}</div>
+                      <div className="whitespace-nowrap">{format(new Date(job.statusChangedAt || job.createdAt), 'MMM d, yyyy')}</div>
+                      <div className="text-xs whitespace-nowrap">{format(new Date(job.statusChangedAt || job.createdAt), 'h:mm a')}</div>
                     </TableCell>
                   )}
-                  <TableCell onClick={(e) => e.stopPropagation()}>
+                  <TableCell onClick={cellGuard}>
                     <div className="flex items-center justify-center gap-1">
                       <Button
                         variant="ghost"
@@ -1673,7 +1695,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
 

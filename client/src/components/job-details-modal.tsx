@@ -4,14 +4,18 @@ import { format, formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft,
   ArrowRight,
+  Clock3,
+  Hash,
   Info,
   Link2,
   MessageSquare,
   Phone,
   Send,
   Star,
+  StickyNote,
   Trash2,
   Unlink,
+  User,
   X,
 } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -337,14 +341,20 @@ export default function JobDetailsModal({
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-7">
               {/* Left column: Patient & Order, Custom fields, Notes */}
               <div>
-                <h4 className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                  <User className="h-3 w-3" aria-hidden />
                   Patient &amp; Order
                 </h4>
                 <dl className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-3 text-[calc(13px*var(--ui-scale))]">
                   <dt className="text-ink-mute pt-0.5">{useTrayNumber ? "Tray" : "Patient"}</dt>
                   <dd className="m-0 flex items-center gap-2">
+                    {/* Avatar tinted with the current status color so the
+                        identity in the header pill carries through to the
+                        body — gives the modal a cohesive accent rather than
+                        a bland gray circle. */}
                     <span
-                      className="w-7 h-7 rounded-full bg-paper-2 grid place-items-center text-[calc(10.5px*var(--ui-scale))] font-semibold text-ink-2 tracking-wider shrink-0"
+                      className="w-7 h-7 rounded-full grid place-items-center text-[calc(10.5px*var(--ui-scale))] font-semibold tracking-wider shrink-0 ring-1 ring-inset ring-line"
+                      style={{ backgroundColor: statusBadgeColor.background, color: statusBadgeColor.text }}
                       aria-hidden
                     >
                       {(patientDisplayName || "?").split(" ").filter(Boolean).slice(0, 2).map((s) => s[0] || "").join("").toUpperCase() || "?"}
@@ -359,7 +369,7 @@ export default function JobDetailsModal({
                       <button
                         type="button"
                         onClick={() => { window.location.href = `tel:${job.phone}`; }}
-                        className="w-6 h-6 rounded grid place-items-center text-ink-mute hover:bg-line-2 hover:text-ink"
+                        className="w-6 h-6 rounded grid place-items-center text-otto-accent-ink hover:bg-otto-accent-soft hover:text-otto-accent-strong transition-colors"
                         aria-label="Call"
                         title="Call"
                         data-testid="button-call-patient"
@@ -406,7 +416,8 @@ export default function JobDetailsModal({
                 {customColumns.length > 0 && (
                   <>
                     <div className="border-t border-line my-5" />
-                    <h4 className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                    <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                      <Hash className="h-3 w-3" aria-hidden />
                       Custom fields
                     </h4>
                     <dl className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-3 text-[calc(13px*var(--ui-scale))]">
@@ -426,21 +437,27 @@ export default function JobDetailsModal({
                 )}
 
                 <div className="border-t border-line my-5" />
-                <h4 className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                  <StickyNote className="h-3 w-3" aria-hidden />
                   Notes
                 </h4>
-                <div className="rounded-lg bg-panel-2 px-3 py-2.5 text-[calc(13px*var(--ui-scale))] leading-relaxed text-ink-2 min-h-[60px]">
+                {/* Warm notepaper tint + amber left-rail evokes a real
+                    sticky note without leaving the design language —
+                    --warn-bg is the same amber Otto already uses for
+                    overdue / warning surfaces, just dialed back. */}
+                <div className="rounded-lg bg-warn-bg/40 border border-warn/15 border-l-[3px] border-l-warn/60 px-3.5 py-2.5 text-[calc(13px*var(--ui-scale))] leading-relaxed text-ink-2 min-h-[60px]">
                   {job.notes?.trim() ? (
                     <p className="whitespace-pre-wrap m-0">{job.notes}</p>
                   ) : (
-                    <p className="text-ink-mute m-0">No notes added.</p>
+                    <p className="text-ink-mute italic m-0">No notes added.</p>
                   )}
                 </div>
               </div>
 
               {/* Right column: Timeline (lifecycle history with actor + timestamp). */}
               <div>
-                <h4 className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                  <Clock3 className="h-3 w-3" aria-hidden />
                   Timeline
                 </h4>
                 <div className="relative pl-[18px]">
@@ -456,18 +473,32 @@ export default function JobDetailsModal({
                           ? `${entry.changedByUser?.firstName || ""} ${entry.changedByUser?.lastName || ""}`.trim()
                           : "System")
                       : null;
+                    // Past dots inherit each step's own status color so the
+                    // timeline reads as a journey through the office's
+                    // status palette instead of a uniform gray run. Current
+                    // step keeps the otto-accent glow as the focal point;
+                    // pending stays empty/outlined.
+                    const stepColor = isPast ? getStatusBadgeColor(s.id) : null;
                     return (
                       <div key={s.id} className="relative py-1.5">
                         <span
                           className={cn(
                             "absolute -left-[17px] top-2 w-[9px] h-[9px] rounded-full",
-                            isPast && "bg-ink-3 ring-[1.5px] ring-ink-3",
                             isCurrent && "bg-otto-accent ring-[1.5px] ring-otto-accent shadow-[0_0_0_4px_var(--otto-accent-soft)]",
                             !isPast && !isCurrent && "bg-panel ring-[1.5px] ring-line-strong",
                           )}
+                          style={
+                            stepColor
+                              ? { backgroundColor: stepColor.text, boxShadow: `0 0 0 1.5px ${stepColor.text}` }
+                              : undefined
+                          }
                           aria-hidden
                         />
-                        <div className="text-[calc(13px*var(--ui-scale))] font-medium text-ink leading-tight">
+                        <div className={cn(
+                          "text-[calc(13px*var(--ui-scale))] leading-tight",
+                          isCurrent ? "font-semibold text-ink" : "font-medium text-ink",
+                          !isPast && !isCurrent && "text-ink-2",
+                        )}>
                           {s.label}
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
@@ -479,9 +510,9 @@ export default function JobDetailsModal({
                               </span>
                             </>
                           ) : isCurrent ? (
-                            <span className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute italic">in progress · now</span>
+                            <span className="text-[calc(11.5px*var(--ui-scale))] text-otto-accent-ink italic">in progress · now</span>
                           ) : (
-                            <span className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute italic">pending</span>
+                            <span className="text-[calc(11.5px*var(--ui-scale))] text-ink-faint italic">pending</span>
                           )}
                         </div>
                       </div>
@@ -700,8 +731,13 @@ export default function JobDetailsModal({
             the primary lifecycle action rather than scanning a long row of
             mixed-purpose CTAs. */}
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-6 py-3.5 border-t border-line bg-panel-2">
-          <span className="text-[calc(11.5px*var(--ui-scale))] font-mono text-ink-mute justify-self-start">
-            {lastUpdatedRelative ? `Updated ${lastUpdatedRelative}` : ""}
+          <span className="flex items-center gap-1.5 text-[calc(11.5px*var(--ui-scale))] font-mono text-ink-mute justify-self-start">
+            {lastUpdatedRelative ? (
+              <>
+                <Clock3 className="h-3 w-3" aria-hidden />
+                Updated {lastUpdatedRelative}
+              </>
+            ) : null}
           </span>
           <div className="flex items-center gap-2 justify-self-center">
             {previousStatus && (
