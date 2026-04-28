@@ -1,60 +1,10 @@
+/* Otto design tokens — see ./lib/theme/README.md
+   IMPORTANT: @import must come before @tailwind directives or PostCSS drops it. */
+@import "./lib/theme/tokens.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-:root {
-  --background: hsl(225, 25%, 96%);
-  --foreground: hsl(224, 40%, 16%);
-  --card: hsl(0, 0%, 100%);
-  --card-foreground: hsl(224, 40%, 16%);
-  --popover: hsl(0, 0%, 100%);
-  --popover-foreground: hsl(224, 40%, 16%);
-  --primary: hsl(230, 70%, 56%);
-  --primary-foreground: hsl(0, 0%, 100%);
-  --secondary: hsl(225, 20%, 94%);
-  --secondary-foreground: hsl(224, 30%, 22%);
-  --muted: hsl(225, 16%, 90%);
-  --muted-foreground: hsl(220, 10%, 46%);
-  --accent: hsl(225, 30%, 94%);
-  --accent-foreground: hsl(224, 30%, 22%);
-  --destructive: hsl(0, 72%, 56%);
-  --destructive-foreground: hsl(0, 0%, 100%);
-  --border: hsl(225, 15%, 90%);
-  --input: hsl(225, 15%, 85%);
-  --ring: hsl(221.2, 83.2%, 53.3%);
-  --success: hsl(142, 71%, 45%);
-  --warning: hsl(38, 92%, 50%);
-  --info: hsl(199, 89%, 48%);
-  --chart-1: hsl(221, 83%, 53%);
-  --chart-2: hsl(142, 71%, 45%);
-  --chart-3: hsl(38, 92%, 50%);
-  --chart-4: hsl(280, 65%, 60%);
-  --chart-5: hsl(340, 75%, 55%);
-  --radius: 0.5rem;
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-}
-
-.dark {
-  --background: hsl(0, 0%, 0%);
-  --foreground: hsl(200, 6.6667%, 91.1765%);
-  --card: hsl(228, 9.8039%, 10%);
-  --card-foreground: hsl(0, 0%, 85.0980%);
-  --popover: hsl(0, 0%, 0%);
-  --popover-foreground: hsl(200, 6.6667%, 91.1765%);
-  --primary: hsl(230, 80%, 65%);
-  --primary-foreground: hsl(0, 0%, 100%);
-  --secondary: hsl(195.0000, 15.3846%, 94.9020%);
-  --secondary-foreground: hsl(210, 25%, 7.8431%);
-  --muted: hsl(0, 0%, 9.4118%);
-  --muted-foreground: hsl(210, 3.3898%, 46.2745%);
-  --accent: hsl(210, 50%, 12%);
-  --accent-foreground: hsl(230, 80%, 65%);
-  --destructive: hsl(356.3033, 90.5579%, 54.3137%);
-  --destructive-foreground: hsl(0, 0%, 100%);
-  --border: hsl(210, 5.2632%, 14.9020%);
-  --input: hsl(207.6923, 27.6596%, 18.4314%);
-  --ring: hsl(230, 80%, 65%);
-}
 
 @layer base {
   * {
@@ -63,82 +13,68 @@
 
   body {
     @apply font-sans antialiased bg-background text-foreground;
-    font-family: var(--font-sans);
+    font-family: var(--fa-ui);
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    letter-spacing: -0.005em;
+  }
+
+  h1, h2 {
+    font-family: var(--fa-display);
+    letter-spacing: -0.025em;
+  }
+
+  input, select, textarea, button {
+    font-family: var(--fa-ui);
   }
 }
 
 @layer utilities {
   .animate-fade-in {
-    animation: fadeIn 0.3s ease-in-out;
+    animation: ottoFadeIn 180ms ease-in-out;
   }
-
+  .animate-pop-in {
+    animation: ottoPopIn 220ms cubic-bezier(.2, .8, .2, 1);
+  }
   .animate-slide-in-right {
     animation: slideInRight 0.3s ease-out;
   }
 
+  /* Legacy compat — older components reference these */
   .table-row-hover:hover {
     @apply bg-accent transition-colors duration-150;
   }
-  
   .table-row-hover {
-    border-bottom: 1px solid hsl(var(--border) / 0.4);
+    border-bottom: 1px solid var(--line-2);
   }
 
   .status-badge {
     @apply inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold;
   }
 
-  .priority-critical {
-    @apply bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400;
-  }
-
-  .priority-high {
-    @apply bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400;
-  }
-
-  .priority-medium {
-    @apply bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400;
-  }
-
-  .priority-low {
-    @apply bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400;
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  .priority-critical { background: var(--danger-bg); color: var(--danger); }
+  .priority-high     { background: #fdebd5; color: #874a0c; }
+  .priority-medium   { background: var(--st-ordered-bg); color: var(--st-ordered-fg); }
+  .priority-low      { background: var(--accent-soft); color: var(--accent-ink); }
 }
 
 @keyframes slideInRight {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
 }
 
-/* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
-
-::-webkit-scrollbar-track {
-  @apply bg-muted;
-}
-
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  @apply bg-border rounded;
+  background: rgba(28, 38, 60, 0.14);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted-foreground;
+  background: rgba(28, 38, 60, 0.24);
 }

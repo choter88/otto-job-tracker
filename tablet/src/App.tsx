@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { setAuthToken, setOnAuthExpired, fetchConfig, fetchJobs, fetchOfficeInfo, logout } from "./api";
+import { setAuthToken, setOnAuthExpired, fetchConfig, fetchJobs, fetchOfficeInfo, logout, trackEvent } from "./api";
 import { usePoller } from "./usePoller";
 import type { ViewState, TabletUser, OfficeConfig, Job, NotificationRule } from "./types";
 import { LoginView } from "./views/LoginView";
@@ -69,6 +69,10 @@ export function App() {
       setUser(loginUser);
       setOfficeId(loginOfficeId);
       setViewState({ view: "board" });
+      // Login lands on the board — count it as a view-change event so the
+      // portal sees the session start without a duplicate "tablet_session"
+      // event type.
+      trackEvent("tablet_view_changed", { view: "board" });
       // Data will load via poller
     },
     [],
@@ -89,6 +93,12 @@ export function App() {
 
   const navigateTo = useCallback((state: ViewState) => {
     setViewState(state);
+    // Track every view change (board / jobDetail / newJob) as a single
+    // event type with the destination view in metadata — keeps the
+    // allowlist tiny while still letting the portal slice by view.
+    if (state.view !== "login" && state.view !== "disabled") {
+      trackEvent("tablet_view_changed", { view: state.view });
+    }
   }, []);
 
   if (viewState.view === "disabled") {

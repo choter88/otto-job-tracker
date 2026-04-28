@@ -30,7 +30,7 @@ const jobSchema = z.object({
   ),
   jobType: z.string().min(1, "Please select a job type"),
   status: z.string().min(1, "Please select a status"),
-  orderDestination: z.string().min(1, "Order destination is required"),
+  orderDestination: z.string().min(1, "Lab is required"),
   createdAt: z.string().refine(date => new Date(date) <= new Date(), "Creation date cannot be in the future"),
   isRedoJob: z.boolean().default(false),
   originalJobId: z.string().optional(),
@@ -293,7 +293,9 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                          (job.jobType ? job.jobType.charAt(0).toUpperCase() + job.jobType.slice(1) : "Unknown");
     const prefix = isArchived ? "[ARCHIVED] " : "";
     const patientName = formatPatientDisplayName(job.patientFirstName, job.patientLastName);
-    return `${prefix}${job.orderId} - ${patientName}`.trim() + ` - ${jobTypeLabel}`;
+    const trayLabel = (job as any).trayNumber ? `Tray ${(job as any).trayNumber}` : "";
+    const identifier = patientName || trayLabel || "Unnamed";
+    return `${prefix}${identifier} — ${jobTypeLabel}`;
   };
 
   const customJobTypes = (office?.settings as any)?.customJobTypes || [];
@@ -311,124 +313,143 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
 
   const selectedJob = allSelectableJobs.find(j => j.id === selectedOriginalJobId);
 
+  // Shared field styling — all form labels and error lines run through the
+  // same density-aware tokens so the form holds together as the user changes
+  // their font-size preference.
+  const fieldLabel = "text-[calc(12.5px*var(--ui-scale))] font-medium text-ink-2";
+  const fieldError = "text-[calc(11.5px*var(--ui-scale))] text-danger mt-1";
+  const sectionTitle = "font-display text-[calc(18px*var(--ui-scale))] font-medium tracking-[-0.02em] text-ink m-0";
+  const sectionDesc = "text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-2xl max-h-[90vh] overflow-y-auto animate-fade-in" data-testid="dialog-job">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-2xl">
-            {readOnly ? "Job Details (Archived)" : job ? "Edit Job" : "Create New Job"}
+      <DialogContent
+        className="w-full max-w-[720px] h-[min(760px,calc(100vh-64px))] p-0 overflow-hidden flex flex-col gap-0"
+        data-testid="dialog-job"
+      >
+        <DialogHeader className="px-6 py-[18px] border-b border-line space-y-0">
+          <DialogTitle asChild>
+            <h3 className="font-display text-[calc(20px*var(--ui-scale))] font-medium tracking-[-0.025em] text-ink m-0">
+              {readOnly ? "Archived Job" : job ? "Edit Job" : "New Job"}
+            </h3>
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={readOnly ? (e) => e.preventDefault() : form.handleSubmit(onSubmit, () => {
-          // Scroll to first validation error
-          requestAnimationFrame(() => {
-            const firstError = document.querySelector('[data-testid="dialog-job"] .text-destructive');
-            if (firstError) {
-              firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-          });
-        })} className="space-y-6">
-          <fieldset disabled={readOnly} className={readOnly ? "opacity-80" : ""}>
-          {/* Patient Information */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-3">
-              <User className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">{useTrayNumber ? "Job Identifier" : "Patient Information"}</h3>
-            </div>
+        <form
+          onSubmit={readOnly ? (e) => e.preventDefault() : form.handleSubmit(onSubmit, () => {
+            // Scroll to first validation error
+            requestAnimationFrame(() => {
+              const firstError = document.querySelector('[data-testid="dialog-job"] .text-danger');
+              if (firstError) {
+                firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            });
+          })}
+          className="flex-1 flex flex-col min-h-0"
+        >
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+            <fieldset disabled={readOnly} className={cn("space-y-6 p-0 m-0 border-0", readOnly && "opacity-80")}>
+            {/* Patient Information */}
+            <div className="space-y-3.5">
+              <div className="flex items-center gap-2.5">
+                <User className="h-4 w-4 text-ink-mute" />
+                <h4 className={sectionTitle}>{useTrayNumber ? "Job Identifier" : "Patient"}</h4>
+              </div>
 
-            {useTrayNumber ? (
-              <div className="space-y-2">
-                <Label htmlFor="trayNumber">Tray Number *</Label>
+              {useTrayNumber ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="trayNumber" className={fieldLabel}>Tray Number *</Label>
+                  <Input
+                    id="trayNumber"
+                    placeholder="Enter tray number"
+                    {...form.register("trayNumber")}
+                    data-testid="input-tray-number"
+                  />
+                  {form.formState.errors.trayNumber && (
+                    <p className={fieldError}>
+                      {form.formState.errors.trayNumber.message}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="patientFirstName" className={fieldLabel}>First Name *</Label>
+                    <Input
+                      id="patientFirstName"
+                      placeholder="Jane"
+                      {...form.register("patientFirstName", {
+                        onBlur: (e) => {
+                          form.setValue("patientFirstName", normalizePatientNamePart(e.target.value), {
+                            shouldDirty: true,
+                          });
+                        },
+                      })}
+                      data-testid="input-patient-firstname"
+                    />
+                    {form.formState.errors.patientFirstName && (
+                      <p className={fieldError}>
+                        {form.formState.errors.patientFirstName.message}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="patientLastName" className={fieldLabel}>Last Name *</Label>
+                    <Input
+                      id="patientLastName"
+                      placeholder="Doe"
+                      {...form.register("patientLastName", {
+                        onBlur: (e) => {
+                          form.setValue("patientLastName", normalizePatientNamePart(e.target.value), {
+                            shouldDirty: true,
+                          });
+                        },
+                      })}
+                      data-testid="input-patient-lastname"
+                    />
+                    {form.formState.errors.patientLastName && (
+                      <p className={fieldError}>
+                        {form.formState.errors.patientLastName.message}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Label htmlFor="phone" className={fieldLabel}>Phone Number</Label>
                 <Input
-                  id="trayNumber"
-                  placeholder="Enter tray number"
-                  {...form.register("trayNumber")}
-                  data-testid="input-tray-number"
+                  id="phone"
+                  type="tel"
+                  placeholder="(555) 123-4567"
+                  {...form.register("phone")}
+                  onChange={(e) => {
+                    const formatted = formatPhoneNumber(e.target.value);
+                    form.setValue("phone", formatted);
+                  }}
+                  data-testid="input-phone"
                 />
-                {form.formState.errors.trayNumber && (
-                  <p className="text-sm text-destructive">
-                    {form.formState.errors.trayNumber.message}
+                {form.formState.errors.phone && (
+                  <p className={fieldError}>
+                    {form.formState.errors.phone.message}
                   </p>
                 )}
               </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="patientFirstName">First Name *</Label>
-                  <Input
-                    id="patientFirstName"
-                    placeholder="Jane"
-                    {...form.register("patientFirstName", {
-                      onBlur: (e) => {
-                        form.setValue("patientFirstName", normalizePatientNamePart(e.target.value), {
-                          shouldDirty: true,
-                        });
-                      },
-                    })}
-                    data-testid="input-patient-firstname"
-                  />
-                  {form.formState.errors.patientFirstName && (
-                    <p className="text-sm text-destructive">
-                      {form.formState.errors.patientFirstName.message}
-                    </p>
-                  )}
-                </div>
+            </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="patientLastName">Last Name *</Label>
-                  <Input
-                    id="patientLastName"
-                    placeholder="Doe"
-                    {...form.register("patientLastName", {
-                      onBlur: (e) => {
-                        form.setValue("patientLastName", normalizePatientNamePart(e.target.value), {
-                          shouldDirty: true,
-                        });
-                      },
-                    })}
-                    data-testid="input-patient-lastname"
-                  />
-                  {form.formState.errors.patientLastName && (
-                    <p className="text-sm text-destructive">
-                      {form.formState.errors.patientLastName.message}
-                    </p>
-                  )}
-                </div>
+            <div className="border-t border-line-2" />
+
+            {/* Job Details */}
+            <div className="space-y-3.5">
+              <div className="flex items-center gap-2.5">
+                <Briefcase className="h-4 w-4 text-ink-mute" />
+                <h4 className={sectionTitle}>Job Details</h4>
               </div>
-            )}
 
-            <div className="space-y-2">
-              <Label htmlFor="phone">Phone Number</Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="(555) 123-4567"
-                {...form.register("phone")}
-                onChange={(e) => {
-                  const formatted = formatPhoneNumber(e.target.value);
-                  form.setValue("phone", formatted);
-                }}
-                data-testid="input-phone"
-              />
-              {form.formState.errors.phone && (
-                <p className="text-sm text-destructive">
-                  {form.formState.errors.phone.message}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Job Details */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Briefcase className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">Job Details</h3>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="jobType">Job Type *</Label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="jobType" className={fieldLabel}>Job Type *</Label>
                 <Controller
                   name="jobType"
                   control={form.control}
@@ -457,14 +478,14 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                   )}
                 />
                 {form.formState.errors.jobType && (
-                  <p className="text-sm text-destructive">
+                  <p className={fieldError}>
                     {form.formState.errors.jobType.message}
                   </p>
                 )}
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="status">Status *</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="status" className={fieldLabel}>Status *</Label>
                 <Controller
                   name="status"
                   control={form.control}
@@ -494,21 +515,21 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                   )}
                 />
                 {form.formState.errors.status && (
-                  <p className="text-sm text-destructive">
+                  <p className={fieldError}>
                     {form.formState.errors.status.message}
                   </p>
                 )}
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="orderDestination">Order Destination *</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="orderDestination" className={fieldLabel}>Lab *</Label>
                 <Controller
                   name="orderDestination"
                   control={form.control}
                   render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
                       <SelectTrigger data-testid="select-destination">
-                        <SelectValue placeholder="Select destination..." />
+                        <SelectValue placeholder="Select lab..." />
                       </SelectTrigger>
                       <SelectContent>
                         {customOrderDestinations.length > 0 ? (
@@ -529,14 +550,14 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                   )}
                 />
                 {form.formState.errors.orderDestination && (
-                  <p className="text-sm text-destructive">
+                  <p className={fieldError}>
                     {form.formState.errors.orderDestination.message}
                   </p>
                 )}
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="createdAt">Creation Date *</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="createdAt" className={fieldLabel}>Creation Date *</Label>
                 <Input
                   id="createdAt"
                   type="date"
@@ -545,7 +566,7 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                   data-testid="input-created-date"
                 />
                 {form.formState.errors.createdAt && (
-                  <p className="text-sm text-destructive">
+                  <p className={fieldError}>
                     {form.formState.errors.createdAt.message}
                   </p>
                 )}
@@ -553,9 +574,11 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
             </div>
           </div>
 
+          <div className="border-t border-line-2" />
+
           {/* Redo Order Option */}
-          <div className="p-4 bg-muted rounded-lg space-y-4">
-            <div className="flex items-center space-x-2">
+          <div className="rounded-lg bg-paper-2 border border-line p-4 space-y-4">
+            <div className="flex items-start gap-3">
               <Controller
                 name="isRedoJob"
                 control={form.control}
@@ -569,24 +592,25 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                         form.setValue("originalJobId", undefined);
                       }
                     }}
+                    className="mt-0.5"
                     data-testid="checkbox-redo"
                   />
                 )}
               />
-              <div className="space-y-1 leading-none">
-                <Label htmlFor="isRedoJob" className="font-medium">
-                  Redo Order?
+              <div className="space-y-0.5 leading-none">
+                <Label htmlFor="isRedoJob" className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer">
+                  This is a redo order
                 </Label>
-                <p className="text-sm text-muted-foreground">
-                  Create a new job linked to an original order
+                <p className={sectionDesc.replace("mt-1", "")}>
+                  Link this new job to an original completed or archived order.
                 </p>
               </div>
             </div>
 
             {/* Original Job Selector - shown when isRedoJob is true */}
             {isRedoJob && (
-              <div className="space-y-2">
-                <Label htmlFor="originalJob">Select Original Job *</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="originalJob" className={fieldLabel}>Select Original Job *</Label>
                 <Controller
                   name="originalJobId"
                   control={form.control}
@@ -641,8 +665,8 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                   )}
                 />
                 {isRedoJob && !selectedOriginalJobId && (
-                  <p className="text-sm text-muted-foreground">
-                    Please select the original job this is a redo of
+                  <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute mt-1">
+                    Pick the original job this is a redo of.
                   </p>
                 )}
               </div>
@@ -651,26 +675,30 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
 
           {/* Custom Columns */}
           {customColumns.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 mb-3">
-                <h3 className="text-lg font-semibold">Custom Fields</h3>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                {customColumns.map((column: any) => (
-                  <div key={column.id} className="space-y-2">
-                    {column.type === 'checkbox' ? (
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`custom-${column.id}`}
-                          checked={customColumnValues[column.id] || false}
-                          onCheckedChange={(checked) => setCustomColumnValues({...customColumnValues, [column.id]: checked})}
-                          data-testid={`checkbox-custom-${column.id}`}
-                        />
-                        <Label htmlFor={`custom-${column.id}`}>{column.name}</Label>
-                      </div>
-                    ) : (
-                      <>
-                        <Label htmlFor={`custom-${column.id}`}>{column.name}</Label>
+            <>
+              <div className="border-t border-line-2" />
+              <div className="space-y-3.5">
+                <div className="flex items-center gap-2.5">
+                  <h4 className={sectionTitle}>Custom Fields</h4>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {customColumns.map((column: any) => (
+                    <div key={column.id} className="space-y-1.5">
+                      {column.type === 'checkbox' ? (
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            id={`custom-${column.id}`}
+                            checked={customColumnValues[column.id] || false}
+                            onCheckedChange={(checked) => setCustomColumnValues({...customColumnValues, [column.id]: checked})}
+                            data-testid={`checkbox-custom-${column.id}`}
+                          />
+                          <Label htmlFor={`custom-${column.id}`} className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer">
+                            {column.name}
+                          </Label>
+                        </div>
+                      ) : (
+                        <>
+                          <Label htmlFor={`custom-${column.id}`} className={fieldLabel}>{column.name}</Label>
                         {column.type === 'text' && (
                           <Input
                             id={`custom-${column.id}`}
@@ -698,72 +726,71 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                           />
                         )}
                         {column.type === 'select' && Array.isArray(column.options) && (
-                          <Select
-                            value={customColumnValues[column.id] || ''}
-                            onValueChange={(val) => setCustomColumnValues({...customColumnValues, [column.id]: val || null})}
-                          >
-                            <SelectTrigger id={`custom-${column.id}`} data-testid={`select-custom-${column.id}`}>
-                              <SelectValue placeholder="Select..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="">
-                                <span className="text-muted-foreground">(none)</span>
-                              </SelectItem>
-                              {column.options.map((opt: string) => (
-                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          (() => {
+                            // Radix Select rejects "" as a value (reserved for placeholder).
+                            // Use a sentinel for "(none)" and translate at the boundary.
+                            const NONE = "__otto_none__";
+                            const current = customColumnValues[column.id];
+                            return (
+                              <Select
+                                value={current ? String(current) : NONE}
+                                onValueChange={(val) => setCustomColumnValues({
+                                  ...customColumnValues,
+                                  [column.id]: val === NONE ? null : (val || null),
+                                })}
+                              >
+                                <SelectTrigger id={`custom-${column.id}`} data-testid={`select-custom-${column.id}`}>
+                                  <SelectValue placeholder="Select..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value={NONE}>
+                                    <span className="text-muted-foreground">(none)</span>
+                                  </SelectItem>
+                                  {column.options.map((opt: string) => (
+                                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            );
+                          })()
                         )}
-                      </>
-                    )}
-                  </div>
-                ))}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            </>
           )}
 
-          {/* Order ID Display */}
-          {job && (
-            <div className="p-4 bg-accent rounded-lg">
-              <Label className="block text-sm font-medium mb-1.5 text-muted-foreground">
-                Order ID
-              </Label>
-              <Input
-                value={job.orderId}
-                readOnly
-                className="bg-muted font-mono"
-                data-testid="input-order-id"
-              />
-            </div>
-          )}
+            </fieldset>
+          </div>
 
-          </fieldset>
-          {/* Form Actions */}
-          <div className="flex gap-3 pt-4 border-t border-border">
-            {!readOnly && (
-              <Button
-                type="submit"
-                className="flex-1"
-                disabled={createJobMutation.isPending}
-                data-testid="button-save-job"
-              >
-                {createJobMutation.isPending && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                <Save className="mr-2 h-4 w-4" />
-                {job ? "Update Job" : "Create Job"}
-              </Button>
-            )}
+          {/* Sticky footer — buttons stay anchored as the form scrolls. */}
+          <div className="flex items-center justify-end gap-2 px-6 py-3.5 border-t border-line bg-panel-2 shrink-0">
             <Button
               type="button"
               variant="outline"
-              className={readOnly ? "flex-1" : ""}
+              size="sm"
               onClick={() => onOpenChange(false)}
               data-testid="button-cancel"
             >
               {readOnly ? "Close" : "Cancel"}
             </Button>
+            {!readOnly && (
+              <Button
+                type="submit"
+                size="sm"
+                disabled={createJobMutation.isPending}
+                data-testid="button-save-job"
+              >
+                {createJobMutation.isPending && (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                )}
+                <Save className="mr-1.5 h-3.5 w-3.5" />
+                {job ? "Update Job" : "Create Job"}
+              </Button>
+            )}
           </div>
         </form>
       </DialogContent>

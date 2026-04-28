@@ -8,6 +8,12 @@
       "port": 5150
     },
     {
+      "name": "otto-dev-preview",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "PORT=5151 npm run dev"],
+      "port": 5151
+    },
+    {
       "name": "otto-prod",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "start"],

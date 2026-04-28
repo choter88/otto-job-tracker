@@ -48,7 +48,7 @@ type PostJsonResult = {
   networkError: LicenseRequestError | null;
 };
 
-function getLicenseBaseUrl(): URL {
+export function getLicenseBaseUrl(): URL {
   const raw = (process.env.OTTO_LICENSE_BASE_URL || "https://ottojobtracker.com").trim();
   try {
     return new URL(raw);

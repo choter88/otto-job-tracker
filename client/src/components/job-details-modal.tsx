@@ -1,8 +1,20 @@
-import { useMemo, useCallback, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { Clock3, Edit, FileText, MessageSquare, History, Link2, Star, Unlink, Send, Trash2 } from "lucide-react";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { format, formatDistanceToNow } from "date-fns";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Info,
+  Link2,
+  MessageSquare,
+  Phone,
+  Send,
+  Star,
+  Trash2,
+  Unlink,
+  X,
+} from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,8 +23,11 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import JobCommentsPanel from "@/components/job-comments-panel";
 import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
+import { sortByOrder } from "@/lib/custom-list-sort";
+import { buildTrackStatuses, getStepIndex } from "@/lib/lifecycle";
 import { formatPatientDisplayName } from "@shared/name-format";
 import { apiRequest } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
 import type { Job, Office } from "@shared/schema";
 
 export type JobDetailsTab = "overview" | "comments" | "related";
@@ -154,14 +169,33 @@ export default function JobDetailsModal({
     },
   });
 
-  const customStatuses = useMemo(() => (office?.settings?.customStatuses || []) as any[], [office?.settings?.customStatuses]);
-  const customJobTypes = useMemo(() => (office?.settings?.customJobTypes || []) as any[], [office?.settings?.customJobTypes]);
+  const updateStatusMutation = useMutation({
+    mutationFn: async (newStatus: string) => {
+      if (!job?.id) return;
+      // Server endpoint is PUT /api/jobs/:id (not PATCH). Earlier code used
+      // PATCH which silently 405'd, making the Advance / Mark CTA buttons
+      // appear inert.
+      await apiRequest("PUT", `/api/jobs/${job.id}`, { status: newStatus });
+    },
+    onSuccess: (_data, newStatus) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "status-history"] });
+      const label = customStatuses.find((s: any) => s.id === newStatus)?.label || newStatus;
+      toast({ title: "Status updated", description: `Set to ${label}.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update status", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const customStatuses = useMemo(() => sortByOrder((office?.settings?.customStatuses || []) as any[]), [office?.settings?.customStatuses]);
+  const customJobTypes = useMemo(() => sortByOrder((office?.settings?.customJobTypes || []) as any[]), [office?.settings?.customJobTypes]);
   const customOrderDestinations = useMemo(
-    () => (office?.settings?.customOrderDestinations || []) as any[],
+    () => sortByOrder((office?.settings?.customOrderDestinations || []) as any[]),
     [office?.settings?.customOrderDestinations],
   );
   const customColumns = useMemo(
-    () => ((office?.settings?.customColumns || []) as any[]).filter((col) => col.active),
+    () => sortByOrder((office?.settings?.customColumns || []) as any[]).filter((col: any) => col.active),
     [office?.settings?.customColumns],
   );
   const jobIdentifierMode = useMemo(() => (office?.settings?.jobIdentifierMode || "patientName") as string, [office?.settings?.jobIdentifierMode]);
@@ -181,6 +215,7 @@ export default function JobDetailsModal({
   const getJobTypeBadgeColor = (jobType: string) =>
     getTypeBadgeStyle(jobType, customJobTypes);
 
+  // Used by the Related tab's per-row destination badge.
   const getDestinationBadgeColor = (destination: string) =>
     getDestinationBadgeStyle(destination, customOrderDestinations);
 
@@ -191,249 +226,293 @@ export default function JobDetailsModal({
     : formatPatientDisplayName(job.patientFirstName, job.patientLastName) || "Unnamed patient";
 
   const statusBadgeColor = getStatusBadgeColor(job.status);
-  const jobTypeBadgeColor = getJobTypeBadgeColor(job.jobType);
-  const destinationBadgeColor = getDestinationBadgeColor(job.orderDestination);
+
+  // Compute the next forward status for the "Mark <next>" footer button.
+  const trackStatuses = buildTrackStatuses(customStatuses);
+  const currentStepIdx = getStepIndex(trackStatuses, job.status);
+  const nextStatus = currentStepIdx >= 0 && currentStepIdx < trackStatuses.length - 1
+    ? trackStatuses[currentStepIdx + 1]
+    : null;
+  const previousStatus = currentStepIdx > 0 ? trackStatuses[currentStepIdx - 1] : null;
+
+  // Job comments — used for activity timeline + tab badge counts.
+  const lastUpdatedRelative = (() => {
+    try {
+      return formatDistanceToNow(new Date(job.updatedAt), { addSuffix: true });
+    } catch {
+      return "";
+    }
+  })();
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-5xl flex flex-col p-0" data-testid="dialog-job-details">
-        <SheetHeader className="space-y-3 p-6 pb-0 pr-12">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <SheetTitle className="text-2xl">{patientDisplayName}</SheetTitle>
-              <SheetDescription>
-                Created {format(new Date(job.createdAt), "MMM d, yyyy 'at' h:mm a")}
-              </SheetDescription>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Badge
-                  className="border-0"
-                  style={{ backgroundColor: statusBadgeColor.background, color: statusBadgeColor.text }}
-                >
-                  {getStatusLabel(job.status)}
-                </Badge>
-                <Badge
-                  className="border-0"
-                  style={{ backgroundColor: jobTypeBadgeColor.background, color: jobTypeBadgeColor.text }}
-                >
-                  {getJobTypeLabel(job.jobType)}
-                </Badge>
-                <Badge
-                  className="border-0"
-                  style={{ backgroundColor: destinationBadgeColor.background, color: destinationBadgeColor.text }}
-                >
-                  {getDestinationLabel(job.orderDestination)}
-                </Badge>
-                {job.isRedoJob && <Badge variant="secondary">Redo</Badge>}
-              </div>
-            </div>
-
-            <Button
-              onClick={() => onEditJob(job)}
-              className="shrink-0 mr-6"
-              data-testid={`button-edit-job-details-${job.id}`}
-            >
-              <Edit className="mr-2 h-4 w-4" />
-              Edit Job
-            </Button>
-          </div>
-        </SheetHeader>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Fixed height keeps the footer + tabs anchored regardless of which
+          tab is showing — tab bodies scroll internally. hideClose suppresses
+          Radix's default top-right X (we render our own inside the custom
+          header). */}
+      <DialogContent
+        hideClose
+        className="max-w-[1013px] w-[min(1013px,calc(100vw-48px))] h-[min(720px,calc(100vh-64px))] p-0 overflow-hidden flex flex-col gap-0"
+        data-testid="dialog-job-details"
+      >
+        {/* Header — patient/tray identifier, status pill, close X */}
+        <div className="flex items-center gap-3 px-6 py-[18px] border-b border-line">
+          <h3 className="font-display text-[calc(20px*var(--ui-scale))] font-medium tracking-[-0.025em] text-ink m-0 truncate">
+            {patientDisplayName}
+          </h3>
+          <Badge
+            className="border-0 shrink-0"
+            style={{ backgroundColor: statusBadgeColor.background, color: statusBadgeColor.text }}
+            data-testid="badge-job-status"
+          >
+            {getStatusLabel(job.status)}
+          </Badge>
+          {job.isRedoJob && (
+            <Badge className="border-0 shrink-0 bg-danger-bg text-danger" data-testid="badge-redo">
+              REDO
+            </Badge>
+          )}
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="w-8 h-8 rounded-md grid place-items-center text-ink-mute hover:bg-line-2 hover:text-ink shrink-0"
+            aria-label="Close"
+            data-testid="button-close-job-details"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
 
         <Tabs
           value={activeTab}
           onValueChange={(value) => {
             onActiveTabChange(value as JobDetailsTab);
-            const tabEvent = value === "comments" ? "job_detail_tab_comments" : value === "related" ? "job_detail_tab_related" : "job_detail_tab_overview";
+            const tabEvent = value === "comments"
+              ? "job_detail_tab_comments"
+              : value === "related"
+                ? "job_detail_tab_related"
+                : "job_detail_tab_overview";
             fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ eventType: tabEvent }) }).catch(() => {});
           }}
-          className="flex-1 flex flex-col min-h-0 px-6 pb-6"
+          className="flex-1 flex flex-col min-h-0"
         >
-          <TabsList className={`grid w-full ${relatedJobs.length > 0 ? "grid-cols-3" : "grid-cols-2"} bg-muted h-11 p-1 rounded-lg`}>
+          {/* Underline-style tabs (mockup). Trigger row is fixed-height so
+              switching tabs doesn't reflow the modal even when the Related
+              trigger appears asynchronously. */}
+          <TabsList className="flex h-[40px] shrink-0 bg-transparent p-0 px-4 border-b border-line rounded-none justify-start gap-0">
             <TabsTrigger
               value="overview"
-              className="rounded-md text-sm font-medium data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background data-[state=inactive]:hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
+              className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-ink data-[state=active]:border-b-2 data-[state=active]:border-ink rounded-none px-3.5 py-2.5 -mb-px text-[calc(13px*var(--ui-scale))] font-medium text-ink-mute hover:text-ink-2 gap-1.5"
               data-testid="tab-job-details-overview"
             >
-              <FileText className="mr-2 h-4 w-4" />
+              <Info className="h-[14px] w-[14px]" />
               Overview
             </TabsTrigger>
             <TabsTrigger
               value="comments"
-              className="rounded-md text-sm font-medium data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background data-[state=inactive]:hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
+              className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-ink data-[state=active]:border-b-2 data-[state=active]:border-ink rounded-none px-3.5 py-2.5 -mb-px text-[calc(13px*var(--ui-scale))] font-medium text-ink-mute hover:text-ink-2 gap-1.5"
               data-testid="tab-job-details-comments"
             >
-              <MessageSquare className="mr-2 h-4 w-4" />
+              <MessageSquare className="h-[14px] w-[14px]" />
               Comments
             </TabsTrigger>
             {relatedJobs.length > 0 && (
               <TabsTrigger
                 value="related"
-                className="rounded-md text-sm font-medium data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background data-[state=inactive]:hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-ink data-[state=active]:border-b-2 data-[state=active]:border-ink rounded-none px-3.5 py-2.5 -mb-px text-[calc(13px*var(--ui-scale))] font-medium text-ink-mute hover:text-ink-2 gap-1.5"
                 data-testid="tab-job-details-related"
               >
-                <Link2 className="mr-2 h-4 w-4" />
-                Related ({relatedJobs.length + 1})
+                <Link2 className="h-[14px] w-[14px]" />
+                Related <span className="text-[calc(11px*var(--ui-scale))] font-mono text-ink-faint">{relatedJobs.length + 1}</span>
               </TabsTrigger>
             )}
           </TabsList>
 
-          <TabsContent value="overview" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-primary bg-card dark:bg-muted/30">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Job Details</h3>
-                  <div className="space-y-3 text-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-muted-foreground">{useTrayNumber ? "Tray #" : "Patient"}</span>
-                      <span className="font-medium text-right">{patientDisplayName}</span>
-                    </div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-muted-foreground">Phone</span>
-                      <span className="font-medium text-right">{job.phone || "—"}</span>
-                    </div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-muted-foreground">Job Type</span>
-                      <span className="font-medium text-right">{getJobTypeLabel(job.jobType)}</span>
-                    </div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-muted-foreground">Status</span>
-                      <span className="font-medium text-right">{getStatusLabel(job.status)}</span>
-                    </div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-muted-foreground">Destination</span>
-                      <span className="font-medium text-right">{getDestinationLabel(job.orderDestination)}</span>
-                    </div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-muted-foreground">Created</span>
-                      <span className="font-medium text-right">
-                        {format(new Date(job.createdAt), "MMM d, yyyy h:mm a")}
-                      </span>
-                    </div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-muted-foreground">Last updated</span>
-                      <span className="font-medium text-right">
-                        {format(new Date(job.updatedAt), "MMM d, yyyy h:mm a")}
-                      </span>
-                    </div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-muted-foreground">Status changed</span>
-                      <span className="font-medium text-right">
-                        {format(new Date(job.statusChangedAt || job.createdAt), "MMM d, yyyy h:mm a")}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+          <TabsContent
+            forceMount
+            value="overview"
+            className="mt-0 flex-1 min-h-0 overflow-y-auto px-6 py-5 data-[state=inactive]:hidden"
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-7">
+              {/* Left column: Patient & Order, Custom fields, Notes */}
+              <div>
+                <h4 className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                  Patient &amp; Order
+                </h4>
+                <dl className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-3 text-[calc(13px*var(--ui-scale))]">
+                  <dt className="text-ink-mute pt-0.5">{useTrayNumber ? "Tray" : "Patient"}</dt>
+                  <dd className="m-0 flex items-center gap-2">
+                    <span
+                      className="w-7 h-7 rounded-full bg-paper-2 grid place-items-center text-[calc(10.5px*var(--ui-scale))] font-semibold text-ink-2 tracking-wider shrink-0"
+                      aria-hidden
+                    >
+                      {(patientDisplayName || "?").split(" ").filter(Boolean).slice(0, 2).map((s) => s[0] || "").join("").toUpperCase() || "?"}
+                    </span>
+                    <span className="font-medium">{patientDisplayName}</span>
+                  </dd>
 
-                <div className="rounded-md border border-border p-4 border-l-[3px] border-l-green-500 bg-card dark:bg-muted/30">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Notes & Custom Fields</h3>
+                  <dt className="text-ink-mute pt-0.5">Phone</dt>
+                  <dd className="m-0 flex items-center gap-1.5">
+                    <span className="font-mono text-[calc(12.5px*var(--ui-scale))]">{job.phone || "—"}</span>
+                    {job.phone && (
+                      <button
+                        type="button"
+                        onClick={() => { window.location.href = `tel:${job.phone}`; }}
+                        className="w-6 h-6 rounded grid place-items-center text-ink-mute hover:bg-line-2 hover:text-ink"
+                        aria-label="Call"
+                        title="Call"
+                        data-testid="button-call-patient"
+                      >
+                        <Phone className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </dd>
 
-                  <div className="space-y-2 text-sm">
-                    <p className="text-muted-foreground">Notes</p>
-                    <div className="rounded-md border border-border bg-muted/40 p-3 min-h-[80px]">
-                      {job.notes?.trim() ? (
-                        <p className="whitespace-pre-wrap">{job.notes}</p>
-                      ) : (
-                        <p className="text-muted-foreground">No notes added.</p>
-                      )}
-                    </div>
-                  </div>
+                  <dt className="text-ink-mute pt-0.5">Job type</dt>
+                  <dd className="m-0">
+                    {(() => {
+                      const c = getJobTypeBadgeColor(job.jobType);
+                      return (
+                        <Badge
+                          className="border-0"
+                          style={{ backgroundColor: c.background, color: c.text }}
+                        >
+                          {getJobTypeLabel(job.jobType)}
+                        </Badge>
+                      );
+                    })()}
+                  </dd>
 
-                  {customColumns.length > 0 ? (
-                    <div className="space-y-2">
-                      {customColumns.map((column) => {
+                  <dt className="text-ink-mute pt-0.5">Sent to</dt>
+                  <dd className="m-0">
+                    <Badge className="border-0 bg-paper-2 text-ink-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-ink-3 mr-1.5" />
+                      {getDestinationLabel(job.orderDestination)}
+                    </Badge>
+                  </dd>
+
+                  <dt className="text-ink-mute pt-0.5">Created</dt>
+                  <dd className="m-0 font-mono text-[calc(12.5px*var(--ui-scale))]">
+                    {format(new Date(job.createdAt), "MMM d · HH:mm")}
+                  </dd>
+
+                  <dt className="text-ink-mute pt-0.5">Updated</dt>
+                  <dd className="m-0 font-mono text-[calc(12.5px*var(--ui-scale))]">
+                    {lastUpdatedRelative}
+                  </dd>
+                </dl>
+
+                {customColumns.length > 0 && (
+                  <>
+                    <div className="border-t border-line my-5" />
+                    <h4 className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                      Custom fields
+                    </h4>
+                    <dl className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-3 text-[calc(13px*var(--ui-scale))]">
+                      {customColumns.map((column: any) => {
                         const value = (job.customColumnValues as Record<string, any>)?.[column.id];
                         const displayValue =
                           column.type === "checkbox" ? (value ? "Yes" : "No") : value || "—";
-
                         return (
-                          <div key={column.id} className="flex items-start justify-between gap-3 text-sm">
-                            <span className="text-muted-foreground">{column.name}</span>
-                            <span className="font-medium text-right">{displayValue}</span>
+                          <div key={column.id} className="contents">
+                            <dt className="text-ink-mute pt-0.5">{column.name}</dt>
+                            <dd className="m-0 font-medium">{displayValue}</dd>
                           </div>
                         );
                       })}
-                    </div>
+                    </dl>
+                  </>
+                )}
+
+                <div className="border-t border-line my-5" />
+                <h4 className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                  Notes
+                </h4>
+                <div className="rounded-lg bg-panel-2 px-3 py-2.5 text-[calc(13px*var(--ui-scale))] leading-relaxed text-ink-2 min-h-[60px]">
+                  {job.notes?.trim() ? (
+                    <p className="whitespace-pre-wrap m-0">{job.notes}</p>
                   ) : (
-                    <p className="text-sm text-muted-foreground">No custom fields configured.</p>
+                    <p className="text-ink-mute m-0">No notes added.</p>
                   )}
                 </div>
               </div>
 
-              <div className="space-y-3 border-t border-border pt-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
-                  <History className="h-3.5 w-3.5" />
-                  Status History
-                </h3>
-
-                {historyLoading ? (
-                  <div className="rounded-md border border-border p-6 text-center text-muted-foreground">
-                    Loading history...
-                  </div>
-                ) : statusHistory.length === 0 ? (
-                  <div className="rounded-md border border-border p-6 text-center text-muted-foreground">
-                    No status history available for this job.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {statusHistory.map((entry) => {
-                      const actorName =
-                        entry.changedByUser?.firstName || entry.changedByUser?.lastName
+              {/* Right column: Timeline (lifecycle history with actor + timestamp). */}
+              <div>
+                <h4 className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                  Timeline
+                </h4>
+                <div className="relative pl-[18px]">
+                  {/* Vertical line behind timeline dots */}
+                  <span className="absolute left-[5px] top-2 bottom-2 w-[1.5px] bg-line" aria-hidden />
+                  {trackStatuses.map((s) => {
+                    const stepIdx = trackStatuses.findIndex((t) => t.id === s.id);
+                    const isPast = stepIdx < currentStepIdx;
+                    const isCurrent = stepIdx === currentStepIdx;
+                    const entry = statusHistory.find((e) => e.newStatus === s.id);
+                    const actorName = entry
+                      ? (entry.changedByUser?.firstName || entry.changedByUser?.lastName
                           ? `${entry.changedByUser?.firstName || ""} ${entry.changedByUser?.lastName || ""}`.trim()
-                          : "System";
-                      const oldLabel = entry.oldStatus ? getStatusLabel(entry.oldStatus) : "Created";
-                      const newLabel = getStatusLabel(entry.newStatus);
-
-                      return (
-                        <div
-                          key={entry.id}
-                          className="rounded-md border border-border bg-muted/30 px-4 py-2.5 flex items-start gap-3"
-                        >
-                          <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${
-                            entry.newStatus === "completed" ? "bg-green-500" :
-                            entry.newStatus === "cancelled" ? "bg-red-400" :
-                            entry.oldStatus === null ? "bg-blue-500" :
-                            "bg-muted-foreground/50"
-                          }`} />
-                          <div className="flex-1 flex items-start justify-between gap-4 min-w-0">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium">
-                              {entry.oldStatus ? `${oldLabel} → ${newLabel}` : `Initial status: ${newLabel}`}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground flex items-center gap-2">
-                              <span className="inline-flex items-center gap-1">
-                                <Clock3 className="h-3 w-3" />
-                                {format(new Date(entry.changedAt), "MMM d, yyyy h:mm a")}
-                              </span>
-                              <span>•</span>
-                              <span>{actorName}</span>
-                            </p>
-                          </div>
-                          </div>
+                          : "System")
+                      : null;
+                    return (
+                      <div key={s.id} className="relative py-1.5">
+                        <span
+                          className={cn(
+                            "absolute -left-[17px] top-2 w-[9px] h-[9px] rounded-full",
+                            isPast && "bg-ink-3 ring-[1.5px] ring-ink-3",
+                            isCurrent && "bg-otto-accent ring-[1.5px] ring-otto-accent shadow-[0_0_0_4px_var(--otto-accent-soft)]",
+                            !isPast && !isCurrent && "bg-panel ring-[1.5px] ring-line-strong",
+                          )}
+                          aria-hidden
+                        />
+                        <div className="text-[calc(13px*var(--ui-scale))] font-medium text-ink leading-tight">
+                          {s.label}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {entry ? (
+                            <>
+                              <span className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute">{actorName}</span>
+                              <span className="font-mono text-[calc(11px*var(--ui-scale))] text-ink-mute">
+                                {format(new Date(entry.changedAt), "MMM d · HH:mm")}
+                              </span>
+                            </>
+                          ) : isCurrent ? (
+                            <span className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute italic">in progress · now</span>
+                          ) : (
+                            <span className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute italic">pending</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {/* No bottom "Loading…" sentinel — the timeline renders
+                      its skeleton state from trackStatuses synchronously and
+                      fills in actor/timestamps as statusHistory arrives, so
+                      we avoid a height shift when the async query resolves. */}
+                </div>
               </div>
             </div>
           </TabsContent>
 
-          <TabsContent value="comments" className="flex-1 min-h-0 mt-4 overflow-hidden">
-            <div className="h-full rounded-md border border-border overflow-hidden bg-white dark:bg-card">
-              <JobCommentsPanel
-                job={job}
-                header={
-                  <div className="px-4 py-3 border-b border-border flex items-center gap-2 text-sm">
-                    <MessageSquare className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">Comments</span>
-                  </div>
-                }
-              />
+          <TabsContent
+            forceMount
+            value="comments"
+            className="mt-0 flex-1 min-h-0 overflow-hidden data-[state=inactive]:hidden"
+          >
+            <div className="h-full overflow-hidden bg-panel">
+              <JobCommentsPanel job={job} />
             </div>
           </TabsContent>
 
           {/* Related Jobs tab — auto-detected by patient name match + manually linked */}
           {relatedJobs.length > 0 && (
-            <TabsContent value="related" className="flex-1 min-h-0 mt-4 overflow-y-auto pr-1">
+            <TabsContent
+              forceMount
+              value="related"
+              className="mt-0 flex-1 min-h-0 overflow-y-auto px-6 py-5 data-[state=inactive]:hidden"
+            >
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground">
                   Related jobs for this patient (auto-detected by name match and manually linked).
@@ -445,7 +524,7 @@ export default function JobDetailsModal({
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">{useTrayNumber ? "Tray #" : "Patient"}</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Type</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Status</th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Destination</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Lab</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Created</th>
                         <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground"></th>
                       </tr>
@@ -461,7 +540,7 @@ export default function JobDetailsModal({
                             <span className="font-medium">{patientDisplayName}</span>
                             <span className="text-muted-foreground">(This job)</span>
                             {overdueJobIds.has(job.id) && (
-                              <Badge className="text-[10px] px-1.5 py-0 h-4 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">OVERDUE</Badge>
+                              <Badge className="text-[calc(10px*var(--ui-scale))] px-1.5 py-0 h-4 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">OVERDUE</Badge>
                             )}
                           </div>
                         </td>
@@ -501,10 +580,10 @@ export default function JobDetailsModal({
                                 )}
                                 <span className="font-medium">{rjDisplayName}</span>
                                 {rj.archived && (
-                                  <Badge variant="secondary" className="text-[10px] px-1 py-0">archived</Badge>
+                                  <Badge variant="secondary" className="text-[calc(10px*var(--ui-scale))] px-1 py-0">archived</Badge>
                                 )}
                                 {overdueJobIds.has(rj.id) && (
-                                  <Badge className="text-[10px] px-1.5 py-0 h-4 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">OVERDUE</Badge>
+                                  <Badge className="text-[calc(10px*var(--ui-scale))] px-1.5 py-0 h-4 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">OVERDUE</Badge>
                                 )}
                               </div>
                             </td>
@@ -615,7 +694,57 @@ export default function JobDetailsModal({
           )}
 
         </Tabs>
-      </SheetContent>
-    </Sheet>
+
+        {/* Footer — three-zone layout: left meta · centered status nav · right destructive/dismiss.
+            Status mutation buttons sit dead-center so the user's eyes land on
+            the primary lifecycle action rather than scanning a long row of
+            mixed-purpose CTAs. */}
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-6 py-3.5 border-t border-line bg-panel-2">
+          <span className="text-[calc(11.5px*var(--ui-scale))] font-mono text-ink-mute justify-self-start">
+            {lastUpdatedRelative ? `Updated ${lastUpdatedRelative}` : ""}
+          </span>
+          <div className="flex items-center gap-2 justify-self-center">
+            {previousStatus && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => updateStatusMutation.mutate(previousStatus.id)}
+                data-testid="button-revert-status"
+              >
+                <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
+                Revert to {previousStatus.label}
+              </Button>
+            )}
+            {nextStatus && (
+              <Button
+                size="sm"
+                onClick={() => updateStatusMutation.mutate(nextStatus.id)}
+                data-testid="button-advance-status"
+              >
+                Advance to {nextStatus.label}
+                <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 justify-self-end">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onEditJob(job)}
+              data-testid="button-edit-job-from-details"
+            >
+              Edit
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+            >
+              Close
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

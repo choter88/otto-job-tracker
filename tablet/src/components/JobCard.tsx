@@ -75,7 +75,9 @@ export function JobCard({
 
   const patientName = job.patientLastName && job.patientFirstName
     ? `${job.patientLastName}, ${job.patientFirstName}`
-    : job.trayNumber || job.orderId;
+    : job.trayNumber
+      ? `Tray ${job.trayNumber}`
+      : "Unnamed";
 
   return (
     <div className={`job-card ${ageClass}`} onClick={onSelect}>

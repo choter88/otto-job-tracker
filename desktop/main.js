@@ -850,6 +850,46 @@ function maybeRestoreDatabaseFromArgs() {
     if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
 
     fs.copyFileSync(restoreFrom, sqlitePath);
+
+    // Stamp `onboarding.source = 'backup'` on every office in the restored DB
+    // so that the BackupRestoreBanner shows after the user logs in. Without
+    // this, a backup taken while `source=fresh` would carry that value through,
+    // and the user would never see the "restored from backup" indicator.
+    try {
+      const Database = require("better-sqlite3");
+      const db = new Database(sqlitePath);
+      try {
+        const rows = db.prepare("SELECT id, settings FROM offices").all();
+        const updateStmt = db.prepare("UPDATE offices SET settings = ? WHERE id = ?");
+        for (const row of rows) {
+          let parsed = {};
+          try {
+            parsed = typeof row.settings === "string" ? JSON.parse(row.settings || "{}") : (row.settings || {});
+          } catch {
+            parsed = {};
+          }
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) parsed = {};
+          const now = new Date().toISOString();
+          parsed.onboarding = {
+            state: "completed",
+            source: "backup",
+            completedSteps: [
+              "welcome", "identifier_mode", "statuses", "job_types",
+              "destinations", "custom_columns", "notification_rules", "ehr_import", "done",
+            ],
+            skippedAt: null,
+            completedAt: now,
+            startedAt: now,
+            version: 1,
+          };
+          updateStmt.run(JSON.stringify(parsed), row.id);
+        }
+      } finally {
+        db.close();
+      }
+    } catch (stampErr) {
+      console.error("Restore: failed to stamp onboarding.source=backup", stampErr);
+    }
   } catch (error) {
     console.error("Restore failed:", error);
   }
@@ -1887,6 +1927,34 @@ ipcMain.handle("otto:outbox:replace", async (_event, items) => {
 ipcMain.handle("otto:outbox:clear", async () => {
   _writeOutboxItems([]);
   return { ok: true };
+});
+
+// Open an external URL in the user's default browser.
+// Only allows https:// URLs whose origin matches the configured portal origin —
+// prevents arbitrary URL opens from compromised renderer content.
+ipcMain.handle("otto:external:open", async (_event, rawUrl) => {
+  if (typeof rawUrl !== "string" || !rawUrl) {
+    return { ok: false, message: "No URL provided." };
+  }
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: false, message: "Invalid URL." };
+  }
+  if (parsed.protocol !== "https:") {
+    return { ok: false, message: "Only https URLs are allowed." };
+  }
+  const portalBase = getPortalBaseUrl();
+  if (parsed.origin !== portalBase.origin) {
+    return { ok: false, message: "URL is not in the allowed portal origin." };
+  }
+  try {
+    await shell.openExternal(parsed.toString());
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: String(error?.message || error) };
+  }
 });
 
 ipcMain.handle("otto:diagnostics:show", async () => {

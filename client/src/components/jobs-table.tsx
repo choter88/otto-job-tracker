@@ -27,6 +27,10 @@ import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
 import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
 import ImportWizard from "./import-wizard";
+import PageHead, { SubAccent, SubDanger, SubDot } from "./page-head";
+import LifecycleTrack from "./lifecycle-track";
+import { sortByOrder } from "@/lib/custom-list-sort";
+import { useDynamicWindowMinWidth } from "@/hooks/use-dynamic-window-min-width";
 import type { Job, Office } from "@shared/schema";
 import { format } from "date-fns";
 import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
@@ -39,6 +43,19 @@ interface JobsTableProps {
   jobs: Job[];
   loading?: boolean;
 }
+
+// Fallback statuses used when an office has no custom list (shouldn't happen
+// today since createOffice seeds defaults, but kept as a safety net for
+// older offices upgraded from versions before custom statuses).
+const DEFAULT_STATUSES_FALLBACK = [
+  { id: "job_created", label: "Job Created", order: 1 },
+  { id: "ordered", label: "Ordered", order: 2 },
+  { id: "in_progress", label: "In Progress", order: 3 },
+  { id: "quality_check", label: "Quality Check", order: 4 },
+  { id: "ready_for_pickup", label: "Ready for Pickup", order: 5 },
+  { id: "completed", label: "Completed", order: 6 },
+  { id: "cancelled", label: "Cancelled", order: 7 },
+];
 
 interface OpenJobEventDetail {
   jobId?: string;
@@ -106,13 +123,18 @@ function EditableCell({
     : hasValue ? String(value) : "";
 
   // Select type: use a native Select dropdown instead of popover
+  // Radix's <Select.Item> rejects an empty-string value (it's reserved for
+  // the "show placeholder" state), so we use a sentinel for the "(none)"
+  // option and translate to/from null at the boundary.
+  const NONE_SENTINEL = "__otto_none__";
   if (columnType === "select" && options && options.length > 0) {
     return (
       <Select
-        value={String(value ?? "")}
+        value={hasValue ? String(value) : NONE_SENTINEL}
         onValueChange={(newValue) => {
-          if (newValue !== (value ?? "")) {
-            onSave(jobId, columnId, newValue || null);
+          const resolved = newValue === NONE_SENTINEL ? null : newValue;
+          if (resolved !== (value ?? null)) {
+            onSave(jobId, columnId, resolved);
           }
         }}
       >
@@ -120,12 +142,12 @@ function EditableCell({
           className="w-auto border-none p-0 h-auto min-h-0 focus:ring-0 focus:ring-offset-0 shadow-none"
           onClick={(e) => e.stopPropagation()}
         >
-          <span className={cn("text-sm truncate", hasValue ? "text-foreground" : "text-muted-foreground/60")}>
+          <span className={cn("text-sm line-clamp-2 break-words text-left", hasValue ? "text-foreground" : "text-muted-foreground/60")}>
             {display || placeholder}
           </span>
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="">
+          <SelectItem value={NONE_SENTINEL}>
             <span className="text-muted-foreground">(none)</span>
           </SelectItem>
           {options.map((opt) => (
@@ -152,8 +174,8 @@ function EditableCell({
           )}
           onClick={(e) => e.stopPropagation()}
         >
-          <Icon className="h-3 w-3 shrink-0 text-muted-foreground/40" />
-          <span className="truncate">{display || placeholder}</span>
+          <Icon className="h-3 w-3 shrink-0 text-muted-foreground/40 mt-0.5" />
+          <span className="line-clamp-2 break-words">{display || placeholder}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -194,10 +216,31 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [destinationFilter, setDestinationFilter] = useState("all");
+  // Mockup's All / Active / Redos toggle. "active" hides completed+cancelled; "redos" filters to redo jobs.
+  const [tabFilter, setTabFilter] = useState<"all" | "active" | "redos">("all");
   const [customColumnFilters, setCustomColumnFilters] = useState<Record<string, any>>({});
+  // All columns visible by default — users can hide via the Columns
+  // dropdown if they want a slimmer view.
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(() => {
     try {
+      // One-shot reset: if a previous build hid columns by default, clear
+      // those flags so the user gets the full set back. Triggered by writing
+      // the v3 marker after the reset.
+      const resetMarker = "otto.worklist.columnVisibility.reset.v3";
+      const alreadyReset = window.localStorage.getItem(resetMarker) === "1";
       const stored = window.localStorage.getItem("otto.worklist.columnVisibility");
+      if (!alreadyReset) {
+        // Drop any false-flagged hides from prior migrations.
+        const base = stored ? JSON.parse(stored) : {};
+        const cleaned: Record<string, boolean> = {};
+        for (const [k, v] of Object.entries(base)) {
+          if (v !== false) cleaned[k] = v as boolean;
+        }
+        window.localStorage.setItem(resetMarker, "1");
+        // Also clear the older v2 marker so we don't loop on rollbacks.
+        window.localStorage.removeItem("otto.worklist.columnVisibility.migration.v2");
+        return cleaned;
+      }
       return stored ? JSON.parse(stored) : {};
     } catch { return {}; }
   });
@@ -212,6 +255,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [messageTemplatesOpen, setMessageTemplatesOpen] = useState(false);
   const [selectedMessagesJobId, setSelectedMessagesJobId] = useState<string | null>(null);
   const tableViewportRef = useRef<HTMLDivElement | null>(null);
+  // useState copy of the table element so the dynamic-min-width hook can react
+  // when the element is mounted (refs alone don't trigger re-renders).
+  const [tableEl, setTableEl] = useState<HTMLDivElement | null>(null);
+  useDynamicWindowMinWidth(
+    tableEl,
+    typeof document !== "undefined" ? document.querySelector<HTMLElement>('[data-testid="sidebar"]') : null,
+  );
 
   // Column visibility persistence
   useEffect(() => {
@@ -489,11 +539,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     },
   });
 
-  // Memoize custom arrays from office settings
-  const customStatuses = useMemo(() => office?.settings?.customStatuses || [], [office?.settings?.customStatuses]);
-  const customJobTypes = useMemo(() => office?.settings?.customJobTypes || [], [office?.settings?.customJobTypes]);
-  const customOrderDestinations = useMemo(() => office?.settings?.customOrderDestinations || [], [office?.settings?.customOrderDestinations]);
-  const customColumns = useMemo(() => (office?.settings?.customColumns || []).filter((col: any) => col.active), [office?.settings?.customColumns]);
+  // Memoize custom arrays from office settings, sorted by `order` so every
+  // downstream consumer (filter dropdowns, lifecycle, etc.) sees a consistent
+  // order — same as the drag-rendered order in Settings.
+  const customStatuses = useMemo(() => sortByOrder((office?.settings?.customStatuses || []) as any[]), [office?.settings?.customStatuses]);
+  const customJobTypes = useMemo(() => sortByOrder((office?.settings?.customJobTypes || []) as any[]), [office?.settings?.customJobTypes]);
+  const customOrderDestinations = useMemo(() => sortByOrder((office?.settings?.customOrderDestinations || []) as any[]), [office?.settings?.customOrderDestinations]);
+  const customColumns = useMemo(() => sortByOrder((office?.settings?.customColumns || []) as any[]).filter((col: any) => col.active), [office?.settings?.customColumns]);
   
   // Get identifier mode from office settings
   const jobIdentifierMode = useMemo(() => office?.settings?.jobIdentifierMode || "patientName", [office?.settings?.jobIdentifierMode]);
@@ -502,8 +554,11 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   // Memoize filtered and sorted jobs
   const filteredJobs = useMemo(() => {
     return jobs.filter(job => {
+      // Tab filter — All / Active / Redos
+      if (tabFilter === "active" && (job.status === "completed" || job.status === "cancelled")) return false;
+      if (tabFilter === "redos" && !job.isRedoJob) return false;
       // Search by tray number or patient name based on identifier mode
-      const matchesSearch = searchQuery === "" || 
+      const matchesSearch = searchQuery === "" ||
         (useTrayNumber 
           ? (job.trayNumber || "").toLowerCase().includes(searchQuery.toLowerCase())
           : `${job.patientFirstName} ${job.patientLastName}`.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -585,7 +640,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         return aValue < bValue ? 1 : -1;
       }
     });
-  }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, customColumnFilters, sortBy, sortOrder, customColumns]);
+  }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, tabFilter, customColumnFilters, sortBy, sortOrder, customColumns]);
 
   // Count jobs per patient for the "related" indicator
   const patientJobCounts = useMemo(() => {
@@ -871,6 +926,17 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     };
   }, []);
 
+  // Counts for the page-head sub line — must be declared BEFORE any early
+  // return below, or React complains about a changing hook count.
+  // Note: overdue is server-computed; we just hide the indicator until the
+  // dedicated /api/jobs/overdue query lands. Still compute readyForPickupCount
+  // locally for the sub line.
+  const readyForPickupCount = useMemo(
+    () => jobs.filter((j) => j.status === "ready_for_pickup").length,
+    [jobs],
+  );
+  const overdueCountForHeader = overdueJobs.length;
+
   if (loading) {
     return (
       <Card>
@@ -883,13 +949,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         </div>
         <div className="overflow-x-auto">
           <Table className="text-sm [&_th]:h-10 [&_th]:px-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-center [&_td]:px-3 [&_td]:py-3 [&_td]:text-center">
-            <TableHeader className="[&_th]:bg-primary/[0.06] dark:[&_th]:bg-primary/[0.10]">
+            <TableHeader className="[&_th]:bg-panel">
               <TableRow>
                 <TableHead className="w-10" />
                 <TableHead className="min-w-[160px]">Patient</TableHead>
                 <TableHead className="min-w-[120px]">Job Type</TableHead>
-                <TableHead className="min-w-[120px]">Status</TableHead>
-                <TableHead className="min-w-[120px]">Destination</TableHead>
+                <TableHead className="min-w-[180px]">Status</TableHead>
+                <TableHead className="min-w-[120px]">Lab</TableHead>
                 <TableHead>Order Date</TableHead>
                 <TableHead className="w-20" />
               </TableRow>
@@ -915,208 +981,176 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
   return (
     <>
-      <div data-testid="card-jobs-table" className="bg-background min-h-full">
-        {/* Sticky toolbar: search, filters stay fixed while scrolling */}
-        <div className="sticky top-0 z-20 bg-primary/[0.04] dark:bg-primary/[0.08] backdrop-blur-md border-b border-border/60">
-        {/* Row 1: Search + Select/Link + Actions */}
-        <div className="flex items-center gap-2 px-5 py-2.5">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+      {/* The dashboard <main> already provides bg-panel (white). Keep this
+          inner container transparent so toolbar + table sit on the same
+          white surface — matches the mockup's clean look. */}
+      <div data-testid="card-jobs-table" className="min-h-full px-6 pt-3">
+        <PageHead
+          className="mb-3"
+          sub={
+            <>
+              <span>{filteredJobs.length} of {jobs.length} jobs</span>
+              {overdueCountForHeader > 0 && (
+                <>
+                  <SubDot />
+                  <button
+                    type="button"
+                    onClick={() => { setStatusFilter("all"); setTypeFilter("all"); setDestinationFilter("all"); setTabFilter("active"); }}
+                    className="hover:underline underline-offset-2 cursor-pointer"
+                    data-testid="metric-filter-overdue"
+                  >
+                    <SubDanger>{overdueCountForHeader} overdue</SubDanger>
+                  </button>
+                </>
+              )}
+              {readyForPickupCount > 0 && (
+                <>
+                  <SubDot />
+                  <button
+                    type="button"
+                    onClick={() => { setStatusFilter("ready_for_pickup"); }}
+                    className="hover:underline underline-offset-2 cursor-pointer"
+                    data-testid="metric-filter-ready-for-pickup"
+                  >
+                    <SubAccent>{readyForPickupCount} ready for pickup</SubAccent>
+                  </button>
+                </>
+              )}
+            </>
+          }
+          actions={
+            <>
+              <Button variant="outline" size="sm" onClick={() => setImportWizardOpen(true)} data-testid="button-import-ehr-head">
+                <Upload className="mr-1.5 h-3.5 w-3.5" />
+                Import
+              </Button>
+              <Button size="sm" onClick={() => { setEditingJob(undefined); setJobDialogOpen(true); }} data-testid="button-new-job-head">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                New Job
+              </Button>
+            </>
+          }
+        />
+
+        {/* Mockup-style toolbar — single row: search, tab toggle, filter pills, columns */}
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          {/* Search */}
+          <div className="relative flex-1 max-w-[320px] min-w-[180px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-[14px] w-[14px] text-ink-mute pointer-events-none" />
             <Input
-              placeholder={useTrayNumber ? "Search trays" : "Search patients"}
+              placeholder={useTrayNumber ? "Search trays, phone…" : "Search patients, phone…"}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 h-8 w-56 text-sm"
+              className="pl-9 h-9 bg-paper-2 border-0 rounded-lg text-[calc(13px*var(--ui-scale))] focus-visible:bg-panel"
               data-testid="input-search"
             />
           </div>
 
-          <div className="w-px h-4 bg-border" />
-
-          <Button
-            variant={selectionMode ? "secondary" : "ghost"}
-            size="xs"
-            className="gap-1.5"
-            onClick={() => {
-              if (selectionMode) { setSelectionMode(false); setSelectedJobs([]); }
-              else { setSelectionMode(true); setLinkMode(false); setSelectedJobs([]); }
-            }}
-          >
-            <CheckSquare className="h-3.5 w-3.5" />
-            {selectionMode ? "Cancel" : "Select"}
-            {selectionMode && selectedJobs.length > 0 && (
-              <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
-                {selectedJobs.length}
-              </span>
-            )}
-          </Button>
-
-          <Button
-            variant={linkMode ? "secondary" : "ghost"}
-            size="xs"
-            className="gap-1.5"
-            onClick={() => {
-              if (linkMode) { setLinkMode(false); setSelectedJobs([]); }
-              else { setLinkMode(true); setSelectionMode(false); setSelectedJobs([]); }
-            }}
-          >
-            <Link2 className="h-3.5 w-3.5" />
-            {linkMode ? "Cancel" : "Link Jobs"}
-            {linkMode && selectedJobs.length > 0 && (
-              <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground px-1">
-                {selectedJobs.length}
-              </span>
-            )}
-          </Button>
-
-          {/* Link mode actions */}
-          {linkMode && (
-            <>
-              <div className="w-px h-4 bg-border" />
-              <span className="text-xs text-muted-foreground">Select 2+ to link</span>
-              <Button variant="outline" size="xs" disabled={selectedJobs.length < 2} onClick={() => linkJobsMutation.mutate(selectedJobs)}>
-                <Link2 className="mr-1.5 h-3.5 w-3.5" />
-                Link {selectedJobs.length > 0 ? `(${selectedJobs.length})` : ""}
-              </Button>
-            </>
-          )}
-
-          {/* Select mode bulk actions */}
-          {selectionMode && (
-            <>
-              <div className="w-px h-4 bg-border" />
-              {selectedJobs.length > 0 && (
-                <span className="text-xs font-medium">{selectedJobs.length} selected</span>
-              )}
-              <Select
-                value=""
-                onValueChange={(newStatus) => {
-                  if (!newStatus) return;
-                  bulkUpdateMutation.mutate({ jobIds: selectedJobs, updates: { status: newStatus } });
-                }}
-                disabled={selectedJobs.length === 0}
+          {/* All / Active / Redos toggle group */}
+          <div className="inline-flex bg-paper-2 rounded-lg p-[3px] gap-px" role="tablist" data-testid="tab-filter-group">
+            {([
+              { id: "all", label: "All" },
+              { id: "active", label: "Active" },
+              { id: "redos", label: "Redos" },
+            ] as const).map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTabFilter(t.id)}
+                className={cn(
+                  "h-7 px-3 rounded-md text-[calc(12.5px*var(--ui-scale))] font-medium transition-colors",
+                  tabFilter === t.id
+                    ? "bg-panel text-ink shadow-soft"
+                    : "text-ink-mute hover:text-ink-2",
+                )}
+                data-testid={`tab-filter-${t.id}`}
               >
-                <SelectTrigger className="h-7 w-36 text-xs">
-                  <SelectValue placeholder="Update Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(customStatuses.length > 0 ? customStatuses : [
-                    { id: "job_created", label: "Job Created" },
-                    { id: "ordered", label: "Ordered" },
-                    { id: "in_progress", label: "In Progress" },
-                    { id: "quality_check", label: "Quality Check" },
-                    { id: "ready_for_pickup", label: "Ready for Pickup" },
-                    { id: "completed", label: "Completed" },
-                    { id: "cancelled", label: "Cancelled" },
-                  ]).map((s: any) => (
-                    <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button variant="destructive" size="xs" disabled={selectedJobs.length === 0} onClick={() => setBulkDeleteConfirmOpen(true)}>
-                Delete
-              </Button>
-            </>
-          )}
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-          <div className="flex-1" />
+          <div className="w-px h-5 bg-line" />
 
-          <Button variant="outline" size="xs" onClick={() => setImportWizardOpen(true)} data-testid="button-import-ehr">
-            <Upload className="mr-1.5 h-3.5 w-3.5" />
-            Import from EHR
-          </Button>
-          <Button size="xs" onClick={() => { setEditingJob(undefined); setJobDialogOpen(true); }} data-testid="button-new-job">
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            New Job
-          </Button>
-        </div>
-
-        {/* Row 2: Persistent Filters + Column Toggle */}
-        <div className="flex flex-wrap items-center gap-2 px-5 py-2">
+          {/* Filter pills — Status / Type / Lab */}
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-status-filter">
-              <SelectValue placeholder="All Statuses" />
+            <SelectTrigger
+              className={cn(
+                "h-[30px] w-auto gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
+                statusFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
+              )}
+              data-testid="select-status-filter"
+            >
+              <span className="truncate">{statusFilter === "all" ? "Status" : (customStatuses.find((s: any) => s.id === statusFilter)?.label || "Status")}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              {customStatuses.length > 0 ? (
-                customStatuses.map((status: any) => (
-                  <SelectItem key={status.id} value={status.id}>{status.label}</SelectItem>
-                ))
-              ) : (
-                <>
-                  <SelectItem value="job_created">Job Created</SelectItem>
-                  <SelectItem value="ordered">Ordered</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
-                </>
-              )}
+              <SelectItem value="all">All statuses</SelectItem>
+              {(customStatuses.length > 0 ? customStatuses : [
+                { id: "job_created", label: "Job Created" },
+                { id: "ordered", label: "Ordered" },
+                { id: "in_progress", label: "In Progress" },
+                { id: "ready_for_pickup", label: "Ready for Pickup" },
+              ]).map((s: any) => (
+                <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
           <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-type-filter">
-              <SelectValue placeholder="All Types" />
+            <SelectTrigger
+              className={cn(
+                "h-[30px] w-auto gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
+                typeFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
+              )}
+              data-testid="select-type-filter"
+            >
+              <span className="truncate">{typeFilter === "all" ? "Type" : (customJobTypes.find((t: any) => t.id === typeFilter)?.label || "Type")}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              {customJobTypes.length > 0 ? (
-                customJobTypes.map((type: any) => (
-                  <SelectItem key={type.id} value={type.id}>{type.label}</SelectItem>
-                ))
-              ) : (
-                <>
-                  <SelectItem value="contacts">Contacts</SelectItem>
-                  <SelectItem value="glasses">Glasses</SelectItem>
-                  <SelectItem value="sunglasses">Sunglasses</SelectItem>
-                </>
-              )}
+              <SelectItem value="all">All types</SelectItem>
+              {(customJobTypes.length > 0 ? customJobTypes : [
+                { id: "contacts", label: "Contacts" },
+                { id: "glasses", label: "Glasses" },
+                { id: "sunglasses", label: "Sunglasses" },
+              ]).map((t: any) => (
+                <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
           <Select value={destinationFilter} onValueChange={setDestinationFilter}>
-            <SelectTrigger className="h-8 w-auto min-w-[130px] text-xs" data-testid="select-destination-filter">
-              <SelectValue placeholder="All Destinations" />
+            <SelectTrigger
+              className={cn(
+                "h-[30px] w-auto gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
+                destinationFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
+              )}
+              data-testid="select-destination-filter"
+            >
+              <span className="truncate">{destinationFilter === "all" ? "Lab" : (customOrderDestinations.find((d: any) => d.label === destinationFilter || d.id === destinationFilter)?.label || "Lab")}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Destinations</SelectItem>
-              {customOrderDestinations.length > 0 ? (
-                customOrderDestinations.map((dest: any) => (
-                  <SelectItem key={dest.id} value={dest.label}>{dest.label}</SelectItem>
-                ))
-              ) : (
-                <>
-                  <SelectItem value="Vision Lab">Vision Lab</SelectItem>
-                  <SelectItem value="EyeTech Labs">EyeTech Labs</SelectItem>
-                  <SelectItem value="Premium Optics">Premium Optics</SelectItem>
-                </>
-              )}
+              <SelectItem value="all">All labs</SelectItem>
+              {(customOrderDestinations.length > 0 ? customOrderDestinations : [
+                { id: "Vision Lab", label: "Vision Lab" },
+                { id: "EyeTech Labs", label: "EyeTech Labs" },
+                { id: "Premium Optics", label: "Premium Optics" },
+              ]).map((d: any) => (
+                <SelectItem key={d.id} value={d.label || d.id}>{d.label || d.id}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
-
-          {customColumns
-            .filter((col: any) => col.type === 'checkbox')
-            .map((column: any) => (
-              <label key={column.id} className="flex items-center gap-2 px-3 py-2 bg-muted rounded-md cursor-pointer">
-                <Checkbox
-                  checked={customColumnFilters[column.id] === 'unchecked'}
-                  onCheckedChange={(checked) => setCustomColumnFilters({ ...customColumnFilters, [column.id]: checked ? 'unchecked' : null })}
-                  data-testid={`checkbox-filter-custom-${column.id}`}
-                />
-                <span className="text-xs">{column.name} (unchecked only)</span>
-              </label>
-            ))}
 
           {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || Object.keys(customColumnFilters).some(k => customColumnFilters[k])) && (
             <button
               type="button"
-              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              className="text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-ink flex items-center gap-1"
               onClick={() => {
                 setStatusFilter("all");
                 setTypeFilter("all");
                 setDestinationFilter("all");
                 setCustomColumnFilters({});
               }}
+              data-testid="button-clear-filters"
             >
               <X className="h-3 w-3" />
               Clear
@@ -1125,10 +1159,48 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
           <div className="flex-1" />
 
-          {/* Column Visibility Toggle */}
+          {/* Select / Link Jobs / Columns — secondary actions */}
+          <Button
+            variant={selectionMode ? "secondary" : "ghost"}
+            size="sm"
+            className="h-[30px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))]"
+            onClick={() => {
+              if (selectionMode) { setSelectionMode(false); setSelectedJobs([]); }
+              else { setSelectionMode(true); setLinkMode(false); setSelectedJobs([]); }
+            }}
+            data-testid="button-toggle-select"
+          >
+            <CheckSquare className="h-3.5 w-3.5" />
+            {selectionMode ? "Cancel" : "Select"}
+            {selectionMode && selectedJobs.length > 0 && (
+              <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[calc(10px*var(--ui-scale))] text-primary-foreground px-1">
+                {selectedJobs.length}
+              </span>
+            )}
+          </Button>
+
+          <Button
+            variant={linkMode ? "secondary" : "ghost"}
+            size="sm"
+            className="h-[30px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))]"
+            onClick={() => {
+              if (linkMode) { setLinkMode(false); setSelectedJobs([]); }
+              else { setLinkMode(true); setSelectionMode(false); setSelectedJobs([]); }
+            }}
+            data-testid="button-toggle-link"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            {linkMode ? "Cancel" : "Link"}
+            {linkMode && selectedJobs.length > 0 && (
+              <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-[calc(10px*var(--ui-scale))] text-primary-foreground px-1">
+                {selectedJobs.length}
+              </span>
+            )}
+          </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="xs" className="gap-1.5">
+              <Button variant="ghost" size="sm" className="h-[30px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))]">
                 <Columns3 className="h-3.5 w-3.5" />
                 Columns
               </Button>
@@ -1141,7 +1213,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 Status
               </DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem checked={isColumnVisible('destination')} onCheckedChange={() => toggleColumnVisibility('destination')} onSelect={(e) => e.preventDefault()}>
-                Destination
+                Lab
               </DropdownMenuCheckboxItem>
               {customColumns.map((col: any) => (
                 <DropdownMenuCheckboxItem key={col.id} checked={isColumnVisible(col.id)} onCheckedChange={() => toggleColumnVisibility(col.id)} onSelect={(e) => e.preventDefault()}>
@@ -1157,12 +1229,99 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        </div>{/* end sticky toolbar */}
 
-        {/* Jobs Table */}
-        <div ref={tableViewportRef}>
-          <Table className="text-[13px] [&_th]:h-9 [&_th]:px-3 [&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_td]:px-3 [&_td]:py-2.5">
-            <TableHeader className="[&_tr]:border-b [&_tr]:border-border/60 [&_th]:bg-primary/[0.06] dark:[&_th]:bg-primary/[0.10]">
+        {/* Floating bulk-action bar — fixed at the bottom of the app window
+            instead of in-table, so the worklist rows don't shift down when
+            multi-select / link mode activates. Anchored above the OS window
+            chrome (Electron uses ~33px). */}
+        {(selectionMode || linkMode) && selectedJobs.length > 0 && (
+          <div
+            className="fixed left-1/2 -translate-x-1/2 bottom-12 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full bg-ink text-white text-[calc(12.5px*var(--ui-scale))] shadow-xl animate-otto-pop-in"
+            data-testid="bulk-action-bar"
+          >
+            <span className="whitespace-nowrap">
+              <strong className="font-semibold">{selectedJobs.length}</strong> selected
+            </span>
+            <span className="w-px h-5 bg-white/20 mx-1" />
+            {selectionMode && (
+              <>
+                <Select
+                  value=""
+                  onValueChange={(newStatus) => {
+                    if (!newStatus) return;
+                    bulkUpdateMutation.mutate({ jobIds: selectedJobs, updates: { status: newStatus } });
+                  }}
+                >
+                  <SelectTrigger className="h-7 w-36 text-xs bg-white/10 border-0 text-white" data-testid="select-bulk-status">
+                    <SelectValue placeholder="Update status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(customStatuses.length > 0 ? customStatuses : [
+                      { id: "job_created", label: "Job Created" },
+                      { id: "ordered", label: "Ordered" },
+                      { id: "in_progress", label: "In Progress" },
+                      { id: "ready_for_pickup", label: "Ready for Pickup" },
+                      { id: "completed", label: "Completed" },
+                      { id: "cancelled", label: "Cancelled" },
+                    ]).map((s: any) => (
+                      <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7 text-xs"
+                  onClick={() => setBulkDeleteConfirmOpen(true)}
+                  data-testid="button-bulk-delete"
+                >
+                  Delete
+                </Button>
+              </>
+            )}
+            {linkMode && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs bg-white/10 border-white/20 text-white hover:bg-white/20"
+                disabled={selectedJobs.length < 2}
+                onClick={() => linkJobsMutation.mutate(selectedJobs)}
+                data-testid="button-link-selected"
+              >
+                <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                Link {selectedJobs.length > 0 ? `(${selectedJobs.length})` : ""}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs text-white/70 hover:text-white hover:bg-white/10"
+              onClick={() => {
+                setSelectionMode(false);
+                setLinkMode(false);
+                setSelectedJobs([]);
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+              Clear
+            </Button>
+          </div>
+        )}
+
+        {/* Jobs Table — clean white surface, hairline rows, mockup-aligned typography */}
+        <div
+          ref={(el) => {
+            tableViewportRef.current = el;
+            setTableEl(el);
+          }}
+          className="bg-panel rounded-lg border border-line overflow-hidden"
+        >
+          {/* Cell heights are pinned to two rows of leading-tight body text
+              + vertical padding, scaled by --ui-scale so the row grows with
+              the user's font-size preference but never extends to a third
+              row. align-middle keeps single-line cells visually centered. */}
+          <Table className="text-[calc(13px*var(--ui-scale))] [&_th]:h-[34px] [&_th]:px-[14px] [&_th]:text-[calc(10.5px*var(--ui-scale))] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-[0.10em] [&_th]:text-ink-mute [&_td]:px-[14px] [&_td]:py-2 [&_td]:h-[calc(48px*var(--ui-scale))] [&_td]:max-h-[calc(48px*var(--ui-scale))] [&_td]:align-middle [&_td]:overflow-hidden">
+            <TableHeader className="[&_tr]:border-b [&_tr]:border-line [&_th]:bg-panel">
               <TableRow>
                 <TableHead className="w-10 text-center">
                   <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
@@ -1187,7 +1346,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   </TableHead>
                 )}
                 {isColumnVisible('status') && (
-                  <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("status")}>
+                  <TableHead className="cursor-pointer hover:text-primary min-w-[180px]" onClick={() => handleSort("status")}>
                     <div className="flex items-center gap-1">
                       Status
                       {sortBy === "status" && (sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
@@ -1197,7 +1356,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 {isColumnVisible('destination') && (
                   <TableHead className="cursor-pointer hover:text-primary min-w-[120px]" onClick={() => handleSort("orderDestination")}>
                     <div className="flex items-center gap-1">
-                      Destination
+                      Lab
                       {sortBy === "orderDestination" && (sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
                     </div>
                   </TableHead>
@@ -1283,16 +1442,14 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   </TableCell>
                 </TableRow>
               )}
-              {filteredJobs.map((job, index) => (
+              {filteredJobs.map((job) => (
                 <TableRow
                   key={job.id}
                   className={cn(
-                    "cursor-pointer transition-colors border-b border-border/30",
+                    "cursor-pointer transition-colors border-b border-line-2 last:border-b-0",
                     (selectionMode || linkMode) && selectedJobs.includes(job.id)
-                      ? "bg-primary/10 dark:bg-primary/15 border-l-[3px] border-l-primary"
-                      : index % 2 === 0
-                        ? "bg-card dark:bg-card hover:bg-primary/[0.03] dark:hover:bg-primary/[0.06]"
-                        : "bg-primary/[0.02] dark:bg-primary/[0.04] hover:bg-primary/[0.05] dark:hover:bg-primary/[0.08]",
+                      ? "bg-otto-accent-soft hover:bg-otto-accent-soft"
+                      : "bg-panel hover:bg-panel-2",
                   )}
                   onClick={() => {
                     if (selectionMode || linkMode) {
@@ -1323,12 +1480,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   </TableCell>
                   <TableCell className="text-left">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="font-medium truncate">
+                      <span className="font-medium line-clamp-2 break-words min-w-0">
                         {getPatientLabel(job)}
                       </span>
                       {linkedJobIds.has(job.id) && (
                         <span
-                          className="inline-flex items-center gap-0.5 text-[10px] cursor-pointer"
+                          className="inline-flex items-center gap-0.5 text-[calc(10px*var(--ui-scale))] cursor-pointer"
                           style={{ color: 'hsl(var(--primary))' }}
                           title="Manually linked to other jobs"
                           onClick={(e) => { e.stopPropagation(); handleOpenJobDetails(job, "related"); }}
@@ -1341,7 +1498,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         const count = patientJobCounts.get(key) || 0;
                         return count > 1 && !linkedJobIds.has(job.id) ? (
                           <span
-                            className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary cursor-pointer"
+                            className="inline-flex items-center gap-0.5 text-[calc(10px*var(--ui-scale))] text-muted-foreground hover:text-primary cursor-pointer"
                             title={`${count - 1} other job${count > 2 ? "s" : ""} for this patient`}
                             onClick={(e) => { e.stopPropagation(); handleOpenJobDetails(job, "related"); }}
                           >
@@ -1352,7 +1509,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       })()}
                       {job.isRedoJob && (
                         <Badge
-                          className="text-[11px] px-1.5 py-0 h-5 border-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                          className="text-[calc(11px*var(--ui-scale))] px-1.5 py-0 h-5 border-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
                           data-testid={`badge-redo-${job.id}`}
                         >
                           REDO
@@ -1360,7 +1517,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       )}
                       {isJobOverdue(job) && (
                         <Badge
-                          className="text-[11px] px-1.5 py-0 h-5 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
+                          className="text-[calc(11px*var(--ui-scale))] px-1.5 py-0 h-5 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
                           data-testid={`badge-overdue-${job.id}`}
                         >
                           OVERDUE
@@ -1379,33 +1536,17 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                     </TableCell>
                   )}
                   {isColumnVisible('status') && (
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Select value={job.status} onValueChange={(newStatus) => handleStatusChange(job.id, newStatus)}>
-                        <SelectTrigger className="w-auto border-none p-0 h-auto min-h-0 focus:ring-0 focus:ring-offset-0 shadow-none">
-                          <Badge
-                            className="status-badge border-0 max-w-[136px] truncate"
-                            style={{ backgroundColor: getStatusBadgeColor(job.status).background, color: getStatusBadgeColor(job.status).text }}
-                          >
-                            {customStatuses.find((s: any) => s.id === job.status)?.label ||
-                             (job.status ? job.status.replace('_', ' ').split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : "Unknown")}
-                          </Badge>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {customStatuses.length > 0 ? (
-                            customStatuses.map((status: any) => (
-                              <SelectItem key={status.id} value={status.id}>{status.label}</SelectItem>
-                            ))
-                          ) : (
-                            <>
-                              <SelectItem value="job_created">Job Created</SelectItem>
-                              <SelectItem value="ordered">Ordered</SelectItem>
-                              <SelectItem value="in_progress">In Progress</SelectItem>
-                              <SelectItem value="quality_check">Quality Check</SelectItem>
-                              <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
-                            </>
-                          )}
-                        </SelectContent>
-                      </Select>
+                    <TableCell
+                      onClick={(e) => e.stopPropagation()}
+                      className="min-w-[180px] max-w-[260px]"
+                      data-testid={`cell-lifecycle-${job.id}`}
+                    >
+                      <LifecycleTrack
+                        statuses={customStatuses.length > 0 ? customStatuses : DEFAULT_STATUSES_FALLBACK}
+                        currentStatusId={job.status}
+                        onStatusChange={(newStatus) => handleStatusChange(job.id, newStatus)}
+                        size="compact"
+                      />
                     </TableCell>
                   )}
                   {isColumnVisible('destination') && (
@@ -1426,7 +1567,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       onClick={(e) => e.stopPropagation()}
                     >
                       {column.editableInWorklist === false ? (
-                        <span className="text-sm text-muted-foreground truncate">
+                        <span className="text-sm text-muted-foreground line-clamp-2 break-words">
                           {(() => {
                             const v = (job.customColumnValues as Record<string, any>)?.[column.id];
                             if (v == null || v === "") return "—";
@@ -1485,7 +1626,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         {commentCounts[job.id] > 0 && (
                           <span 
                             className={cn(
-                              "absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full text-[10px] font-semibold px-1",
+                              "absolute -top-1 -right-1 min-w-[16px] h-[16px] flex items-center justify-center rounded-full text-[calc(10px*var(--ui-scale))] font-semibold px-1",
                               unreadCommentJobIds.includes(job.id) 
                                 ? "bg-red-500 text-white" 
                                 : "bg-gray-400 dark:bg-gray-600 text-white"
@@ -1535,13 +1676,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               ))}
             </TableBody>
           </Table>
-        </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-2 border-t border-border">
-          <p className="text-xs text-muted-foreground">
-            Showing {filteredJobs.length} of {jobs.length} jobs
-          </p>
+          {/* Footer — inside the same panel card so it shares the white surface */}
+          <div className="flex items-center justify-between px-[14px] py-2.5 border-t border-line bg-panel-2">
+            <p className="text-[calc(11px*var(--ui-scale))] text-ink-mute font-mono">
+              {filteredJobs.length} of {jobs.length} {filteredJobs.length === 1 ? "job" : "jobs"}
+            </p>
+          </div>
         </div>
 
         {/* Bulk actions are now inline in the toolbar above */}

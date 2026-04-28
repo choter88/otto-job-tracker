@@ -21,8 +21,6 @@ const notificationRuleSchema = z.object({
   }).min(1, "Please select a status"),
   maxDays: z.number().min(1, "Must be at least 1 day").max(365, "Cannot exceed 365 days"),
   enabled: z.boolean(),
-  smsEnabled: z.boolean(),
-  smsTemplate: z.string().optional(),
   notifyRoles: z.array(z.string()),
 });
 
@@ -50,10 +48,13 @@ export default function NotificationRules() {
     defaultValues: {
       status: "ordered",
       maxDays: 7,
+      // Always-on by default — the toggle was removed from the form. Users
+      // who want a rule silent should delete it instead.
       enabled: true,
-      smsEnabled: false,
-      smsTemplate: "",
-      notifyRoles: ["owner", "manager"],
+      // Notify the full team by default — the per-rule role picker was
+      // removed. If we ever bring back per-rule routing, this default
+      // matches "everyone".
+      notifyRoles: ["owner", "manager", "staff"],
     },
   });
 
@@ -175,11 +176,12 @@ export default function NotificationRules() {
   });
 
   const onSubmit = (data: NotificationRuleFormData) => {
+    // Force always-on + notify-everyone since the form no longer exposes
+    // those toggles. Stays consistent regardless of what the form state had.
     const normalized: NotificationRuleFormData = {
       ...data,
-      // Desktop/offline mode: no automatic SMS sending.
-      smsEnabled: false,
-      smsTemplate: "",
+      enabled: true,
+      notifyRoles: ["owner", "manager", "staff"],
     };
     if (editingRule) {
       updateRuleMutation.mutate({ id: editingRule.id, data: normalized });
@@ -193,10 +195,8 @@ export default function NotificationRules() {
     form.reset({
       status: rule.status,
       maxDays: rule.maxDays,
-      enabled: rule.enabled,
-      smsEnabled: rule.smsEnabled,
-      smsTemplate: rule.smsTemplate || "",
-      notifyRoles: Array.isArray(rule.notifyRoles) ? rule.notifyRoles : [],
+      enabled: true,
+      notifyRoles: ["owner", "manager", "staff"],
     });
     setShowAddForm(true);
   };
@@ -239,252 +239,185 @@ export default function NotificationRules() {
   }
 
   return (
-    <div className="space-y-6" data-testid="notification-rules">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-semibold mb-2">Overdue Rules</h3>
-          <p className="text-sm text-muted-foreground">
-            Set how long a job can stay in a status before it’s considered overdue
+    <div className="space-y-4" data-testid="notification-rules">
+      <div className="flex items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="font-display text-[calc(18px*var(--ui-scale))] font-medium tracking-[-0.02em] text-ink m-0">
+            Overdue Rules
+          </h3>
+          <p className="text-[calc(13px*var(--ui-scale))] text-ink-mute mt-1">
+            Set how long a job can stay in a status before it’s considered overdue.
           </p>
         </div>
-        <Button onClick={handleAddNew} data-testid="button-add-rule">
-          <Plus className="mr-2 h-4 w-4" />
+        <Button size="sm" onClick={handleAddNew} data-testid="button-add-rule" className="shrink-0">
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
           Add Rule
         </Button>
       </div>
 
-      {/* Add/Edit Form */}
+      {/* Add/Edit Form — compact single-row layout. Notify Roles + Enable
+          toggle removed: rules always notify all team roles and are always
+          on. Owners can still delete a rule to silence it. */}
       {showAddForm && (
-        <Card className="border-primary/50 bg-primary/5">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Bell className="h-5 w-5" />
-              {editingRule ? "Edit Overdue Rule" : "Add Overdue Rule"}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="status">Job Status *</Label>
-                  <Controller
-                    name="status"
-                    control={form.control}
-                    render={({ field }) => (
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <SelectTrigger data-testid="select-rule-status">
-                          <SelectValue placeholder="Select status..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {customStatuses.length > 0 ? (
-                            customStatuses
-                              .filter((s: any) => s.id !== 'completed' && s.id !== 'cancelled')
-                              .map((status: any) => (
-                                <SelectItem key={status.id} value={status.id}>
-                                  {status.label}
-                                </SelectItem>
-                              ))
-                          ) : (
-                            <>
-                              <SelectItem value="job_created">Job Created</SelectItem>
-                              <SelectItem value="ordered">Ordered</SelectItem>
-                              <SelectItem value="in_progress">In Progress</SelectItem>
-                              <SelectItem value="quality_check">Quality Check</SelectItem>
-                              <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
-                            </>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                  {form.formState.errors.status && (
-                    <p className="text-sm text-destructive">
-                      {form.formState.errors.status.message}
-                    </p>
+        <div className="rounded-lg border border-otto-accent-line bg-otto-accent-soft/40 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Bell className="h-4 w-4 text-otto-accent-ink" />
+            <h4 className="text-[calc(13px*var(--ui-scale))] font-semibold text-ink">
+              {editingRule ? "Edit overdue rule" : "Add overdue rule"}
+            </h4>
+          </div>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3">
+              <div>
+                <Label htmlFor="status" className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
+                  Job status
+                </Label>
+                <Controller
+                  name="status"
+                  control={form.control}
+                  render={({ field }) => (
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <SelectTrigger className="h-9 mt-1" data-testid="select-rule-status">
+                        <SelectValue placeholder="Select status..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {customStatuses.length > 0 ? (
+                          customStatuses
+                            .filter((s: any) => s.id !== "completed" && s.id !== "cancelled")
+                            .map((status: any) => (
+                              <SelectItem key={status.id} value={status.id}>
+                                {status.label}
+                              </SelectItem>
+                            ))
+                        ) : (
+                          <>
+                            <SelectItem value="job_created">Job Created</SelectItem>
+                            <SelectItem value="ordered">Ordered</SelectItem>
+                            <SelectItem value="in_progress">In Progress</SelectItem>
+                            <SelectItem value="quality_check">Quality Check</SelectItem>
+                            <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
+                          </>
+                        )}
+                      </SelectContent>
+                    </Select>
                   )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="maxDays">Max Days in Status *</Label>
-                  <Input
-                    id="maxDays"
-                    type="number"
-                    min="1"
-                    max="365"
-                    {...form.register("maxDays", { valueAsNumber: true })}
-                    data-testid="input-max-days"
-                  />
-                  {form.formState.errors.maxDays && (
-                    <p className="text-sm text-destructive">
-                      {form.formState.errors.maxDays.message}
-                    </p>
-                  )}
-                </div>
+                />
+                {form.formState.errors.status && (
+                  <p className="text-[calc(11.5px*var(--ui-scale))] text-danger mt-1">
+                    {form.formState.errors.status.message}
+                  </p>
+                )}
               </div>
 
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="enabled" className="text-base font-medium">
-                      Enable Rule
-                    </Label>
-                    <p className="text-sm text-muted-foreground">
-                      Turn this overdue rule on or off
-                    </p>
-                  </div>
-                  <Controller
-                    name="enabled"
-                    control={form.control}
-                    render={({ field }) => (
-                      <Switch
-                        id="enabled"
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        data-testid="switch-rule-enabled"
-                      />
-                    )}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="notifyRoles">Notify Roles</Label>
-                  <div className="space-y-2">
-                    {["owner", "manager", "staff"].map((role) => (
-                      <label key={role} className="flex items-center space-x-2 cursor-pointer">
-                        <Controller
-                          name="notifyRoles"
-                          control={form.control}
-                          render={({ field }) => (
-                            <input
-                              type="checkbox"
-                              checked={field.value.includes(role)}
-                              onChange={(e) => {
-                                const updatedRoles = e.target.checked
-                                  ? [...field.value, role]
-                                  : field.value.filter(r => r !== role);
-                                field.onChange(updatedRoles);
-                              }}
-                              className="rounded border border-border accent-primary"
-                              data-testid={`checkbox-role-${role}`}
-                            />
-                          )}
-                        />
-                        <span className="text-sm capitalize">
-                          {role.replace('_', ' ')}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
+              <div>
+                <Label htmlFor="maxDays" className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
+                  Max days
+                </Label>
+                <Input
+                  id="maxDays"
+                  type="number"
+                  min="1"
+                  max="365"
+                  className="h-9 mt-1 tabular-nums"
+                  {...form.register("maxDays", { valueAsNumber: true })}
+                  data-testid="input-max-days"
+                />
+                {form.formState.errors.maxDays && (
+                  <p className="text-[calc(11.5px*var(--ui-scale))] text-danger mt-1">
+                    {form.formState.errors.maxDays.message}
+                  </p>
+                )}
               </div>
+            </div>
 
-              <div className="flex gap-2 pt-4 border-t border-border">
-                <Button
-                  type="submit"
-                  disabled={createRuleMutation.isPending || updateRuleMutation.isPending}
-                  data-testid="button-save-rule"
-                >
-                  {(createRuleMutation.isPending || updateRuleMutation.isPending) && (
-                    <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-primary" />
-                  )}
-                  <Save className="mr-2 h-4 w-4" />
-                  {editingRule ? "Update Rule" : "Create Rule"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleCancel}
-                  data-testid="button-cancel-rule"
-                >
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+            <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute leading-relaxed">
+              Notifies your full team when a job sits in this status for the maximum
+              number of days. Delete the rule any time to silence it.
+            </p>
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                type="submit"
+                size="sm"
+                disabled={createRuleMutation.isPending || updateRuleMutation.isPending}
+                data-testid="button-save-rule"
+              >
+                {(createRuleMutation.isPending || updateRuleMutation.isPending) && (
+                  <div className="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-background border-t-primary" />
+                )}
+                <Save className="mr-1.5 h-3.5 w-3.5" />
+                {editingRule ? "Update rule" : "Create rule"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={handleCancel}
+                data-testid="button-cancel-rule"
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </div>
       )}
 
       {/* Existing Rules */}
-      <div className="space-y-4">
+      <div className="space-y-3">
         {notificationRules.length === 0 && !showAddForm ? (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <div className="space-y-4">
-                <div className="inline-flex items-center justify-center w-16 h-16 bg-muted rounded-full">
-                  <AlertTriangle className="h-8 w-8 text-muted-foreground" />
-                </div>
-                <h3 className="text-lg font-semibold">No Overdue Rules</h3>
-                <p className="text-muted-foreground">
-                  Create overdue rules to get alerts when jobs are overdue.
-                </p>
-                <Button onClick={handleAddNew}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Your First Rule
-                </Button>
+          <div className="px-6 py-10 text-center bg-paper-2 rounded-lg border border-dashed border-line">
+            <div className="space-y-3">
+              <div className="inline-flex items-center justify-center w-12 h-12 bg-paper rounded-full">
+                <AlertTriangle className="h-5 w-5 text-ink-mute" />
               </div>
-            </CardContent>
-          </Card>
+              <div className="space-y-1">
+                <p className="text-[calc(14px*var(--ui-scale))] font-medium text-ink">No Overdue Rules</p>
+                <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute">
+                  Create overdue rules to get alerts when jobs sit too long in a status.
+                </p>
+              </div>
+              <Button size="sm" onClick={handleAddNew} className="mt-1">
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Add Your First Rule
+              </Button>
+            </div>
+          </div>
         ) : (
           notificationRules.map((rule: NotificationRule) => (
-            <Card key={rule.id} className={!rule.enabled ? "opacity-60" : ""} data-testid={`rule-${rule.id}`}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="font-semibold text-lg">
-                        {getStatusLabel(rule.status)} Status
-                      </h3>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={rule.enabled}
-                          onCheckedChange={(enabled) => 
-                            updateRuleMutation.mutate({ id: rule.id, data: { enabled } })
-                          }
-                          data-testid={`switch-enabled-${rule.id}`}
-                        />
-                        <span className="text-sm font-medium">
-                          {rule.enabled ? "Enabled" : "Disabled"}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <div className="text-sm text-muted-foreground space-y-1">
-                      <p>
-                        <span className="font-medium">Max Days:</span> {rule.maxDays} days
-                      </p>
-                      <p>
-                        <span className="font-medium">Notify Roles:</span> {
-                          Array.isArray(rule.notifyRoles) 
-                            ? rule.notifyRoles.map(role => role.charAt(0).toUpperCase() + role.slice(1)).join(", ")
-                            : "None"
-                        }
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleEdit(rule)}
-                      data-testid={`button-edit-rule-${rule.id}`}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDelete(rule.id)}
-                      disabled={deleteRuleMutation.isPending}
-                      data-testid={`button-delete-rule-${rule.id}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-
-              </CardContent>
-            </Card>
+            <div
+              key={rule.id}
+              className="flex items-center gap-3 px-4 h-12 bg-panel border border-line rounded-lg"
+              data-testid={`rule-${rule.id}`}
+            >
+              <Bell className="h-4 w-4 text-ink-mute shrink-0" />
+              <div className="flex-1 min-w-0 flex items-baseline gap-2 flex-wrap">
+                <span className="text-[calc(13px*var(--ui-scale))] font-medium text-ink">
+                  {getStatusLabel(rule.status)}
+                </span>
+                <span className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute">
+                  &gt; {rule.maxDays} {rule.maxDays === 1 ? "day" : "days"} → notify team
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2.5"
+                onClick={() => handleEdit(rule)}
+                data-testid={`button-edit-rule-${rule.id}`}
+              >
+                Edit
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-ink-mute hover:text-danger"
+                onClick={() => handleDelete(rule.id)}
+                disabled={deleteRuleMutation.isPending}
+                data-testid={`button-delete-rule-${rule.id}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           ))
         )}
       </div>

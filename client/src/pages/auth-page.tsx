@@ -315,18 +315,28 @@ export default function AuthPage() {
       : "This workstation syncs to the Host over the office network.";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-accent/10">
+    <div
+      className="min-h-screen"
+      style={{
+        background:
+          "radial-gradient(1200px 600px at 50% -100px, var(--otto-accent-soft) 0%, transparent 60%), var(--paper)",
+      }}
+    >
       <div className="mx-auto flex min-h-screen w-full max-w-6xl items-center p-6 lg:p-10">
         <div className="grid w-full gap-6 lg:grid-cols-[1.05fr_0.95fr]">
           <section className="space-y-5">
-            <div className="inline-flex items-center justify-center w-14 h-14 bg-primary rounded-xl">
-              <Glasses className="h-7 w-7 text-primary-foreground" />
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-otto-accent">
+              <Glasses className="h-7 w-7 text-white" />
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium text-primary">Otto Tracker Desktop</p>
-              <h1 className="text-3xl font-bold tracking-tight">Welcome to {officeName}</h1>
-              <p className="text-muted-foreground text-base max-w-xl">
+              <p className="font-mono text-[11px] uppercase tracking-[0.10em] text-ink-mute">
+                Otto Tracker Desktop
+              </p>
+              <h1 className="font-display text-[36px] font-medium tracking-[-0.025em] text-ink leading-[1.05]">
+                Welcome to {officeName}
+              </h1>
+              <p className="text-ink-mute text-base max-w-xl">
                 Sign in to continue working in this office workspace.
               </p>
             </div>

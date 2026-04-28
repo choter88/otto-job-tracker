@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { updateJobStatus, ApiError, queueMutation } from "../api";
+import { updateJobStatus, ApiError, queueMutation, trackEvent } from "../api";
 import { TopBar } from "../components/TopBar";
 import { StatusTabs } from "../components/StatusTabs";
 import { CardGrid } from "../components/CardGrid";
@@ -76,6 +76,9 @@ export function BoardView({
 
       try {
         await updateJobStatus(jobId, nextStatus);
+        // Track only on confirmed success — optimistic-then-failed
+        // mutations would otherwise inflate the count.
+        trackEvent("tablet_status_changed", { from: "board", to: nextStatus });
         onDataChanged();
       } catch (err) {
         // Revert optimistic update

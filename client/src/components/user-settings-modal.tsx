@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { applyUiScale } from "@/lib/theme/density";
 
 interface UserPreferences {
   fontSize?: "xs" | "sm" | "default" | "lg" | "xl";
@@ -31,6 +32,8 @@ const DEFAULT_INDEX = 2; // "default" (M) is the middle
 function applyFontSize(size: string) {
   const px = FONT_SIZE_MAP[size] ?? 14;
   document.documentElement.style.fontSize = `${px}px`;
+  // Also pull layout spacing along with the font size — see lib/theme/density.ts.
+  applyUiScale(size);
 }
 
 function applyDarkMode(enabled: boolean) {

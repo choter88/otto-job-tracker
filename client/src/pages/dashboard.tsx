@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation, useRoute } from "wouter";
 import Sidebar from "@/components/sidebar";
+import Topbar from "@/components/topbar";
 import JobsTable from "@/components/jobs-table";
 import PastJobs from "@/components/past-jobs";
 import OverdueJobs from "@/components/overdue-jobs";
@@ -9,24 +10,15 @@ import TeamPage from "@/components/team-page";
 import NotificationRules from "@/components/notification-rules";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
 import ImportantJobs from "@/pages/important-jobs";
-import NotificationBell from "@/components/notification-bell";
 import SettingsModal from "@/components/settings-modal";
 import HealthModal from "@/components/health-modal";
 import UserSettingsModal, { applyUserPreferences } from "@/components/user-settings-modal";
 import { FeedbackDialog } from "@/components/feedback-dialog";
+import BackupRestoreBanner from "@/components/backup-restore-banner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChevronDown, LogOut, Settings } from "lucide-react";
-import type { Job, ArchivedJob, Office } from "@shared/schema";
+import type { Job, Office } from "@shared/schema";
 
 export default function Dashboard() {
   const { user, logoutMutation } = useAuth();
@@ -144,70 +136,27 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex h-screen bg-background pb-[33px]">
+    <div className="flex h-screen bg-background">
       <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-[200] focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:text-sm focus:font-medium">
         Skip to main content
       </a>
-      <Sidebar activeTab={activeTab} onTabChange={handleTabChange} onFeedbackClick={() => setFeedbackOpen(true)} onUserSettingsClick={() => setUserSettingsOpen(true)} />
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        onSettingsClick={() => setSettingsOpen(true)}
+        onHealthClick={() => setHealthOpen(true)}
+        onFeedbackClick={() => setFeedbackOpen(true)}
+        onUserSettingsClick={() => setUserSettingsOpen(true)}
+      />
 
-      <main id="main-content" className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="bg-card border-b border-border px-6 h-14 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-foreground" data-testid="text-dashboard-title">
-              {activeTab === "important" && "Important Jobs"}
-              {activeTab === "all" && "Worklist"}
-              {activeTab === "past" && "Past Jobs"}
-              {activeTab === "overdue" && "Overdue Jobs"}
-              {activeTab === "analytics" && "Analytics"}
-              {activeTab === "team" && "Team"}
-              {activeTab === "settings" && "Settings"}
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Notifications */}
-            <NotificationBell />
-
-            {/* User Menu */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="flex items-center gap-2" data-testid="button-user-menu">
-                  <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-primary-foreground font-semibold text-sm">
-                    {user?.firstName?.[0]}{user?.lastName?.[0]}
-                  </div>
-                  <ChevronDown className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-60" data-testid="menu-user">
-                <DropdownMenuLabel className="font-normal">
-                  <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-medium leading-none">
-                      {user?.firstName} {user?.lastName}
-                    </p>
-                    <p className="text-xs leading-none text-muted-foreground truncate">{user?.email}</p>
-                  </div>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setHealthOpen(true)} data-testid="menu-user-health">
-                  <Activity className="h-4 w-4" />
-                  System Health
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setSettingsOpen(true)} data-testid="menu-user-settings">
-                  <Settings className="h-4 w-4" />
-                  Office Settings
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => logoutMutation.mutate()} data-testid="menu-user-signout">
-                  <LogOut className="h-4 w-4" />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </header>
+      <main id="main-content" className="flex-1 flex flex-col overflow-hidden bg-panel border border-line rounded-[14px] m-3.5 ml-1 shadow-soft">
+        <Topbar activeTab={activeTab} onHelpClick={() => setFeedbackOpen(true)} />
 
         {/* Content */}
         <div className={`flex-1 overflow-y-auto ${activeTab === "all" ? "" : "p-6 pb-8"}`}>
+          <div className={activeTab === "all" ? "px-6 pt-4" : ""}>
+            <BackupRestoreBanner />
+          </div>
           {/* Tab Content */}
           {renderTabContent()}
         </div>

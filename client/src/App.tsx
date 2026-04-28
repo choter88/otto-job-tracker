@@ -8,16 +8,28 @@ import { SessionTimeoutProvider } from "@/components/session-timeout-provider";
 import { SentryErrorBoundary } from "@/components/sentry-error-boundary";
 import SyncManager from "@/components/sync-manager";
 import { ProtectedRoute } from "@/lib/protected-route";
+import { OwnerOrManagerRoute } from "@/lib/owner-or-manager-route";
+import { WizardAutoRedirect } from "@/components/wizard-auto-redirect";
 import Dashboard from "@/pages/dashboard";
 import AuthPage from "@/pages/auth-page";
 import NotFound from "@/pages/not-found";
+import SetupWizardPage from "@/pages/setup-wizard/setup-wizard-page";
+
+function GuardedDashboard() {
+  return (
+    <WizardAutoRedirect>
+      <Dashboard />
+    </WizardAutoRedirect>
+  );
+}
 
 function Router() {
   return (
     <Switch>
-      <ProtectedRoute path="/" component={Dashboard} />
-      <ProtectedRoute path="/dashboard/:tab?" component={Dashboard} />
-      <ProtectedRoute path="/important" component={Dashboard} />
+      <OwnerOrManagerRoute path="/setup" component={SetupWizardPage} />
+      <ProtectedRoute path="/" component={GuardedDashboard} />
+      <ProtectedRoute path="/dashboard/:tab?" component={GuardedDashboard} />
+      <ProtectedRoute path="/important" component={GuardedDashboard} />
       <Route path="/auth" component={AuthPage} />
       <Route component={NotFound} />
     </Switch>

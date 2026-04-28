@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { sqlite } from "./db";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
+import { defaultOnboardingForBackupRestore } from "@shared/onboarding";
 import { buildLocalAuthEmail, deriveLoginIdCandidates, normalizeLoginId, validateLoginId } from "./auth-identifiers";
 
 type ImportAdmin = {
@@ -834,6 +835,11 @@ export function importSnapshotV1(params: {
       activationVerifiedAt: params.activationVerifiedAt,
     };
     next.smsTemplates = ensureReadyForPickupTemplate(next.smsTemplates, next.customStatuses);
+    // Snapshot restores skip the wizard. Whatever onboarding state was in the
+    // snapshot is overwritten with a "completed/backup" marker so the restored
+    // office never auto-launches the wizard, and so the "Restored from backup"
+    // banner can be shown once.
+    next.onboarding = defaultOnboardingForBackupRestore(now);
     return next;
   })();
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { fetchJob, updateJobStatus, addJobNote } from "../api";
+import { fetchJob, updateJobStatus, addJobNote, trackEvent } from "../api";
 import type { OfficeConfig, Job, JobComment, StatusHistoryEntry } from "../types";
 import "../styles/job-detail.css";
 
@@ -81,6 +81,9 @@ export function JobDetailView({ jobId, config, onBack, onDataChanged }: JobDetai
     setSaving(true);
     try {
       await updateJobStatus(jobId, newStatus);
+      // Track only after the mutation succeeds — failed status changes
+      // shouldn't show up in the portal as activity.
+      trackEvent("tablet_status_changed", { from: "jobDetail", to: newStatus });
       onDataChanged();
       if (newStatus === "completed" || newStatus === "cancelled") {
         onBack();
@@ -116,7 +119,9 @@ export function JobDetailView({ jobId, config, onBack, onDataChanged }: JobDetai
         </button>
         <div style={{ flex: 1 }}>
           <div className="job-detail-title">{patientName}</div>
-          <div className="job-detail-order-id">{job.orderId}</div>
+          {job.trayNumber && (
+            <div className="job-detail-order-id">Tray {job.trayNumber}</div>
+          )}
         </div>
         {job.isRedoJob && <span className="badge badge-redo" style={{ fontSize: "0.75rem", padding: "4px 8px" }}>REDO</span>}
       </div>
@@ -206,7 +211,11 @@ export function JobDetailView({ jobId, config, onBack, onDataChanged }: JobDetai
               {linkedJobs.map((lj) => (
                 <div key={lj.id} className="linked-job-item">
                   <span>{lj.patientLastName}, {lj.patientFirstName}</span>
-                  <span style={{ color: "var(--otto-text-muted)", fontSize: "0.75rem" }}>{lj.orderId}</span>
+                  {lj.trayNumber && (
+                    <span style={{ color: "var(--otto-text-muted)", fontSize: "0.75rem" }}>
+                      Tray {lj.trayNumber}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>

@@ -12,6 +12,7 @@ import { insertJobSchema } from "@shared/schema";
 import { getCachedPlan } from "./license";
 import { requireAuth, requireRole } from "./middleware";
 import { OTTO_DEFAULT_TABLET_PORT } from "@shared/constants";
+import { TABLET_TRACKABLE_EVENTS, trackEvent } from "./usage-tracker";
 import {
   createTabletSession,
   validateTabletToken,
@@ -275,6 +276,31 @@ export function registerTabletRoutes(app: Express): void {
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
+  });
+
+  // ── Usage tracking ────────────────────────────────────────────────
+  // Mirrors /api/track for tablet sessions. Events land in the same
+  // usage_events table tagged with source="tablet" so portal queries can
+  // group by source. Allowlist is intentionally narrow — see
+  // TABLET_TRACKABLE_EVENTS in usage-tracker.ts.
+  app.post("/tablet/api/track", requireTabletAuth, (req, res) => {
+    const eventType = typeof req.body?.eventType === "string" ? req.body.eventType : "";
+    if (!TABLET_TRACKABLE_EVENTS.has(eventType)) {
+      return res.status(400).json({ error: "Invalid event type" });
+    }
+    const metadataInput = req.body?.metadata;
+    const metadata =
+      metadataInput && typeof metadataInput === "object" && !Array.isArray(metadataInput)
+        ? (metadataInput as Record<string, any>)
+        : undefined;
+    trackEvent({
+      userId: req.tabletUser!.userId,
+      officeId: req.tabletUser!.officeId,
+      eventType,
+      source: "tablet",
+      metadata,
+    });
+    res.status(204).end();
   });
 
   // Add note/comment to job

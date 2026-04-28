@@ -1,6 +1,46 @@
 import path from "path";
 import { BrowserWindow, Menu, screen } from "electron";
 
+/**
+ * In a packaged build, DevTools are disabled by default. Open them when:
+ *   1. The env var OTTO_DEVTOOLS=1 is set when launching the app
+ *   2. The app is launched with --devtools as a CLI arg
+ *   3. The app is unpacked (npm run desktop, npm run pack:desktop)
+ *
+ * Usage from a packaged .app on macOS:
+ *   OTTO_DEVTOOLS=1 open -a "Otto Tracker"
+ * or:
+ *   "/Applications/Otto Tracker.app/Contents/MacOS/Otto Tracker" --devtools
+ *
+ * A keyboard shortcut (Cmd+Option+I / Ctrl+Shift+I) also toggles DevTools at any time.
+ */
+function shouldOpenDevTools() {
+  if (process.env.OTTO_DEVTOOLS === "1") return true;
+  if (process.argv.includes("--devtools")) return true;
+  return false;
+}
+
+function attachDevToolsShortcut(win) {
+  // Cmd+Option+I on macOS, Ctrl+Shift+I elsewhere — both toggle DevTools.
+  win.webContents.on("before-input-event", (event, input) => {
+    const isMac = process.platform === "darwin";
+    const modPressed = isMac ? input.meta && input.alt : input.control && input.shift;
+    if (modPressed && (input.key === "I" || input.key === "i")) {
+      win.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+}
+
+function maybeOpenDevTools(win) {
+  if (shouldOpenDevTools()) {
+    // `detach` opens DevTools in a separate window so it doesn't crowd the
+    // app — easier to read stack traces while clicking around.
+    win.webContents.openDevTools({ mode: "detach" });
+  }
+  attachDevToolsShortcut(win);
+}
+
 // Defense-in-depth CSP injection via Electron session (F-03).
 // This ensures CSP is enforced even if the Express server header is bypassed.
 //
@@ -114,6 +154,7 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
     setMainWindow(null, win);
   });
   setupContextMenu(win);
+  maybeOpenDevTools(win);
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event, url) => {
     try {
@@ -261,6 +302,7 @@ export function createSetupWindow({ __dirname: dirName, APP_DISPLAY_NAME, getSet
   injectCspOnSession(win.webContents.session, { allowInlineScripts: true });
   win.loadFile(path.join(dirName, "setup.html"));
   setSetupWindow(win);
+  maybeOpenDevTools(win);
   win.on("closed", () => {
     setSetupWindow(null, win);
   });

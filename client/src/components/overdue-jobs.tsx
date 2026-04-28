@@ -111,7 +111,7 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
         searchQuery === "" ||
         job.patientFirstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         job.patientLastName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        job.orderId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        job.trayNumber?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         job.phone?.includes(searchQuery.replace(/\D/g, ""));
       const matchesPriority = priorityFilter === "all" || job.severity === priorityFilter;
       return matchesSearch && matchesPriority;

@@ -41,12 +41,14 @@ import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot, getCachedPlan } from "./license";
-import { portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth, portalSubmitFeedback } from "./license-client";
+import { portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth, portalSubmitFeedback, getLicenseBaseUrl } from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
 import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
+import { defaultOnboardingForNewOffice } from "@shared/onboarding";
+import { getDefaultOfficeSettings } from "@shared/office-defaults";
 import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
 import { trackEvent, CLIENT_TRACKABLE_EVENTS, getAggregatedDailyStats, getRawEventsSince } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
@@ -268,7 +270,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
   app.get("/api/license/status", (_req, res) => {
     applyNoStoreHeaders(res);
-    res.json(getLicenseSnapshot());
+    const snapshot = getLicenseSnapshot();
+    // Include the portal billing URL so the UI can deep-link directly to checkout.
+    const portalBase = getLicenseBaseUrl().toString().replace(/\/$/, "");
+    res.json({
+      ...snapshot,
+      portalBillingUrl: `${portalBase}/portal/billing?autocheckout=1`,
+    });
   });
 
   // ── Analytics diagnostic endpoint ──
@@ -565,7 +573,26 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         const finalOfficePhone = officePhone ?? portalOffice?.phone;
         const finalOfficeEmail = officeEmail ?? portalOffice?.email;
 
-        const mergedSettings: Record<string, any> = withDefaultMessageTemplates(office.settings || {});
+        // Start with the full default settings (customStatuses/types/destinations,
+        // smsTemplates, onboarding, etc.) so a freshly-bootstrapped host has the
+        // same baseline as one created via storage.createOffice. Without this,
+        // bootstrapped offices were missing customStatuses/types/destinations
+        // entirely, and the wizard auto-launch was broken because the onboarding
+        // block was absent (getOnboarding fell back to "completed").
+        const seedDefaults = getDefaultOfficeSettings();
+        const existingSettings = office.settings && typeof office.settings === "object" && !Array.isArray(office.settings)
+          ? (office.settings as Record<string, any>)
+          : {};
+        const mergedSettings: Record<string, any> = withDefaultMessageTemplates({
+          ...seedDefaults,
+          ...existingSettings,
+        });
+        // Always apply the fresh onboarding marker on bootstrap — even if the
+        // shell office row was pre-created without one (which the legacy code
+        // path in this same transaction does).
+        if (!existingSettings.onboarding) {
+          mergedSettings.onboarding = defaultOnboardingForNewOffice();
+        }
         const activationSucceeded = licenseSnapshot.mode === "ACTIVE";
         mergedSettings.licensing = {
           setupCodeLast4: "portal",

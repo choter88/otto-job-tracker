@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Briefcase,
   Archive,
@@ -10,10 +16,14 @@ import {
   BarChart3,
   Users,
   Star,
-  PanelLeft,
-  ChevronRight,
-  MessageCircleQuestion,
   Settings,
+  Activity,
+  LogOut,
+  PanelLeft,
+  PanelLeftClose,
+  MoreVertical,
+  MessageCircleQuestion,
+  HelpCircle,
 } from "lucide-react";
 import logoSymbol from "@/assets/logo-symbol.png";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -23,14 +33,33 @@ import type { Job, Office } from "@shared/schema";
 interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  onSettingsClick?: () => void;
+  onHealthClick?: () => void;
   onFeedbackClick?: () => void;
   onUserSettingsClick?: () => void;
 }
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "otto.sidebar.collapsed";
 
-export default function Sidebar({ activeTab, onTabChange, onFeedbackClick, onUserSettingsClick }: SidebarProps) {
-  const { user } = useAuth();
+type NavItem = {
+  id: string;
+  label: string;
+  icon: typeof Briefcase;
+  badge?: number | null;
+  badgeStyle?: "default" | "alert" | "warn";
+  onClickOverride?: () => void;
+};
+
+export default function Sidebar({
+  activeTab,
+  onTabChange,
+  onSettingsClick,
+  onHealthClick,
+  onFeedbackClick,
+  onUserSettingsClick,
+}: SidebarProps) {
+  const { user, logoutMutation } = useAuth();
+
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -44,7 +73,7 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick, onUse
     try {
       window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? "1" : "0");
     } catch {
-      // Ignore storage failures.
+      // ignore
     }
   }, [collapsed]);
 
@@ -52,282 +81,288 @@ export default function Sidebar({ activeTab, onTabChange, onFeedbackClick, onUse
     queryKey: ["/api/jobs"],
     enabled: !!user?.officeId,
   });
-
   const { data: overdueJobs = [] } = useQuery<any[]>({
     queryKey: ["/api/jobs/overdue"],
     enabled: !!user?.officeId,
   });
-
   const { data: flaggedJobs = [] } = useQuery<any[]>({
     queryKey: ["/api/jobs/flagged"],
     enabled: !!user?.officeId,
   });
-
   const { data: office } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
     enabled: !!user?.officeId,
   });
 
-  const activeJobsCount = jobs.length;
-  const overdueCount = overdueJobs.length;
-  const flaggedCount = flaggedJobs.length;
+  const initials = `${user?.firstName?.[0] ?? ""}${user?.lastName?.[0] ?? ""}`.toUpperCase() || "??";
+  const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "User";
 
-  const menuItems = [
+  const jobsItems: NavItem[] = [
     {
       id: "all",
       label: "Worklist",
       icon: Briefcase,
-      badge: activeJobsCount > 0 ? activeJobsCount : null,
+      badge: jobs.length || null,
     },
     {
       id: "important",
       label: "Important",
       icon: Star,
-      badge: flaggedCount > 0 ? flaggedCount : null,
-    },
-    {
-      id: "past",
-      label: "Past Jobs",
-      icon: Archive,
-      badge: null,
+      badge: flaggedJobs.length || null,
+      badgeStyle: "warn",
     },
     {
       id: "overdue",
       label: "Overdue",
       icon: AlertTriangle,
-      badge: overdueCount > 0 ? overdueCount : null,
-      variant: overdueCount > 0 ? "destructive" : "default",
+      badge: overdueJobs.length || null,
+      badgeStyle: "alert",
     },
     {
-      id: "analytics",
-      label: "Analytics",
-      icon: BarChart3,
-      badge: null,
+      id: "past",
+      label: "Past Jobs",
+      icon: Archive,
     },
   ];
 
-  const bottomMenuItems = [
+  const officeItems: NavItem[] = [
+    { id: "analytics", label: "Analytics", icon: BarChart3 },
+    { id: "team", label: "Team", icon: Users },
     {
-      id: "team",
-      label: "Team",
-      icon: Users,
+      id: "settings",
+      label: "Settings",
+      icon: Settings,
+      onClickOverride: onSettingsClick,
     },
   ];
 
-  // Fixed icon column width (matches w-20 = 80px).
-  // When expanded, a text column slides out to the right; icons never move.
-  const ICON_COL = "w-20"; // 80px — always present
-  const EXPANDED_W = "w-64"; // 256px total when expanded
+  const renderItem = (item: NavItem) => {
+    const Icon = item.icon;
+    const isActive = !item.onClickOverride && activeTab === item.id;
+    const handleClick = () => {
+      if (item.onClickOverride) item.onClickOverride();
+      else onTabChange(item.id);
+    };
+
+    const badgeClass =
+      item.badgeStyle === "alert"
+        ? "bg-danger-bg text-danger"
+        : item.badgeStyle === "warn"
+          ? "bg-warn-bg text-warn"
+          : "text-ink-mute";
+
+    return (
+      <Tooltip key={item.id}>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={handleClick}
+            className={cn(
+              "w-full h-8 px-3 rounded-lg flex items-center gap-[11px] text-[calc(13px*var(--ui-scale))] font-medium",
+              "transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              isActive
+                ? "bg-panel text-ink shadow-[0_0_0_1px_var(--line),0_1px_1px_rgba(28,38,60,0.03)]"
+                : "text-ink-2 hover:bg-line-2 hover:text-ink",
+              collapsed && "justify-center px-0",
+            )}
+            data-testid={`nav-${item.id}`}
+            aria-label={item.label}
+          >
+            <Icon
+              className={cn(
+                "h-4 w-4 shrink-0 transition-colors",
+                isActive ? "text-otto-accent" : "text-ink-mute group-hover:text-ink-2",
+              )}
+            />
+            {!collapsed && (
+              <>
+                <span className="flex-1 min-w-0 truncate text-left">{item.label}</span>
+                {item.badge != null && item.badge > 0 && (
+                  <span
+                    className={cn(
+                      "font-mono text-[calc(10.5px*var(--ui-scale))] font-medium px-1.5 rounded-full leading-[18px] tabular-nums",
+                      badgeClass,
+                    )}
+                    data-testid={`badge-${item.id}`}
+                  >
+                    {item.badge}
+                  </span>
+                )}
+              </>
+            )}
+          </button>
+        </TooltipTrigger>
+        {collapsed && (
+          <TooltipContent side="right" align="center">
+            {item.label}
+            {item.badge != null && item.badge > 0 ? ` · ${item.badge}` : ""}
+          </TooltipContent>
+        )}
+      </Tooltip>
+    );
+  };
 
   return (
     <aside
       className={cn(
-        "bg-card border-r border-border flex flex-col pb-3 transition-[width] duration-200 overflow-hidden",
-        collapsed ? ICON_COL : EXPANDED_W,
+        "flex flex-col gap-1 px-2.5 py-3.5 transition-[width] duration-200 overflow-hidden",
+        collapsed ? "w-14" : "w-56",
       )}
       data-testid="sidebar"
     >
-      {/* Office Header */}
-      <div className="border-b border-border">
-        {/* Logo row — icon + office info + collapse toggle */}
-        <div className="flex items-center h-14">
-          <span
-            className={cn("flex items-center justify-center shrink-0", ICON_COL, collapsed && "cursor-pointer")}
-            onClick={collapsed ? () => setCollapsed(false) : undefined}
-            title={collapsed ? "Expand sidebar" : undefined}
-          >
-            <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden bg-white">
-              <img src={logoSymbol} alt="Otto" className="w-8 h-8 object-contain" />
-            </div>
-          </span>
+      {/* Brand block */}
+      <div className="flex items-center gap-1.5 pb-2 px-1 min-h-10">
+        <button
+          type="button"
+          onClick={() => collapsed && setCollapsed(false)}
+          className={cn(
+            "flex items-center gap-2.5 flex-1 min-w-0 -mx-1 px-1 py-1 rounded-md",
+            collapsed ? "cursor-pointer hover:bg-line-2" : "cursor-default",
+          )}
+          aria-label={collapsed ? "Expand sidebar" : undefined}
+        >
+          <div className="w-8 h-8 rounded-md bg-paper-2 grid place-items-center shrink-0 overflow-hidden">
+            <img src={logoSymbol} alt="Otto" className="w-6 h-6 object-contain" />
+          </div>
           {!collapsed && (
-            <div className="flex-1 min-w-0 flex items-center gap-2 pr-2">
-              <div className="flex-1 min-w-0">
-                <h2 className="font-semibold text-foreground truncate" data-testid="text-office-name">
-                  {office?.name || "Loading..."}
-                </h2>
-                <p className="text-xs text-muted-foreground capitalize" data-testid="text-user-role">
-                  {user?.role || "Staff"}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                onClick={() => setCollapsed((prev) => !prev)}
-                title="Collapse sidebar"
-                aria-label="Collapse sidebar"
-                data-testid="button-toggle-sidebar"
+            <div className="flex-1 min-w-0">
+              <div
+                className="font-display font-semibold text-[calc(14.5px*var(--ui-scale))] leading-tight text-ink truncate"
+                data-testid="text-office-name"
               >
-                <PanelLeft className="h-4 w-4" />
-              </Button>
+                {office?.name || "Otto"}
+              </div>
+              <div className="font-mono text-[calc(10.5px*var(--ui-scale))] text-ink-mute lowercase mt-0.5">
+                otto host
+              </div>
             </div>
           )}
-        </div>
+        </button>
+
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(true)}
+            className="w-7 h-7 rounded-md grid place-items-center text-ink-mute hover:bg-line-2 hover:text-ink shrink-0"
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+            data-testid="button-toggle-sidebar"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      {/* Main Navigation */}
-      <nav className="flex-1 py-4 space-y-0.5 px-2">
-        {menuItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeTab === item.id || (item.id === "all" && activeTab === "all");
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto -mx-0.5 px-0.5 flex flex-col gap-0.5">
+        {/* Jobs section */}
+        {!collapsed && (
+          <div className="text-[calc(10px*var(--ui-scale))] uppercase tracking-[0.12em] text-ink-mute font-semibold px-3 pt-4 pb-1.5">
+            Jobs
+          </div>
+        )}
+        {collapsed && <div className="h-2" />}
+        {jobsItems.map(renderItem)}
 
-          return (
-            <button
-              key={`${item.id}-${item.label}`}
-              type="button"
-              className={cn(
-                "w-full flex items-center h-10 text-sm font-medium rounded-md",
-                "hover:bg-accent hover:text-accent-foreground",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                isActive && "bg-accent text-accent-foreground border-l-[3px] border-l-primary",
-                !isActive && "text-muted-foreground border-l-[3px] border-l-transparent",
-              )}
-              onClick={() => onTabChange(item.id)}
-              title={collapsed ? item.label : undefined}
-              aria-label={item.label}
-              data-testid={`nav-${item.id}`}
-            >
-              {/* Fixed-width icon area — never moves */}
-              <span className={cn("flex items-center justify-center shrink-0 relative", collapsed ? "w-full" : "w-16")}>
-                <Icon className="h-4 w-4" />
-                {item.badge !== null && collapsed && (
-                  <Badge
-                    variant={(item as any).variant || "secondary"}
-                    className="absolute -top-0.5 right-1 h-4 min-w-4 px-1 text-[10px] leading-none flex items-center justify-center z-10"
-                    data-testid={`badge-${item.id}`}
-                  >
-                    {item.badge}
-                  </Badge>
-                )}
-              </span>
-              {/* Text + badge area — only visible when expanded */}
-              {!collapsed && (
-                <span className="flex items-center justify-between flex-1 pr-3">
-                  <span>{item.label}</span>
-                  {item.badge !== null && (
-                    <Badge
-                      variant={(item as any).variant || "secondary"}
-                      className="text-xs"
-                      data-testid={`badge-${item.id}`}
-                    >
-                      {item.badge}
-                    </Badge>
-                  )}
-                </span>
-              )}
-            </button>
-          );
-        })}
-
-        {/* Divider */}
-        <div className="pt-4 mt-4 border-t border-border">
-          {bottomMenuItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={cn(
-                  "w-full flex items-center h-10 text-sm font-medium rounded-md",
-                  "hover:bg-accent hover:text-accent-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  isActive && "bg-accent text-accent-foreground border-l-[3px] border-l-primary",
-                  !isActive && "text-muted-foreground border-l-[3px] border-l-transparent",
-                )}
-                onClick={() => onTabChange(item.id)}
-                title={collapsed ? item.label : undefined}
-                aria-label={item.label}
-                data-testid={`nav-${item.id}`}
-              >
-                <span className={cn("flex items-center justify-center shrink-0", collapsed ? "w-full" : "w-16")}>
-                  <Icon className="h-4 w-4" />
-                </span>
-                {!collapsed && (
-                  <span className="flex-1 text-left">{item.label}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+        {/* Office section */}
+        {!collapsed && (
+          <div className="text-[calc(10px*var(--ui-scale))] uppercase tracking-[0.12em] text-ink-mute font-semibold px-3 pt-4 pb-1.5">
+            Office
+          </div>
+        )}
+        {collapsed && <div className="h-3" />}
+        {officeItems.map(renderItem)}
       </nav>
 
-      {/* Expand button — only visible when collapsed */}
+      {/* Expand button (when collapsed) */}
       {collapsed && (
-        <div className="px-2 pb-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="w-full flex items-center justify-center h-8 text-muted-foreground hover:bg-accent hover:text-accent-foreground rounded-md transition-colors"
-                onClick={() => setCollapsed(false)}
-                aria-label="Expand sidebar"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" align="center">
-              <p>Expand sidebar</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setCollapsed(false)}
+              className="w-full h-8 rounded-md grid place-items-center text-ink-mute hover:bg-line-2 hover:text-ink mb-1"
+              aria-label="Expand sidebar"
+            >
+              <PanelLeft className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right">Expand sidebar</TooltipContent>
+        </Tooltip>
       )}
 
-      {/* Settings & Help — pinned to bottom */}
-      <div className="border-t border-border py-3 px-2 space-y-0.5">
-        <Tooltip>
-          <TooltipTrigger asChild>
+      {/* User pod */}
+      <div className="border-t border-line pt-2 mt-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <button
               type="button"
               className={cn(
-                "w-full flex items-center h-10 text-sm font-medium rounded-md",
-                "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                "w-full p-1.5 rounded-md flex items-center gap-2.5 text-left",
+                "hover:bg-line-2",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                collapsed && "justify-center",
               )}
-              onClick={onUserSettingsClick}
-              aria-label="User Settings"
-              data-testid="nav-user-settings"
+              data-testid="button-user-menu"
+              aria-label="User menu"
             >
-              <span className={cn("flex items-center justify-center shrink-0", collapsed ? "w-full" : "w-16")}>
-                <Settings className="h-4 w-4" />
-              </span>
+              <div
+                className="w-7 h-7 rounded-full grid place-items-center text-white text-[calc(11px*var(--ui-scale))] font-semibold shrink-0 tracking-wide"
+                style={{
+                  background: "linear-gradient(140deg, var(--brand-navy-2), var(--brand-navy))",
+                }}
+              >
+                {initials}
+              </div>
               {!collapsed && (
-                <span className="flex-1 text-left">User Settings</span>
+                <>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[calc(12.5px*var(--ui-scale))] font-medium leading-tight text-ink truncate">
+                      {fullName}
+                    </div>
+                    <div
+                      className="font-mono text-[calc(10.5px*var(--ui-scale))] text-ink-mute mt-0.5 truncate capitalize"
+                      data-testid="text-user-role"
+                    >
+                      {(user?.role || "").replace(/_/g, " ")}
+                    </div>
+                  </div>
+                  <MoreVertical className="h-3.5 w-3.5 text-ink-mute shrink-0" />
+                </>
               )}
             </button>
-          </TooltipTrigger>
-          <TooltipContent side="right" align="center">
-            <p>Font size, dark mode, and other preferences</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                "w-full flex items-center h-10 text-sm font-medium rounded-md",
-                "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              )}
-              onClick={onFeedbackClick}
-              aria-label="Help & Feedback"
-              data-testid="nav-feedback"
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="top" className="w-60">
+            <DropdownMenuLabel className="font-normal">
+              <div className="flex flex-col space-y-1">
+                <p className="text-sm font-medium leading-none">{fullName}</p>
+                <p className="text-xs leading-none text-ink-mute truncate">{user?.email}</p>
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onUserSettingsClick?.()} data-testid="menu-user-settings">
+              <Settings className="h-4 w-4" />
+              User Settings
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onHealthClick?.()} data-testid="menu-user-health">
+              <Activity className="h-4 w-4" />
+              System Health
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onFeedbackClick?.()} data-testid="menu-user-feedback">
+              <MessageCircleQuestion className="h-4 w-4" />
+              Help &amp; Feedback
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => logoutMutation.mutate()}
+              data-testid="menu-user-signout"
             >
-              <span className={cn("flex items-center justify-center shrink-0", collapsed ? "w-full" : "w-16")}>
-                <MessageCircleQuestion className="h-4 w-4" />
-              </span>
-              {!collapsed && (
-                <span className="flex-1 text-left">Help & Feedback</span>
-              )}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right" align="center">
-            <p>Request a feature, report a bug, or ask a question</p>
-          </TooltipContent>
-        </Tooltip>
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   );

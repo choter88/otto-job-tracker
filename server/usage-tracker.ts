@@ -63,7 +63,7 @@ export type UsageEventType =
   | "notification_rule_updated"
   | "notification_rule_deleted";
 
-/** Allowlist for client-side event types (POST /api/track). */
+/** Allowlist for desktop-side event types (POST /api/track). */
 export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   "tab_worklist",
   "tab_important",
@@ -78,6 +78,16 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   "job_detail_tab_related",
   "custom_column_edited",
 ]);
+
+/** Allowlist for tablet-side event types (POST /tablet/api/track). Kept
+ *  small on purpose — tablets are a focused, low-volume surface, and the
+ *  portal mainly cares "did the tablet do anything?" / "what was it doing?". */
+export const TABLET_TRACKABLE_EVENTS = new Set<string>([
+  "tablet_view_changed",
+  "tablet_status_changed",
+]);
+
+export type UsageEventSource = "app" | "tablet";
 
 // ── Event persistence ────────────────────────────────────────────────
 
@@ -99,6 +109,7 @@ export function trackEvent(opts: {
   userId?: string | null;
   officeId?: string | null;
   eventType: UsageEventType | string;
+  source?: UsageEventSource;
   metadata?: Record<string, any>;
 }): void {
   try {
@@ -106,6 +117,7 @@ export function trackEvent(opts: {
       userId: opts.userId ?? null,
       officeId: opts.officeId ?? null,
       eventType: opts.eventType,
+      source: opts.source ?? "app",
       metadata: opts.metadata ?? {},
       createdAt: new Date(),
     }).run();
@@ -212,6 +224,7 @@ export function getAggregatedDailyStats(since: Date): DailyActivitySummary[] {
 export type RawUsageEvent = {
   userIdHash: string;
   eventType: string;
+  source: UsageEventSource;
   metadata: Record<string, any>;
   occurredAt: number; // epoch ms
 };
@@ -233,6 +246,7 @@ export function getRawEventsSince(since: Date): RawUsageEvent[] {
     .select({
       userId: usageEvents.userId,
       eventType: usageEvents.eventType,
+      source: usageEvents.source,
       metadata: usageEvents.metadata,
       createdAt: usageEvents.createdAt,
     })
@@ -250,6 +264,7 @@ export function getRawEventsSince(since: Date): RawUsageEvent[] {
     return {
       userIdHash: hashCache.get(key)!,
       eventType: row.eventType,
+      source: (row.source === "tablet" ? "tablet" : "app") as UsageEventSource,
       metadata: (row.metadata && typeof row.metadata === "object" ? row.metadata : {}) as Record<string, any>,
       occurredAt: row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt),
     };

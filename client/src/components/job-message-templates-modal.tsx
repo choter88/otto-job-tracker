@@ -181,7 +181,6 @@ export default function JobMessageTemplatesModal({
 
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">Order #{job.orderId}</Badge>
             <Badge
               className="shrink-0"
               style={{ backgroundColor: badgeColors.background, color: badgeColors.text }}

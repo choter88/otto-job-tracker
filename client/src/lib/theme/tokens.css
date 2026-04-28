@@ -1,0 +1,310 @@
+/* ────────────────────────────────────────────────────────────────────
+   Otto design tokens — single source of truth for the desktop app.
+
+   Two layers:
+     1. Raw tokens (paper / panel / ink / brand / accent / status / shadow)
+     2. shadcn semantic tokens, mapped onto the raw layer so existing
+        components keep working without a rewrite.
+
+   Custom UI (sidebar, topbar, worklist, modals) consumes layer 1 directly.
+   shadcn UI (Button, Dialog, etc.) keeps using layer 2 names.
+   ──────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ── Brand ───────────────────────────────────────────────────────── */
+  --brand-navy:      #1c3661;
+  --brand-navy-2:    #284c87;
+  --brand-emerald:   #2f9e6e;
+  --brand-emerald-2: #45b582;
+
+  /* ── Surfaces ───────────────────────────────────────────────────── */
+  --paper:        #f6f7f9;   /* app background */
+  --paper-2:      #eef0f3;   /* deeper paper / row striping */
+  --panel:        #ffffff;   /* primary surface */
+  --panel-2:      #f7f8fa;   /* footer / muted surface */
+  --panel-warm:   #f0f2f5;
+
+  /* ── Hairlines ──────────────────────────────────────────────────── */
+  --line:         rgba(15, 23, 42, 0.08);
+  --line-2:       rgba(15, 23, 42, 0.05);
+  --line-strong:  rgba(15, 23, 42, 0.16);
+
+  /* ── Ink ────────────────────────────────────────────────────────── */
+  --ink:          #131a2b;
+  --ink-2:        #2c3548;
+  --ink-3:        #525c72;
+  --ink-mute:     #7a8398;
+  --ink-faint:    #b4bac8;
+
+  /* ── Accent (indigo — primary actions) ──────────────────────────
+     Brand emerald is kept above for status/health/ready indicators.
+     UI accent (buttons, focus rings, lifecycle current step, sidebar
+     active icon) uses indigo to give the app visual identity distinct
+     from "success" semantics. */
+  --accent:        #5b6cff;
+  --accent-strong: #4655e6;
+  --accent-soft:   #eef0ff;
+  --accent-line:   #c4cbff;
+  --accent-ink:    #3947b3;
+
+  /* ── Status pill defaults — overridden inline by office colors ──── */
+  --st-created-bg: #eef0f3; --st-created-fg: #4d5670; --st-created-dot: #8089a0;
+  --st-ordered-bg: #e4ecf7; --st-ordered-fg: #2c4a78; --st-ordered-dot: #5b7fb3;
+  --st-prog-bg:    #faedd5; --st-prog-fg:    #7a4f0f; --st-prog-dot:    #c98c2a;
+  --st-qc-bg:      #ede4f3; --st-qc-fg:      #5a3a78; --st-qc-dot:      #8e6db5;
+  --st-ready-bg:   #d9efe2; --st-ready-fg:   #1f6b4c; --st-ready-dot:   #2f9e6e;
+  --st-done-bg:    #ecedef; --st-done-fg:    #6e768a; --st-done-dot:    #a8b0c0;
+  --st-cancel-bg:  #f6e0dc; --st-cancel-fg:  #843224; --st-cancel-dot:  #c75a45;
+
+  --danger:    #c4452f;
+  --danger-bg: #f6e0dc;
+  --warn:      #c98c2a;
+  --warn-bg:   #faedd5;
+
+  /* ── Density (driven by user font-size preference, see density.ts) ── */
+  --ui-scale:  1;                       /* multiplier set by density helper */
+  --row-h:     calc(52px * var(--ui-scale));
+  --pad-x:     calc(14px * var(--ui-scale));
+  --font-ui:   calc(13px * var(--ui-scale));
+
+  /* ── Radii ──────────────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius:    8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* ── Fonts ──────────────────────────────────────────────────────── */
+  --fa-ui:      'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --fa-display: 'Fraunces', 'Inter', ui-serif, Georgia, serif;
+  --fa-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-sans:  var(--fa-ui);
+
+  /* ── Shadows ────────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(28, 38, 60, 0.04);
+  --shadow:    0 2px 6px rgba(28, 38, 60, 0.05), 0 1px 2px rgba(28, 38, 60, 0.04);
+  --shadow-lg: 0 16px 40px -16px rgba(28, 38, 60, 0.18), 0 2px 8px rgba(28, 38, 60, 0.06);
+  --shadow-xl: 0 28px 70px -20px rgba(28, 38, 60, 0.30), 0 2px 6px rgba(28, 38, 60, 0.05);
+
+  /* ──────────────────────────────────────────────────────────────────
+     Layer 2 — shadcn semantic tokens.
+     Existing shadcn components reference --background / --foreground /
+     --primary / etc. We point them at the layer-1 tokens so the visual
+     refresh propagates through every Button, Dialog, Toaster, etc.
+     without touching their source. shadcn tokens use HSL space; layer-1
+     uses hex, so we duplicate values rather than reference (HSL strings
+     can't be `var()`-composed).
+     ────────────────────────────────────────────────────────────────── */
+
+  --background:               #f6f7f9;             /* paper */
+  --foreground:               #131a2b;             /* ink */
+
+  --card:                     #ffffff;             /* panel */
+  --card-foreground:          #131a2b;             /* ink */
+  --popover:                  #ffffff;             /* panel */
+  --popover-foreground:       #131a2b;             /* ink */
+
+  /* shadcn primary = our UI accent indigo — buttons, ring, focused inputs */
+  --primary:                  #5b6cff;
+  --primary-foreground:       #ffffff;
+
+  --secondary:                #eef0f3;             /* paper-2 */
+  --secondary-foreground:     #2c3548;             /* ink-2 */
+
+  --muted:                    #eef0f3;             /* paper-2 */
+  --muted-foreground:         #7a8398;             /* ink-mute */
+
+  /* shadcn "accent" is the hover/secondary surface (NOT our brand accent).
+     Keep its semantic — pale paper-2 background. */
+  --accent-shadcn:            #eef0f3;             /* paper-2 */
+  --accent-shadcn-foreground: #2c3548;             /* ink-2 */
+
+  --destructive:              #c4452f;
+  --destructive-foreground:   #ffffff;
+
+  --border:                   rgba(15, 23, 42, 0.08);     /* line */
+  --input:                    rgba(15, 23, 42, 0.16);     /* line-strong */
+  --ring:                     #5b6cff;                    /* accent indigo */
+
+  /* Semantic colors — kept distinct from --accent so "success" stays green
+     even when the app accent is changed to a non-green hue. */
+  --success:                  #2f9e6e;
+  --warning:                  #c98c2a;
+  --info:                     #2c4a78;
+
+  --chart-1: #5b6cff;
+  --chart-2: #2f9e6e;
+  --chart-3: #c98c2a;
+  --chart-4: #7C3AED;
+  --chart-5: #c4452f;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   shadcn-level overrides for `--accent` are tricky: we want shadcn to
+   keep its semantic ("hover/secondary surface") while custom UI uses
+   our emerald --accent. Tailwind config maps `bg-accent` to whichever
+   --accent is in scope. To resolve, we override --accent at the shadcn
+   layer to keep the pale color, then alias --otto-accent for emerald
+   uses (handled in tailwind.config.ts).
+   ──────────────────────────────────────────────────────────────────── */
+:root {
+  --accent:            #eef0f3;     /* shadcn semantic: paper-2 */
+  --accent-foreground: #2c3548;     /* shadcn semantic: ink-2 */
+
+  /* Otto-namespaced accent for custom UI (Tailwind: bg-otto-accent etc.) */
+  --otto-accent:        #5b6cff;
+  --otto-accent-strong: #4655e6;
+  --otto-accent-soft:   #eef0ff;
+  --otto-accent-line:   #c4cbff;
+  --otto-accent-ink:    #3947b3;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   Density tiers — `data-ui-scale` set by client/src/lib/theme/density.ts
+   based on the user's font-size preference. Each tier matches the ratio
+   of the picked font-size to the default (14px), so anything sized via
+   `calc(Xpx * var(--ui-scale))` (table text, lifecycle, badges, density
+   spacing) tracks the user's preference at all five tiers — not just
+   lg/xl. xs/sm shrink, lg/xl grow, default stays at 1.
+   ──────────────────────────────────────────────────────────────────── */
+[data-ui-scale="xs"]       { --ui-scale: 0.857; }   /* 12 / 14 */
+[data-ui-scale="sm"]       { --ui-scale: 0.929; }   /* 13 / 14 */
+[data-ui-scale="default"]  { --ui-scale: 1; }
+[data-ui-scale="lg"]       { --ui-scale: 1.143; }   /* 16 / 14 */
+[data-ui-scale="xl"]       { --ui-scale: 1.286; }   /* 18 / 14 */
+
+/* ────────────────────────────────────────────────────────────────────
+   Dark mode — activated by `.dark` class on <html> (user preference,
+   toggled by user-settings-modal.tsx via applyDarkMode()).
+
+   Design principle: dark mode preserves the same paper-and-ink rhythm —
+   surfaces step in lightness from paper → panel, ink steps from
+   bright text → faint, hairlines use white-alpha (not black-alpha),
+   accent emerald is slightly brighter to compensate for darker bg.
+   ──────────────────────────────────────────────────────────────────── */
+.dark {
+  /* ── Surfaces ──────────────────────────────────────────────────── */
+  --paper:        #0d1220;       /* deep slate — app background */
+  --paper-2:      #141a2c;       /* slightly raised — striping */
+  --panel:        #1a2032;       /* primary card surface */
+  --panel-2:      #20273c;       /* footer / muted surface */
+  --panel-warm:   #1d2436;
+
+  /* ── Hairlines (white-alpha) ───────────────────────────────────── */
+  --line:         rgba(255, 255, 255, 0.08);
+  --line-2:       rgba(255, 255, 255, 0.05);
+  --line-strong:  rgba(255, 255, 255, 0.16);
+
+  /* ── Ink (light text levels) ───────────────────────────────────── */
+  --ink:          #f0f2f8;
+  --ink-2:        #cbd1de;
+  --ink-3:        #9aa3b8;
+  --ink-mute:     #6e7691;
+  --ink-faint:    #444b62;
+
+  /* ── Brand (lifted slightly for visibility) ────────────────────── */
+  --brand-navy:      #3b5491;
+  --brand-navy-2:    #5774b4;
+  --brand-emerald:   #3aae7c;
+  --brand-emerald-2: #48c089;
+
+  /* ── Accent indigo (more luminous against dark surfaces) ───────── */
+  --accent:        #7080ff;
+  --accent-strong: #8a99ff;
+  --accent-soft:   rgba(112, 128, 255, 0.15);
+  --accent-line:   rgba(112, 128, 255, 0.32);
+  --accent-ink:    #a8b3ff;
+
+  /* ── Status pills (muted dark variants) ────────────────────────── */
+  --st-created-bg: #2d3447; --st-created-fg: #aab1c5; --st-created-dot: #818aa3;
+  --st-ordered-bg: #1d2a44; --st-ordered-fg: #8da9d6; --st-ordered-dot: #5778ad;
+  --st-prog-bg:    #3d2c0e; --st-prog-fg:    #e6c080; --st-prog-dot:    #d39a3a;
+  --st-qc-bg:      #2e1f3f; --st-qc-fg:      #d4b3ed; --st-qc-dot:      #a989d3;
+  --st-ready-bg:   #1c3d2c; --st-ready-fg:   #92d8a8; --st-ready-dot:   #4ec38b;
+  --st-done-bg:    #2a2e3a; --st-done-fg:    #9ea4b6; --st-done-dot:    #767e92;
+  --st-cancel-bg:  #3a1d18; --st-cancel-fg:  #e8a594; --st-cancel-dot:  #d97863;
+
+  --danger:    #e8654c;
+  --danger-bg: rgba(232, 101, 76, 0.18);
+  --warn:      #dba145;
+  --warn-bg:   rgba(219, 161, 69, 0.18);
+
+  /* ── Shadows (deeper in dark) ──────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow:    0 2px 6px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 16px 40px -16px rgba(0, 0, 0, 0.65), 0 2px 8px rgba(0, 0, 0, 0.30);
+  --shadow-xl: 0 28px 70px -20px rgba(0, 0, 0, 0.75), 0 2px 6px rgba(0, 0, 0, 0.30);
+
+  /* ── shadcn semantic remap — dark variants ─────────────────────── */
+  --background:               #0d1220;             /* paper */
+  --foreground:               #f0f2f8;             /* ink */
+
+  --card:                     #1a2032;             /* panel */
+  --card-foreground:          #f0f2f8;             /* ink */
+  --popover:                  #1a2032;             /* panel */
+  --popover-foreground:       #f0f2f8;             /* ink */
+
+  --primary:                  #7080ff;             /* accent indigo (brighter for dark) */
+  --primary-foreground:       #ffffff;
+
+  --secondary:                #141a2c;             /* paper-2 */
+  --secondary-foreground:     #cbd1de;             /* ink-2 */
+
+  --muted:                    #141a2c;             /* paper-2 */
+  --muted-foreground:         #6e7691;             /* ink-mute */
+
+  --accent:                   #141a2c;             /* shadcn semantic — paper-2 */
+  --accent-foreground:        #cbd1de;             /* ink-2 */
+
+  --destructive:              #e8654c;
+  --destructive-foreground:   #ffffff;
+
+  --border:                   rgba(255, 255, 255, 0.08);     /* line */
+  --input:                    rgba(255, 255, 255, 0.16);     /* line-strong */
+  --ring:                     #7080ff;                       /* accent indigo */
+
+  /* Semantic colors stay green/amber/blue regardless of accent */
+  --success:                  #3aae7c;
+  --warning:                  #dba145;
+  --info:                     #7080ff;
+
+  --chart-1: #7080ff;
+  --chart-2: #3aae7c;
+  --chart-3: #dba145;
+  --chart-4: #a989d3;
+  --chart-5: #e8654c;
+
+  /* Otto-namespaced accent for utilities */
+  --otto-accent:        #7080ff;
+  --otto-accent-strong: #8a99ff;
+  --otto-accent-soft:   rgba(112, 128, 255, 0.15);
+  --otto-accent-line:   rgba(112, 128, 255, 0.32);
+  --otto-accent-ink:    #a8b3ff;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   Animation primitives, ported from mockup.
+   ──────────────────────────────────────────────────────────────────── */
+@keyframes ottoFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes ottoPopIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes ottoPulseDot {
+  0%   { box-shadow: 0 0 0 0 rgba(47, 158, 110, 0.55); }
+  60%  { box-shadow: 0 0 0 6px rgba(47, 158, 110, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(47, 158, 110, 0); }
+}
+@keyframes ottoSpin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -135,6 +135,25 @@ export function createJob(data: {
   });
 }
 
+// ── Usage tracking ──
+// Fire-and-forget. Errors swallowed: tracking must never break the UI, and
+// the host's no-offline-outbox policy means lost events on disconnect are
+// expected (the user couldn't have acted while disconnected anyway).
+export function trackEvent(
+  eventType: "tablet_view_changed" | "tablet_status_changed",
+  metadata?: Record<string, unknown>,
+): void {
+  if (!authToken) return;
+  fetch("/tablet/api/track", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify(metadata ? { eventType, metadata } : { eventType }),
+  }).catch(() => {});
+}
+
 export function fetchConfig() {
   return request<{
     customStatuses: any[];

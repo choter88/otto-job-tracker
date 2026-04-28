@@ -51,6 +51,8 @@ import { db } from "./db";
 import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
+import { defaultOnboardingForNewOffice } from "@shared/onboarding";
+import { getDefaultOfficeSettings } from "@shared/office-defaults";
 
 export interface IStorage {
   // User operations
@@ -259,40 +261,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createOffice(insertOffice: InsertOffice): Promise<Office> {
-    const defaultSettings = {
-      customStatuses: [
-        { id: "job_created", label: "Job Created", color: "#2563EB", order: 1 },
-        { id: "ordered", label: "Ordered", color: "#D97706", order: 2 },
-        { id: "in_progress", label: "In Progress", color: "#0284C7", order: 3 },
-        { id: "quality_check", label: "Quality Check", color: "#7C3AED", order: 4 },
-        { id: "ready_for_pickup", label: "Ready for Pickup", color: "#16A34A", order: 5 },
-        { id: "completed", label: "Completed", color: "#059669", order: 6 },
-        { id: "cancelled", label: "Cancelled", color: "#DC2626", order: 7 }
-      ],
-      customJobTypes: [
-        { id: "contacts", label: "Contacts", color: "#475569", order: 1 },
-        { id: "glasses", label: "Glasses", color: "#2563EB", order: 2 },
-        { id: "sunglasses", label: "Sunglasses", color: "#D97706", order: 3 },
-        { id: "prescription", label: "Prescription", color: "#7C3AED", order: 4 }
-      ],
-      customOrderDestinations: [
-        { id: "vision_lab", label: "Vision Lab", color: "#0284C7", order: 1 },
-        { id: "eyetech_labs", label: "EyeTech Labs", color: "#16A34A", order: 2 },
-        { id: "premium_optics", label: "Premium Optics", color: "#D97706", order: 3 }
-      ],
-      customColumns: [],
-      smsEnabled: false,
-      smsTemplates: {
-        job_created: "Hi {patient_first_name}, we received your {job_type} order #{order_id}.",
-        ordered: "Your {job_type} order #{order_id} has been placed and is being processed.",
-        in_progress: "Update: Your {job_type} order #{order_id} is now in progress.",
-        quality_check: "Update: Your {job_type} order #{order_id} is in quality check.",
-        ready_for_pickup: "Great news! Your {job_type} order #{order_id} is ready for pickup.",
-        completed: "Your {job_type} order #{order_id} has been completed.",
-        cancelled:
-          "Update: Your {job_type} order #{order_id} was cancelled. Please contact {office_name} at {office_phone}."
-      }
-    };
+    const defaultSettings = getDefaultOfficeSettings();
 
     const [office] = await db
       .insert(offices)
@@ -302,9 +271,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateOffice(id: string, updates: Partial<Office>): Promise<Office> {
+    // Merge `settings` JSON instead of replacing it. Without this, callers
+    // that send a partial settings object would silently drop unknown keys
+    // (e.g. the `onboarding` block written by the setup wizard, or any
+    // future field added in a later release).
+    const finalUpdates: Record<string, any> = { ...updates, updatedAt: new Date() };
+    if (Object.prototype.hasOwnProperty.call(updates, "settings")) {
+      const incoming = updates.settings;
+      const isObject = (v: unknown): v is Record<string, any> =>
+        !!v && typeof v === "object" && !Array.isArray(v);
+      if (isObject(incoming)) {
+        const [existing] = await db
+          .select({ settings: offices.settings })
+          .from(offices)
+          .where(eq(offices.id, id));
+        const existingSettings = isObject(existing?.settings) ? existing.settings : {};
+        finalUpdates.settings = { ...existingSettings, ...incoming };
+      }
+    }
+
     const [office] = await db
       .update(offices)
-      .set({ ...updates, updatedAt: new Date() })
+      .set(finalUpdates)
       .where(eq(offices.id, id))
       .returning();
     return office;

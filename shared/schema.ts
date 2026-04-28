@@ -387,17 +387,21 @@ export const phiAccessLogs = sqliteTable("phi_access_logs", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 });
 
-// Usage events table — anonymous action tracking for product analytics
+// Usage events table — anonymous action tracking for product analytics.
+// `source` distinguishes the originating UI ("app" = desktop host/client UI,
+// "tablet" = lab tablet) so portal queries can break out tablet activity.
 export const usageEvents = sqliteTable("usage_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: text("user_id"),
   officeId: text("office_id"),
   eventType: text("event_type").notNull(),
+  source: text("source").notNull().default("app").$type<"app" | "tablet">(),
   metadata: text("metadata", { mode: "json" }).$type<Record<string, any>>().default({}),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
 }, (table) => ({
   createdAtIdx: index("usage_events_created_at_idx").on(table.createdAt),
   eventTypeCreatedAtIdx: index("usage_events_event_type_created_at_idx").on(table.eventType, table.createdAt),
+  sourceCreatedAtIdx: index("usage_events_source_created_at_idx").on(table.source, table.createdAt),
 }));
 
 export type UsageEvent = typeof usageEvents.$inferSelect;

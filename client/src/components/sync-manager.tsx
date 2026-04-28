@@ -145,61 +145,22 @@ export default function SyncManager() {
   if (!user) return null;
 
   const mode = String(desktopConfig?.mode || "").toLowerCase();
-  const modeLabel = mode === "host" ? "Host" : mode === "client" ? "Client" : "Otto Tracker";
   const modeIsClient = mode === "client";
-  const connectionLabel = modeIsClient
-    ? (connected ? "Connected" : "Offline — view only")
-    : "Local";
-
-  const backupInfo = (() => {
-    if (mode !== "host") return null;
-
-    const networkEnabled = desktopConfig?.backupEnabled !== false;
-    const localEnabled = desktopConfig?.localBackupEnabled !== false;
-    const hasNetworkFolder = Boolean(desktopConfig?.backupDir);
-
-    if (!networkEnabled && !localEnabled) {
-      return { label: "Backups: disabled", warn: false };
-    }
-
-    if (networkEnabled && hasNetworkFolder) {
-      if (desktopConfig?.backupLastError) return { label: "Backups: error", warn: true };
-      if (desktopConfig?.backupLastAt) {
-        return { label: `Backups: last ${new Date(desktopConfig.backupLastAt).toLocaleDateString()}`, warn: false };
-      }
-      return { label: "Backups: configured", warn: false };
-    }
-
-    if (!localEnabled) {
-      return { label: networkEnabled ? "Backups: not set up" : "Backups: disabled", warn: networkEnabled };
-    }
-
-    if (desktopConfig?.localBackupLastError) return { label: "Backups: local error", warn: true };
-    if (desktopConfig?.localBackupLastAt) {
-      return {
-        label: `Backups: local ${new Date(desktopConfig.localBackupLastAt).toLocaleDateString()}`,
-        warn: networkEnabled,
-      };
-    }
-
-    return { label: "Backups: local only", warn: networkEnabled };
-  })();
-
-  const backupLabel = backupInfo?.label || null;
-  const backupWarn = Boolean(backupInfo?.warn);
-
-  const licenseLabel =
-    licenseSnapshot && String(licenseSnapshot.mode || "") !== "ACTIVE" ? String(licenseSnapshot.message || "") : null;
-
-  const connectionDotClass = !modeIsClient
-    ? "bg-emerald-500"
-    : connected
-      ? "bg-emerald-500"
-      : "bg-destructive";
 
   // Payment required banner — shown when portal indicates trial expired or subscription issue
   const paymentRequired = licenseSnapshot?.paymentRequired === true;
   const isDisabled = String(licenseSnapshot?.mode || "") === "DISABLED" || String(licenseSnapshot?.mode || "") === "READ_ONLY";
+  const portalBillingUrl = typeof licenseSnapshot?.portalBillingUrl === "string"
+    ? licenseSnapshot.portalBillingUrl
+    : null;
+
+  const openPortalBilling = () => {
+    if (!portalBillingUrl) return;
+    const bridge = (window as any).otto;
+    if (bridge && typeof bridge.openExternal === "function") {
+      bridge.openExternal(portalBillingUrl).catch(() => { /* ignore */ });
+    }
+  };
 
   return (
     <>
@@ -207,7 +168,16 @@ export default function SyncManager() {
       {paymentRequired && !isDisabled && (
         <div className="fixed top-0 left-0 right-0 z-50">
           <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
-            <span className="flex-1">Your free trial has ended. Visit the Otto portal to subscribe and keep using Otto.</span>
+            <span className="flex-1">Your free trial has ended. Subscribe to keep using Otto.</span>
+            {portalBillingUrl && (
+              <button
+                type="button"
+                onClick={openPortalBilling}
+                className="shrink-0 px-3 py-1 bg-amber-600 text-white text-xs font-medium rounded hover:bg-amber-700"
+              >
+                Subscribe
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -216,7 +186,16 @@ export default function SyncManager() {
       {isDisabled && paymentRequired && (
         <div className="fixed top-0 left-0 right-0 z-50">
           <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
-            <span className="flex-1 font-medium">Your Otto trial has expired. Subscribe in the Otto portal to resume full access. Your data is safe and will be here when you return.</span>
+            <span className="flex-1 font-medium">Your Otto trial has expired. Subscribe to resume full access. Your data is safe and will be here when you return.</span>
+            {portalBillingUrl && (
+              <button
+                type="button"
+                onClick={openPortalBilling}
+                className="shrink-0 px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700"
+              >
+                Subscribe
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -261,7 +240,7 @@ export default function SyncManager() {
 
       {/* Offline banner for Client mode */}
       {modeIsClient && !connected && (
-        <div className="fixed bottom-[33px] left-0 right-0 z-50">
+        <div className="fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-t border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
             <WifiOff className="h-4 w-4 shrink-0" />
             <span className="flex-1">Host is offline. Otto is read-only until Otto is opened back up on the main computer.</span>
@@ -279,39 +258,10 @@ export default function SyncManager() {
         </div>
       )}
 
-      {/* Bottom status bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-        <div className="flex items-center justify-between gap-4 px-4 py-2 text-xs">
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="font-medium text-foreground">{modeLabel}</span>
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span className={`h-2 w-2 rounded-full ${connectionDotClass}`} />
-              {connectionLabel}
-            </span>
-            {modeIsClient && !connected && (
-              <button
-                type="button"
-                onClick={() => {
-                  retryRef.current = 0;
-                  if (connectRef.current) connectRef.current();
-                }}
-                className="text-primary hover:underline font-medium"
-              >
-                Reconnect
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3 min-w-0 text-muted-foreground">
-            {backupLabel && (
-              <span className={backupWarn ? "text-amber-600 dark:text-amber-400" : ""}>
-                {backupLabel}
-              </span>
-            )}
-            {licenseLabel && <span className="text-amber-600 dark:text-amber-400">{licenseLabel}</span>}
-          </div>
-        </div>
-      </div>
+      {/* Bottom status bar removed — connection / backup / license state
+          surfaces through the topbar "Host healthy" pill and through banners
+          above the main viewport when something needs attention. The chrome
+          itself wasn't earning its real estate. */}
     </>
   );
 }

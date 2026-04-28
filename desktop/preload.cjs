@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("otto", {
   setupPickSnapshot: () => ipcRenderer.invoke("otto:setup:pick-snapshot"),
   setupImportSnapshot: (payload) => ipcRenderer.invoke("otto:setup:import-snapshot", payload),
   setupComplete: () => ipcRenderer.invoke("otto:setup:complete"),
+  openExternal: (url) => ipcRenderer.invoke("otto:external:open", url),
   showDiagnostics: () => ipcRenderer.invoke("otto:diagnostics:show"),
   exportSupportBundle: () => ipcRenderer.invoke("otto:supportBundle:export"),
   importPickCsv: () => ipcRenderer.invoke("otto:import:pick-csv"),

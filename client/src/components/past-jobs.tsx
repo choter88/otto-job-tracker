@@ -140,7 +140,9 @@ export default function PastJobs() {
         status: "job_created",
         orderDestination: archivedJob.orderDestination,
         isRedoJob: true,
-        notes: `Redo of order ${archivedJob.orderId}`,
+        notes: archivedJob.notes
+          ? `Redo. Original notes: ${archivedJob.notes}`
+          : "Redo of an earlier completed job",
       });
       return res.json();
     },

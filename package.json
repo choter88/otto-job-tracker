@@ -24,6 +24,18 @@
     "check": "tsc",
     "test:local-first": "node --import tsx --test tests/local-first-outbox.test.ts",
     "test:migration-import": "node --import tsx --test tests/migration-import.test.ts",
+    "test:onboarding-helpers": "node --import tsx --test tests/onboarding-helpers.test.ts",
+    "test:settings-merge": "node --import tsx --test tests/settings-merge.test.ts",
+    "test:snapshot-onboarding-stamp": "node --import tsx --test tests/snapshot-onboarding-stamp.test.ts",
+    "test:custom-columns-helper": "node --import tsx --test tests/custom-columns-helper.test.ts",
+    "test:wizard-flow": "node --import tsx --test tests/wizard-flow.test.ts",
+    "test:notification-rules-no-sms": "node --import tsx --test tests/notification-rules-no-sms.test.ts",
+    "test:setup-wizard": "npm run test:onboarding-helpers && npm run test:custom-columns-helper && npm run test:settings-merge && npm run test:snapshot-onboarding-stamp && npm run test:wizard-flow && npm run test:notification-rules-no-sms",
+    "test:lifecycle-helpers": "node --import tsx --test tests/lifecycle-helpers.test.ts",
+    "test:labs-copy": "node --import tsx --test tests/labs-copy.test.ts",
+    "test:restore-stamp": "node --import tsx --test tests/restore-stamp.test.ts",
+    "test:ui-redesign": "npm run test:lifecycle-helpers && npm run test:labs-copy && npm run test:restore-stamp",
+    "test:all": "npm run test:local-first && npm run test:migration-import && npm run test:setup-wizard && npm run test:ui-redesign",
     "db:push": "drizzle-kit push"
   },
   "build": {
