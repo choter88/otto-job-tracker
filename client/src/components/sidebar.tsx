@@ -106,7 +106,7 @@ export default function Sidebar({
     },
     {
       id: "important",
-      label: "Important",
+      label: "Starred",
       icon: Star,
       badge: flaggedJobs.length || null,
       badgeStyle: "warn",

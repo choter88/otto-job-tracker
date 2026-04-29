@@ -10,6 +10,7 @@ import {
   Link2,
   MessageSquare,
   Phone,
+  Save,
   Send,
   Star,
   StickyNote,
@@ -18,7 +19,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -173,6 +174,59 @@ export default function JobDetailsModal({
     },
   });
 
+  // Star (flag) state — moved here from the worklist when the star column was
+  // removed. The modal owns both the action and the "why is this starred?"
+  // note prompt now. flaggedJobs comes from the per-user endpoint, so the
+  // filled-star state reflects the *current viewer's* star, matching the
+  // worklist patient-cell indicator.
+  const [starDialogOpen, setStarDialogOpen] = useState(false);
+  const [starNote, setStarNote] = useState("");
+
+  const { data: flaggedJobs = [] } = useQuery<any[]>({
+    queryKey: ["/api/jobs/flagged"],
+    enabled: open,
+  });
+  const isStarredByMe = !!job?.id && flaggedJobs.some((f: any) => f.id === job.id && f.flaggedBy?.id === user?.id);
+
+  const starJobMutation = useMutation({
+    mutationFn: async ({ jobId, note }: { jobId: string; note: string }) => {
+      const res = await apiRequest("POST", `/api/jobs/${jobId}/flag`, { importantNote: note });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/flagged"] });
+      setStarDialogOpen(false);
+      setStarNote("");
+      toast({ title: "Starred", description: "Job added to your Starred list." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't star", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const unstarJobMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      await apiRequest("DELETE", `/api/jobs/${jobId}/flag`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/flagged"] });
+      toast({ title: "Star removed" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't unstar", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleToggleStar = () => {
+    if (!job?.id) return;
+    if (isStarredByMe) {
+      unstarJobMutation.mutate(job.id);
+    } else {
+      setStarNote("");
+      setStarDialogOpen(true);
+    }
+  };
+
   const updateStatusMutation = useMutation({
     mutationFn: async (newStatus: string) => {
       if (!job?.id) return;
@@ -259,7 +313,7 @@ export default function JobDetailsModal({
         className="max-w-[1013px] w-[min(1013px,calc(100vw-48px))] h-[min(720px,calc(100vh-64px))] p-0 overflow-hidden flex flex-col gap-0"
         data-testid="dialog-job-details"
       >
-        {/* Header — patient/tray identifier, status pill, close X */}
+        {/* Header — patient/tray identifier, status pill, star, close X */}
         <div className="flex items-center gap-3 px-6 py-[18px] border-b border-line">
           <h3 className="font-display text-[calc(20px*var(--ui-scale))] font-medium tracking-[-0.025em] text-ink m-0 truncate">
             {patientDisplayName}
@@ -277,6 +331,35 @@ export default function JobDetailsModal({
             </Badge>
           )}
           <span className="flex-1" />
+          {/* Star toggle — sits in the header next to Close because starring
+              is an "about this job" action, not a workflow action. Filled
+              star + warn color reads "starred by you" without needing a
+              tooltip; the unstarred state is a quiet outline. */}
+          <button
+            type="button"
+            onClick={handleToggleStar}
+            disabled={starJobMutation.isPending || unstarJobMutation.isPending}
+            className={cn(
+              "h-8 px-2.5 rounded-md grid grid-flow-col items-center gap-1.5 shrink-0 text-[calc(12.5px*var(--ui-scale))] font-medium transition-colors",
+              isStarredByMe
+                ? "bg-warn-bg/60 text-warn hover:bg-warn-bg ring-1 ring-warn/20"
+                : "text-ink-mute hover:bg-line-2 hover:text-ink",
+            )}
+            aria-pressed={isStarredByMe}
+            title={isStarredByMe ? "Remove your star" : "Star this job"}
+            data-testid="button-star-job"
+          >
+            <Star
+              className={cn(
+                "h-4 w-4",
+                isStarredByMe ? "fill-warn text-warn" : "text-current",
+              )}
+              aria-hidden
+            />
+            <span className="hidden sm:inline">
+              {isStarredByMe ? "Starred" : "Star"}
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -781,6 +864,70 @@ export default function JobDetailsModal({
           </div>
         </div>
       </DialogContent>
+
+      {/* Star this job — note required so the team knows why */}
+      <Dialog
+        open={starDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setStarDialogOpen(false);
+            setStarNote("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle asChild>
+              <div className="flex items-center gap-2">
+                <Star className="h-4 w-4 text-warn fill-warn" aria-hidden />
+                <h3 className="font-display text-[calc(18px*var(--ui-scale))] font-medium tracking-[-0.02em] text-ink m-0">
+                  Star this job
+                </h3>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2.5">
+            <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute">
+              Why are you starring this? Your team sees this note on the
+              Starred page so they know what to keep an eye on.
+            </p>
+            <Textarea
+              value={starNote}
+              onChange={(e) => setStarNote(e.target.value)}
+              placeholder="e.g., Patient called twice asking about status, needs follow-up by Friday…"
+              rows={4}
+              autoFocus
+              className="resize-none bg-warn-bg/30 border-warn/20 focus-visible:ring-warn/40"
+              data-testid="textarea-star-note"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setStarDialogOpen(false);
+                setStarNote("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                if (job?.id && starNote.trim()) {
+                  starJobMutation.mutate({ jobId: job.id, note: starNote.trim() });
+                }
+              }}
+              disabled={!starNote.trim() || starJobMutation.isPending}
+              data-testid="button-confirm-star"
+            >
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+              {starJobMutation.isPending ? "Saving…" : "Star job"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

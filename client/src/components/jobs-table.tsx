@@ -462,82 +462,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     },
   });
 
-  const [flagDialogJobId, setFlagDialogJobId] = useState<string | null>(null);
-  const [flagNote, setFlagNote] = useState("");
-
-  const flagJobMutation = useMutation({
-    mutationFn: async ({ jobId, note }: { jobId: string; note: string }) => {
-      const res = await apiRequest("POST", `/api/jobs/${jobId}/flag`, { importantNote: note });
-      return res.json();
-    },
-    onMutate: async ({ jobId }) => {
-      await queryClient.cancelQueries({ queryKey: ["/api/jobs/flagged"] });
-
-      const previousFlagged = queryClient.getQueryData(["/api/jobs/flagged"]);
-
-      const jobToAdd = jobs.find(j => j.id === jobId);
-      if (jobToAdd) {
-        queryClient.setQueryData(["/api/jobs/flagged"], (old: any[] | undefined) => 
-          old ? [...old, jobToAdd] : [jobToAdd]
-        );
-      }
-      
-      return { previousFlagged };
-    },
-    onError: (error: Error, variables, context) => {
-      queryClient.setQueryData(["/api/jobs/flagged"], context?.previousFlagged);
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-    onSuccess: () => {
-      setFlagDialogJobId(null);
-      setFlagNote("");
-      toast({
-        title: "Marked as important",
-        description: "Job flagged with your note.",
-      });
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs/flagged"] });
-    },
-  });
-
-  const unflagJobMutation = useMutation({
-    mutationFn: async (jobId: string) => {
-      await apiRequest("DELETE", `/api/jobs/${jobId}/flag`);
-    },
-    onMutate: async (jobId) => {
-      await queryClient.cancelQueries({ queryKey: ["/api/jobs/flagged"] });
-      
-      const previousFlagged = queryClient.getQueryData(["/api/jobs/flagged"]);
-      
-      queryClient.setQueryData(["/api/jobs/flagged"], (old: any[] | undefined) => 
-        old ? old.filter((job: any) => job.id !== jobId) : []
-      );
-      
-      return { previousFlagged };
-    },
-    onError: (error: Error, variables, context) => {
-      queryClient.setQueryData(["/api/jobs/flagged"], context?.previousFlagged);
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-    onSuccess: () => {
-      toast({
-        title: "Success",
-        description: "Job unflagged.",
-      });
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs/flagged"] });
-    },
-  });
+  // Star / unstar mutations now live in the Job Details modal — the worklist
+  // shows the starred indicator in the patient cell but the action lives one
+  // click deeper, so the toolbar isn't cluttered with star handlers.
 
   // Memoize custom arrays from office settings, sorted by `order` so every
   // downstream consumer (filter dropdowns, lifecycle, etc.) sees a consistent
@@ -782,17 +709,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     }
   }, [messageTemplatesOpen, selectedJobForMessages]);
 
-  const handleToggleFlag = useCallback((jobId: string) => {
-    if (flaggedJobIds.includes(jobId)) {
-      // Unflag immediately — no modal needed
-      unflagJobMutation.mutate(jobId);
-    } else {
-      // Open the "Why is this important?" modal
-      setFlagDialogJobId(jobId);
-      setFlagNote("");
-    }
-  }, [flaggedJobIds, flagJobMutation, unflagJobMutation]);
-
   const handleSort = useCallback((column: string) => {
     if (sortBy === column) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -1032,18 +948,36 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           }
         />
 
-        {/* Mockup-style toolbar — single row: search, tab toggle, filter pills, columns */}
+        {/* Mockup-style toolbar — single row: search, tab toggle, filter pills, columns.
+            Every interactive element below has a STABLE width so toggling
+            filters / select-mode / link-mode never reflows the row. The selects
+            use fixed w-[140px] (instead of the previous w-auto which grew with
+            the chosen label); the action buttons use fixed widths sized for
+            their longest possible label + count badge ("Cancel (12)"). */}
         <div className="flex items-center gap-2 mb-3 flex-wrap">
-          {/* Search */}
+          {/* Search — clear-X appears on the right when there's a value so
+              the user has a one-click way out without selecting + deleting. */}
           <div className="relative flex-1 max-w-[320px] min-w-[180px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-[14px] w-[14px] text-ink-mute pointer-events-none" />
             <Input
               placeholder={useTrayNumber ? "Search trays, phone…" : "Search patients, phone…"}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-9 bg-paper-2 border-0 rounded-lg text-[calc(13px*var(--ui-scale))] focus-visible:bg-panel"
+              className="pl-9 pr-8 h-9 bg-paper-2 border-0 rounded-lg text-[calc(13px*var(--ui-scale))] focus-visible:bg-panel"
               data-testid="input-search"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded grid place-items-center text-ink-mute hover:text-ink hover:bg-line-2"
+                aria-label="Clear search"
+                title="Clear search"
+                data-testid="button-clear-search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           {/* All / Active / Redos toggle group */}
@@ -1058,7 +992,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 type="button"
                 onClick={() => setTabFilter(t.id)}
                 className={cn(
-                  "h-7 px-3 rounded-md text-[calc(12.5px*var(--ui-scale))] font-medium transition-colors",
+                  "h-7 w-[64px] rounded-md text-[calc(12.5px*var(--ui-scale))] font-medium transition-colors",
                   tabFilter === t.id
                     ? "bg-panel text-ink shadow-soft"
                     : "text-ink-mute hover:text-ink-2",
@@ -1072,11 +1006,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
           <div className="w-px h-5 bg-line" />
 
-          {/* Filter pills — Status / Type / Lab */}
+          {/* Filter pills — Status / Type / Lab. Fixed width prevents the
+              trigger from growing as the user picks a longer label. */}
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger
               className={cn(
-                "h-[30px] w-auto gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
+                "h-[30px] w-[140px] gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
                 statusFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
               )}
               data-testid="select-status-filter"
@@ -1099,7 +1034,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Select value={typeFilter} onValueChange={setTypeFilter}>
             <SelectTrigger
               className={cn(
-                "h-[30px] w-auto gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
+                "h-[30px] w-[130px] gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
                 typeFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
               )}
               data-testid="select-type-filter"
@@ -1121,7 +1056,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Select value={destinationFilter} onValueChange={setDestinationFilter}>
             <SelectTrigger
               className={cn(
-                "h-[30px] w-auto gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
+                "h-[30px] w-[140px] gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
                 destinationFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
               )}
               data-testid="select-destination-filter"
@@ -1159,11 +1094,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
           <div className="flex-1" />
 
-          {/* Select / Link Jobs / Columns — secondary actions */}
+          {/* Select / Link Jobs / Columns — secondary actions. Fixed widths
+              keep the row stable when toggling modes (label flips between
+              "Select"/"Cancel" and a count badge can appear). */}
           <Button
             variant={selectionMode ? "secondary" : "ghost"}
             size="sm"
-            className="h-[30px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))]"
+            className="h-[30px] w-[110px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))] justify-center"
             onClick={() => {
               if (selectionMode) { setSelectionMode(false); setSelectedJobs([]); }
               else { setSelectionMode(true); setLinkMode(false); setSelectedJobs([]); }
@@ -1182,7 +1119,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Button
             variant={linkMode ? "secondary" : "ghost"}
             size="sm"
-            className="h-[30px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))]"
+            className="h-[30px] w-[100px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))] justify-center"
             onClick={() => {
               if (linkMode) { setLinkMode(false); setSelectedJobs([]); }
               else { setLinkMode(true); setSelectionMode(false); setSelectedJobs([]); }
@@ -1200,7 +1137,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-[30px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))]">
+              <Button variant="ghost" size="sm" className="h-[30px] w-[110px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))] justify-center">
                 <Columns3 className="h-3.5 w-3.5" />
                 Columns
               </Button>
@@ -1325,11 +1262,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           <Table className="text-[calc(13px*var(--ui-scale))] [&_th]:h-[34px] [&_th]:px-[14px] [&_th]:text-[calc(10.5px*var(--ui-scale))] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-[0.10em] [&_th]:text-ink-mute [&_td]:px-[14px] [&_td]:py-2 [&_td]:h-[calc(52px*var(--ui-scale))] [&_td]:max-h-[calc(52px*var(--ui-scale))] [&_td]:align-middle [&_td]:overflow-hidden">
             <TableHeader className="[&_tr]:border-b [&_tr]:border-line [&_th]:bg-panel">
               <TableRow>
-                <TableHead className="w-10 text-center">
-                  <Star className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
-                </TableHead>
                 <TableHead
-                  className="cursor-pointer hover:text-primary min-w-[160px] text-left"
+                  className="cursor-pointer hover:text-primary min-w-[180px] text-left"
                   onClick={() => handleSort(useTrayNumber ? "trayNumber" : "patientLastName")}
                 >
                   <div className="flex items-center gap-1">
@@ -1396,8 +1330,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               {loading && filteredJobs.length === 0 && (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={`skeleton-${i}`}>
-                    <TableCell className="hidden"><Skeleton className="h-4 w-4" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-4 mx-auto" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-28" /></TableCell>
                     <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
                     <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
@@ -1476,76 +1408,92 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   }}
                   data-testid={`row-job-${job.id}`}
                 >
-                  <TableCell onClick={cellGuard}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0"
-                      onClick={() => handleToggleFlag(job.id)}
-                      data-testid={`button-flag-${job.id}`}
-                    >
-                      <Star
-                        className={cn(
-                          "h-4 w-4",
-                          flaggedJobIds.includes(job.id) ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground"
-                        )}
-                      />
-                    </Button>
-                  </TableCell>
                   <TableCell className="text-left">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="font-medium line-clamp-2 break-words min-w-0">
-                        {getPatientLabel(job)}
-                      </span>
-                      {linkedJobIds.has(job.id) && (
-                        <span
-                          className="inline-flex items-center gap-0.5 text-[calc(10px*var(--ui-scale))] cursor-pointer"
-                          style={{ color: 'hsl(var(--primary))' }}
-                          title="Manually linked to other jobs"
-                          onClick={(e) => {
-                            if (inMultiSelect) return;
-                            e.stopPropagation();
-                            handleOpenJobDetails(job, "related");
-                          }}
-                        >
-                          <Link2 className="h-3 w-3" />
-                        </span>
-                      )}
-                      {(() => {
-                        const key = `${(job.patientFirstName || "").trim()} ${(job.patientLastName || "").trim()}`.toLowerCase();
-                        const count = patientJobCounts.get(key) || 0;
-                        return count > 1 && !linkedJobIds.has(job.id) ? (
+                    {/* Two-row layout — patient name on top, special-status
+                        indicators below. Pulls every visual stamp (Starred,
+                        Linked, Overdue, Redo) out of the name's flow so the
+                        name never wraps and the stamps don't compete for
+                        attention. All indicators use design-token muted
+                        colors so they read as metadata, not alarms. */}
+                    {(() => {
+                      const key = `${(job.patientFirstName || "").trim()} ${(job.patientLastName || "").trim()}`.toLowerCase();
+                      const groupCount = patientJobCounts.get(key) || 0;
+                      const isStarred = flaggedJobIds.includes(job.id);
+                      const isLinked = linkedJobIds.has(job.id);
+                      const hasGroup = !isLinked && groupCount > 1;
+                      const overdue = isJobOverdue(job);
+                      const showStatusRow =
+                        isStarred || isLinked || hasGroup || job.isRedoJob || overdue;
+                      const handleRelatedClick = (e: React.MouseEvent) => {
+                        if (inMultiSelect) return;
+                        e.stopPropagation();
+                        handleOpenJobDetails(job, "related");
+                      };
+                      return (
+                        <div className="flex flex-col gap-0.5 min-w-0">
                           <span
-                            className="inline-flex items-center gap-0.5 text-[calc(10px*var(--ui-scale))] text-muted-foreground hover:text-primary cursor-pointer"
-                            title={`${count - 1} other job${count > 2 ? "s" : ""} for this patient`}
-                            onClick={(e) => {
-                              if (inMultiSelect) return;
-                              e.stopPropagation();
-                              handleOpenJobDetails(job, "related");
-                            }}
+                            className="font-medium text-ink truncate"
+                            title={getPatientLabel(job)}
                           >
-                            <Link2 className="h-3 w-3" />
-                            {count - 1}
+                            {getPatientLabel(job)}
                           </span>
-                        ) : null;
-                      })()}
-                      {job.isRedoJob && (
-                        <Badge
-                          className="text-[calc(11px*var(--ui-scale))] px-1.5 py-0 h-5 border-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                          data-testid={`badge-redo-${job.id}`}
-                        >
-                          REDO
-                        </Badge>
-                      )}
-                      {isJobOverdue(job) && (
-                        <Badge
-                          className="text-[calc(11px*var(--ui-scale))] px-1.5 py-0 h-5 border-0 bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
-                          data-testid={`badge-overdue-${job.id}`}
-                        >
-                          OVERDUE
-                        </Badge>
-                      )}
-                    </div>
+                          {showStatusRow && (
+                            <div className="flex items-center gap-2 flex-wrap text-[calc(10.5px*var(--ui-scale))] leading-none">
+                              {isStarred && (
+                                <span
+                                  className="inline-flex items-center gap-1 text-warn"
+                                  title="Starred by you"
+                                  data-testid={`indicator-starred-${job.id}`}
+                                >
+                                  <Star className="h-3 w-3 fill-warn" />
+                                  Starred
+                                </span>
+                              )}
+                              {isLinked && (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 text-otto-accent-ink hover:underline underline-offset-2"
+                                  title="Manually linked to other jobs"
+                                  onClick={handleRelatedClick}
+                                  data-testid={`indicator-linked-${job.id}`}
+                                >
+                                  <Link2 className="h-3 w-3" />
+                                  Linked
+                                </button>
+                              )}
+                              {hasGroup && (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 text-ink-mute hover:text-otto-accent-ink"
+                                  title={`${groupCount - 1} other job${groupCount > 2 ? "s" : ""} for this patient`}
+                                  onClick={handleRelatedClick}
+                                  data-testid={`indicator-group-${job.id}`}
+                                >
+                                  <Link2 className="h-3 w-3" />
+                                  +{groupCount - 1}
+                                </button>
+                              )}
+                              {job.isRedoJob && (
+                                <span
+                                  className="inline-flex items-center text-warn font-medium tracking-wide"
+                                  data-testid={`indicator-redo-${job.id}`}
+                                >
+                                  REDO
+                                </span>
+                              )}
+                              {overdue && (
+                                <span
+                                  className="inline-flex items-center text-warn"
+                                  data-testid={`indicator-overdue-${job.id}`}
+                                >
+                                  Overdue
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </TableCell>
                   {isColumnVisible('jobType') && (
                     <TableCell>
@@ -1748,42 +1696,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           office={office}
         />
       )}
-
-      {/* Flag as Important — requires a reason */}
-      <Dialog open={!!flagDialogJobId} onOpenChange={(open) => { if (!open) { setFlagDialogJobId(null); setFlagNote(""); } }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Mark as Important</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Why is this job important? This note will be visible on the Important Jobs page.
-            </p>
-            <Textarea
-              placeholder="e.g., Patient called twice asking about status, needs follow-up by Friday..."
-              value={flagNote}
-              onChange={(e) => setFlagNote(e.target.value)}
-              rows={3}
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setFlagDialogJobId(null); setFlagNote(""); }}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                if (flagDialogJobId && flagNote.trim()) {
-                  flagJobMutation.mutate({ jobId: flagDialogJobId, note: flagNote.trim() });
-                }
-              }}
-              disabled={!flagNote.trim() || flagJobMutation.isPending}
-            >
-              {flagJobMutation.isPending ? "Saving..." : "Mark as Important"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Bulk Delete Confirmation */}
       <AlertDialog open={bulkDeleteConfirmOpen} onOpenChange={setBulkDeleteConfirmOpen}>

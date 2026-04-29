@@ -300,9 +300,9 @@ export default function JobCommentsPanel({
                   </span>
                   {(comment as any).isOverdueComment && (
                     <Badge
-                      variant="destructive"
-                      className="h-5 px-2 text-xs"
+                      className="h-5 px-2 text-xs border border-warn/30 bg-warn-bg/60 text-warn font-medium"
                       data-testid={`badge-overdue-comment-${comment.id}`}
+                      title="Posted while this job was overdue"
                     >
                       <AlertTriangle className="h-3 w-3 mr-1" />
                       Overdue
