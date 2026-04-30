@@ -18,7 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List, AlertTriangle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -1409,12 +1409,15 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   data-testid={`row-job-${job.id}`}
                 >
                   <TableCell className="text-left">
-                    {/* Two-row layout — patient name on top, special-status
-                        indicators below. Pulls every visual stamp (Starred,
-                        Linked, Overdue, Redo) out of the name's flow so the
-                        name never wraps and the stamps don't compete for
-                        attention. All indicators use design-token muted
-                        colors so they read as metadata, not alarms. */}
+                    {/* Two-row patient cell. Top row carries the name plus
+                        indicators that read as part of the name's identity
+                        (Link icon = "this job is connected to others",
+                        Redo = "this is a redo of an earlier job").
+                        Bottom row holds the urgency / personal markers
+                        (Overdue, Starred, +N group hint) — separated so
+                        they don't compete with the name and so the user
+                        can scan a column of just-the-status indicators
+                        down the page. */}
                     {(() => {
                       const key = `${(job.patientFirstName || "").trim()} ${(job.patientLastName || "").trim()}`.toLowerCase();
                       const groupCount = patientJobCounts.get(key) || 0;
@@ -1422,8 +1425,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       const isLinked = linkedJobIds.has(job.id);
                       const hasGroup = !isLinked && groupCount > 1;
                       const overdue = isJobOverdue(job);
-                      const showStatusRow =
-                        isStarred || isLinked || hasGroup || job.isRedoJob || overdue;
+                      const showStatusRow = overdue || isStarred || hasGroup;
                       const handleRelatedClick = (e: React.MouseEvent) => {
                         if (inMultiSelect) return;
                         e.stopPropagation();
@@ -1431,40 +1433,57 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       };
                       return (
                         <div className="flex flex-col gap-0.5 min-w-0">
-                          <span
-                            className="font-medium text-ink truncate"
-                            title={getPatientLabel(job)}
-                          >
-                            {getPatientLabel(job)}
-                          </span>
+                          {/* Row 1 — name, link icon, Redo */}
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span
+                              className="font-medium text-ink truncate min-w-0"
+                              title={getPatientLabel(job)}
+                            >
+                              {getPatientLabel(job)}
+                            </span>
+                            {isLinked && (
+                              <button
+                                type="button"
+                                className="shrink-0 inline-flex items-center text-otto-accent-ink hover:text-otto-accent-strong"
+                                title="Manually linked to other jobs"
+                                onClick={handleRelatedClick}
+                                data-testid={`indicator-linked-${job.id}`}
+                                aria-label="Linked"
+                              >
+                                <Link2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            {job.isRedoJob && (
+                              <span
+                                className="shrink-0 text-[calc(11px*var(--ui-scale))] text-ink-mute italic"
+                                data-testid={`indicator-redo-${job.id}`}
+                                title="Redo of an earlier job"
+                              >
+                                Redo
+                              </span>
+                            )}
+                          </div>
+                          {/* Row 2 — overdue, starred, group hint */}
                           {showStatusRow && (
-                            <div className="flex items-center gap-2 flex-wrap text-[calc(10.5px*var(--ui-scale))] leading-none">
-                              {isStarred && (
-                                <span
-                                  className="inline-flex items-center gap-1 text-warn"
-                                  title="Starred by you"
-                                  data-testid={`indicator-starred-${job.id}`}
-                                >
-                                  <Star className="h-3 w-3 fill-warn" />
-                                  Starred
-                                </span>
+                            <div className="flex items-center gap-2 text-[calc(10.5px*var(--ui-scale))] leading-none">
+                              {overdue && (
+                                <AlertTriangle
+                                  className="shrink-0 h-3.5 w-3.5 text-danger"
+                                  data-testid={`indicator-overdue-${job.id}`}
+                                  aria-label="Overdue"
+                                />
                               )}
-                              {isLinked && (
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-1 text-otto-accent-ink hover:underline underline-offset-2"
-                                  title="Manually linked to other jobs"
-                                  onClick={handleRelatedClick}
-                                  data-testid={`indicator-linked-${job.id}`}
-                                >
-                                  <Link2 className="h-3 w-3" />
-                                  Linked
-                                </button>
+                              {isStarred && (
+                                <Star
+                                  className="shrink-0 h-3.5 w-3.5 text-warn"
+                                  data-testid={`indicator-starred-${job.id}`}
+                                  aria-label="Starred by you"
+                                />
                               )}
                               {hasGroup && (
                                 <button
                                   type="button"
-                                  className="inline-flex items-center gap-1 text-ink-mute hover:text-otto-accent-ink"
+                                  className="shrink-0 inline-flex items-center gap-0.5 text-ink-mute hover:text-otto-accent-ink"
                                   title={`${groupCount - 1} other job${groupCount > 2 ? "s" : ""} for this patient`}
                                   onClick={handleRelatedClick}
                                   data-testid={`indicator-group-${job.id}`}
@@ -1472,22 +1491,6 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                                   <Link2 className="h-3 w-3" />
                                   +{groupCount - 1}
                                 </button>
-                              )}
-                              {job.isRedoJob && (
-                                <span
-                                  className="inline-flex items-center text-warn font-medium tracking-wide"
-                                  data-testid={`indicator-redo-${job.id}`}
-                                >
-                                  REDO
-                                </span>
-                              )}
-                              {overdue && (
-                                <span
-                                  className="inline-flex items-center text-warn"
-                                  data-testid={`indicator-overdue-${job.id}`}
-                                >
-                                  Overdue
-                                </span>
                               )}
                             </div>
                           )}

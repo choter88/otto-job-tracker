@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +41,6 @@ import LifecycleTrack from "@/components/lifecycle-track";
 import PageHead, { SubDanger, SubDot } from "@/components/page-head";
 import {
   getStatusBadgeStyle,
-  getTypeBadgeStyle,
   getDestinationBadgeStyle,
 } from "@/lib/default-colors";
 import { buildTrackStatuses, getStepIndex } from "@/lib/lifecycle";
@@ -133,6 +131,10 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
   const [priorityFilter, setPriorityFilter] = useState<"all" | Severity>("all");
+  // statusFilter mirrors priorityFilter — clicking a threshold pill scopes
+  // the list to jobs stuck in that status. Independent of the severity
+  // filter so both can be active at once (e.g. "Critical" + "Ordered").
+  const [stuckStatusFilter, setStuckStatusFilter] = useState<string>("all");
   const [noteDialogJobId, setNoteDialogJobId] = useState<string | null>(null);
   const [noteContent, setNoteContent] = useState("");
 
@@ -210,9 +212,10 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
         job.trayNumber?.toLowerCase().includes(q) ||
         job.phone?.includes(searchQuery.replace(/\D/g, ""));
       const matchesPriority = priorityFilter === "all" || job.severity === priorityFilter;
-      return matchesSearch && matchesPriority;
+      const matchesStuck = stuckStatusFilter === "all" || job.status === stuckStatusFilter;
+      return matchesSearch && matchesPriority && matchesStuck;
     });
-  }, [jobs, searchQuery, priorityFilter]);
+  }, [jobs, searchQuery, priorityFilter, stuckStatusFilter]);
 
   // Counts by severity (always from full jobs list, not filtered)
   const counts = useMemo(() => {
@@ -317,19 +320,31 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
               className={cn(
                 "relative overflow-hidden text-left rounded-xl border border-line bg-panel pl-4 pr-3 py-3 transition-all",
                 "before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px]",
-                meta.rail,
+                // Rail color only shows when the tile has jobs OR is the
+                // active filter — silent rails for empty buckets cuts
+                // visual noise from severities you don't have any of.
+                isActive || count > 0 ? meta.rail : "before:bg-line",
                 "hover:shadow-soft",
                 isActive && cn(meta.bg, "ring-1 ring-inset", meta.ring),
-                count === 0 && "opacity-60",
+                count === 0 && !isActive && "opacity-60",
               )}
               data-testid={`stat-${severity}`}
               aria-pressed={isActive}
             >
               <div className="flex items-baseline justify-between">
-                <span className={cn("text-[calc(24px*var(--ui-scale))] font-bold tabular-nums", meta.daysClass)}>
+                {/* Count is only severity-tinted when the bucket has jobs
+                    in it, otherwise stays neutral so empty buckets don't
+                    pull the eye. */}
+                <span className={cn(
+                  "text-[calc(24px*var(--ui-scale))] font-bold tabular-nums",
+                  count > 0 ? meta.daysClass : "text-ink-mute",
+                )}>
                   {count}
                 </span>
-                <Icon className={cn("h-4 w-4", meta.iconClass)} aria-hidden />
+                <Icon className={cn(
+                  "h-4 w-4",
+                  count > 0 ? meta.iconClass : "text-ink-faint",
+                )} aria-hidden />
               </div>
               <div className="text-[calc(13px*var(--ui-scale))] font-medium text-ink mt-1">
                 {meta.label}
@@ -342,13 +357,16 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
         })}
       </div>
 
-      {/* Rules summary line — quiet so it sits below the stat strip but is
-          still discoverable. */}
+      {/* Threshold pills — clickable filter toggles. Click one to scope
+          the list to jobs stuck in that status; click again (or "Clear")
+          to drop the filter. The active pill carries the otto-accent
+          treatment so the user can see at a glance which threshold is
+          driving the current view. */}
       {notificationRules.length > 0 && (
         <div className="flex items-start gap-2 flex-wrap text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="inline-flex items-center gap-1.5 cursor-help shrink-0">
+              <span className="inline-flex items-center gap-1.5 cursor-help shrink-0 pt-1">
                 <Info className="h-3.5 w-3.5" aria-hidden />
                 Thresholds:
               </span>
@@ -356,22 +374,58 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
             <TooltipContent>
               <p className="max-w-xs text-xs">
                 A job becomes overdue when it sits in a status longer than the
-                configured threshold. Manage these in Settings &rarr; Overdue Rules.
+                configured threshold. Click a pill to filter to jobs stuck in
+                that status. Manage thresholds in Settings &rarr; Overdue Rules.
               </p>
             </TooltipContent>
           </Tooltip>
-          {notificationRules.slice(0, 6).map((rule: any) => (
-            <span
-              key={rule.id}
-              className="inline-flex items-center gap-1 rounded-full bg-paper-2 border border-line-2 px-2 py-0.5"
+          {notificationRules.slice(0, 6).map((rule: any) => {
+            const active = stuckStatusFilter === rule.status;
+            const stuckCount = jobs.filter((j) => j.status === rule.status).length;
+            return (
+              <button
+                key={rule.id}
+                type="button"
+                onClick={() =>
+                  setStuckStatusFilter(active ? "all" : rule.status)
+                }
+                aria-pressed={active}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 transition-colors",
+                  active
+                    ? "bg-otto-accent-soft border-otto-accent-line text-otto-accent-ink"
+                    : stuckCount === 0
+                      ? "bg-paper-2 border-line-2 text-ink-mute opacity-60 hover:opacity-100"
+                      : "bg-paper-2 border-line-2 hover:border-line-strong hover:text-ink-2",
+                )}
+                data-testid={`threshold-pill-${rule.status}`}
+              >
+                <span className="font-medium">
+                  {getLabelFromSettings(customStatuses, rule.status)}
+                </span>
+                <span className="text-ink-faint">·</span>
+                <span className="font-mono">{rule.maxDays}d</span>
+                {stuckCount > 0 && (
+                  <span className={cn(
+                    "ml-0.5 text-[calc(10px*var(--ui-scale))] tabular-nums",
+                    active ? "text-otto-accent-ink" : "text-ink-mute",
+                  )}>
+                    ({stuckCount})
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {stuckStatusFilter !== "all" && (
+            <button
+              type="button"
+              onClick={() => setStuckStatusFilter("all")}
+              className="inline-flex items-center gap-1 text-otto-accent-ink hover:text-otto-accent-strong pt-1"
+              data-testid="threshold-pill-clear"
             >
-              <span className="font-medium text-ink-2">
-                {getLabelFromSettings(customStatuses, rule.status)}
-              </span>
-              <span className="text-ink-faint">·</span>
-              <span className="font-mono">{rule.maxDays}d</span>
-            </span>
-          ))}
+              Clear
+            </button>
+          )}
         </div>
       )}
 
@@ -399,8 +453,9 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
             const statusLabel = getLabelFromSettings(customStatuses, job.status);
             const jobTypeLabel = getLabelFromSettings(customJobTypes, job.jobType);
             const destinationLabel = getLabelFromSettings(customOrderDestinations, job.orderDestination);
-            const statusBadge = getStatusBadgeStyle(job.status, customStatuses as any);
-            const jobTypeBadge = getTypeBadgeStyle(job.jobType, customJobTypes as any);
+            // destinationBadge is the only badge style still used (small
+            // colored dot next to the lab name); status + type colors are
+            // omitted to keep the card calm.
             const destinationBadge = getDestinationBadgeStyle(job.orderDestination, customOrderDestinations as any);
 
             const trackStatuses = buildTrackStatuses(customStatuses);
@@ -431,50 +486,51 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
                 data-testid={`overdue-job-${job.id}`}
               >
                 <div className="flex items-start gap-3">
-                  {/* Avatar tinted with the current status color so identity
-                      carries through to the worklist + Job Details. */}
+                  {/* Avatar is intentionally neutral here — the severity
+                      rail + icon + tinted "X days over" text already carry
+                      the urgency. Tinting the avatar too would compete with
+                      that signal. */}
                   <span
-                    className="w-9 h-9 rounded-full grid place-items-center text-[calc(11px*var(--ui-scale))] font-semibold tracking-wider shrink-0 ring-1 ring-inset ring-line"
-                    style={{ backgroundColor: statusBadge.background, color: statusBadge.text }}
+                    className="w-9 h-9 rounded-full grid place-items-center text-[calc(11px*var(--ui-scale))] font-semibold tracking-wider shrink-0 bg-paper-2 text-ink-2 ring-1 ring-inset ring-line"
                     aria-hidden
                   >
                     {initials}
                   </span>
 
                   <div className="flex-1 min-w-0 space-y-1.5">
-                    {/* Top row — name + badges */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3
-                        className="font-display text-[calc(15px*var(--ui-scale))] font-medium tracking-[-0.01em] text-ink m-0 leading-tight"
-                        data-testid={`text-patient-${job.id}`}
-                      >
-                        {patientName}
-                      </h3>
-                      <Badge
-                        className="border-0"
-                        style={{ backgroundColor: jobTypeBadge.background, color: jobTypeBadge.text }}
-                      >
-                        <span className="max-w-[140px] truncate">{jobTypeLabel}</span>
-                      </Badge>
-                      <Badge
-                        className="border-0"
-                        style={{ backgroundColor: statusBadge.background, color: statusBadge.text }}
-                      >
-                        <span className="max-w-[140px] truncate">{statusLabel}</span>
-                      </Badge>
-                      <Badge className="border-0 bg-paper-2 text-ink-2">
+                    {/* Top row — patient name only. Type / status / lab go
+                        on a quiet metadata line below so the eye lands on
+                        the name and the severity signal, not on six
+                        competing pill colors. */}
+                    <h3
+                      className="font-display text-[calc(15px*var(--ui-scale))] font-medium tracking-[-0.01em] text-ink m-0 leading-tight"
+                      data-testid={`text-patient-${job.id}`}
+                    >
+                      {patientName}
+                    </h3>
+
+                    {/* Quiet metadata line — type / lab as muted text with
+                        a small destination dot. Status is intentionally
+                        omitted here because the severity line directly
+                        below repeats it ("stuck in <Status> for X days"). */}
+                    <div className="flex items-center gap-1.5 flex-wrap text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
+                      <span>{jobTypeLabel}</span>
+                      <span className="text-ink-faint">·</span>
+                      <span className="inline-flex items-center gap-1">
                         <span
-                          className="w-1.5 h-1.5 rounded-full mr-1.5"
+                          className="w-1.5 h-1.5 rounded-full"
                           style={{ backgroundColor: destinationBadge.text }}
                           aria-hidden
                         />
                         {destinationLabel}
-                      </Badge>
+                      </span>
                     </div>
 
                     {/* Severity line — leads with the icon + the human-readable
                         "stuck for X days" rather than an opaque "Days Overdue"
-                        column. */}
+                        column. The status name is rendered in ink-2 (slightly
+                        stronger than ink-mute around it) so the eye still
+                        catches "which status" even without a colored badge. */}
                     <div className="flex items-center gap-1.5 text-[calc(12.5px*var(--ui-scale))]">
                       <Icon className={cn("h-3.5 w-3.5", meta.iconClass)} aria-hidden />
                       <span className={cn("font-medium", meta.daysClass)}>
@@ -483,7 +539,7 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
                       {typeof ruleMaxDays === "number" && (
                         <span className="text-ink-mute">
                           <span className="text-ink-faint mx-1">·</span>
-                          stuck in {statusLabel} for {stuckFor} day{stuckFor === 1 ? "" : "s"}
+                          stuck in <span className="text-ink-2 font-medium">{statusLabel}</span> for {stuckFor} day{stuckFor === 1 ? "" : "s"}
                           <span className="text-ink-faint mx-1">·</span>
                           rule: max {ruleMaxDays}d
                         </span>
