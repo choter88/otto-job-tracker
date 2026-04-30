@@ -5,9 +5,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 // Offline outbox removed — read-only offline mode
 import { useAuth } from "@/hooks/use-auth";
-import { Activity, ClipboardList, FileDown } from "lucide-react";
+import { Activity, ClipboardList, FileDown, Save } from "lucide-react";
 
 type MaybeBridge = {
   getConfig?: () => Promise<any>;
@@ -82,7 +83,35 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
 
   const mode = String(desktopConfig?.mode || "").toLowerCase();
   const isHost = mode === "host";
+  const isClient = mode === "client";
   const isDesktop = Boolean(bridge?.getConfig);
+  const showBackupCard = isHost || isClient;
+  const [backupRunning, setBackupRunning] = useState(false);
+
+  const handleRunBackup = async () => {
+    if (backupRunning) return;
+    setBackupRunning(true);
+    try {
+      const res = await apiRequest("POST", "/api/backups/run-now");
+      const json = await res.json().catch(() => ({}));
+      if (json?.ok) {
+        toast({ title: "Backup written", description: "Just now." });
+        try {
+          if (bridge?.getConfig) setDesktopConfig(await bridge.getConfig());
+        } catch {
+          // ignore
+        }
+      } else {
+        const reason = json?.error || "Unknown error";
+        toast({ title: "Couldn't write backup", description: reason, variant: "destructive" });
+      }
+    } catch (error: any) {
+      const reason = error?.message || "Network error";
+      toast({ title: "Couldn't write backup", description: reason, variant: "destructive" });
+    } finally {
+      setBackupRunning(false);
+    }
+  };
 
   const networkBackupStatus = (() => {
     if (!isHost) return null;
@@ -164,17 +193,34 @@ export default function HealthModal({ open, onOpenChange }: { open: boolean; onO
             </CardContent>
           </Card>
 
-          {isHost && (
+          {showBackupCard && (
             <Card>
               <CardContent className="p-4 space-y-3">
-                <div className="font-medium">Backups (Host)</div>
-                <div className="grid gap-2 text-sm text-muted-foreground">
-                  <div>Network: {networkBackupStatus}</div>
-                  {desktopConfig?.backupDir && <div className="truncate">Network folder: {desktopConfig.backupDir}</div>}
-                  {desktopConfig?.backupLastError && <div>Network last error: {desktopConfig.backupLastError}</div>}
-                  <Separator />
-                  <div>Local: {localBackupStatus}</div>
-                  {desktopConfig?.localBackupLastError && <div>Local last error: {desktopConfig.localBackupLastError}</div>}
+                <div className="font-medium">Backups{isHost ? " (Host)" : ""}</div>
+                {isHost ? (
+                  <div className="grid gap-2 text-sm text-muted-foreground">
+                    <div>Network: {networkBackupStatus}</div>
+                    {desktopConfig?.backupDir && <div className="truncate">Network folder: {desktopConfig.backupDir}</div>}
+                    {desktopConfig?.backupLastError && <div>Network last error: {desktopConfig.backupLastError}</div>}
+                    <Separator />
+                    <div>Local: {localBackupStatus}</div>
+                    {desktopConfig?.localBackupLastError && <div>Local last error: {desktopConfig.localBackupLastError}</div>}
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Backups are written by the Host computer. Run one now to capture the latest changes.
+                  </div>
+                )}
+                <div>
+                  <Button
+                    variant="secondary"
+                    onClick={handleRunBackup}
+                    disabled={backupRunning}
+                    data-testid="button-run-backup-now"
+                  >
+                    <Save className="h-4 w-4" />
+                    {backupRunning ? "Backing up…" : "Run backup now"}
+                  </Button>
                 </div>
               </CardContent>
             </Card>

@@ -3,6 +3,16 @@ import path from "path";
 import { execFileSync } from "child_process";
 import Database from "better-sqlite3";
 
+// Cadence + retention tuning. Snapshots are single-digit MB for a small
+// practice; a tight cadence is essentially free. Retention is tiered so the
+// 15-minute cadence doesn't balloon disk usage:
+//   - keep every snapshot from the last 24 hours
+//   - keep one snapshot per calendar day for the prior 30 days
+//   - delete anything older
+export const BACKUP_INTERVAL_MS = 1000 * 60 * 15;
+const RECENT_RETENTION_MS = 1000 * 60 * 60 * 24;
+const ARCHIVE_RETENTION_MS = 1000 * 60 * 60 * 24 * 30;
+
 export function isAllowedNetworkBackupDir(dirPath) {
   if (!dirPath || typeof dirPath !== "string") return false;
   const normalized = path.resolve(dirPath);
@@ -113,13 +123,17 @@ export async function chooseNetworkBackupFolder({ dialog, readConfig, writeConfi
 
 export function formatBackupTimestamp(date) {
   const pad = (n) => String(n).padStart(2, "0");
+  const pad3 = (n) => String(n).padStart(3, "0");
   const yyyy = date.getFullYear();
   const mm = pad(date.getMonth() + 1);
   const dd = pad(date.getDate());
   const hh = pad(date.getHours());
   const mi = pad(date.getMinutes());
   const ss = pad(date.getSeconds());
-  return `${yyyy}-${mm}-${dd}-${hh}${mi}${ss}`;
+  const ms = pad3(date.getMilliseconds());
+  // Millisecond suffix avoids collisions during the DST fall-back hour and
+  // when a manual run-now lands within the same second as a scheduled tick.
+  return `${yyyy}-${mm}-${dd}-${hh}${mi}${ss}-${ms}`;
 }
 
 export function listBackupFiles(dirPath) {
@@ -134,12 +148,71 @@ export function listBackupFiles(dirPath) {
   }
 }
 
-export function enforceBackupRetention(dirPath, retentionCount) {
-  const keep = Math.max(1, Number(retentionCount) || 14);
-  const files = listBackupFiles(dirPath);
-  if (files.length <= keep) return;
+function parseBackupTimestamp(filename) {
+  // The trailing -mmm group is optional so older files (written before the
+  // millisecond suffix existed) still parse correctly during retention.
+  const match = filename.match(/^otto-backup-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})(?:-(\d{3}))?\.(sqlite|db)$/);
+  if (!match) return null;
+  const [, y, mo, d, h, mi, s, ms] = match;
+  return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s), Number(ms) || 0).getTime();
+}
 
-  const toDelete = files.slice(0, Math.max(0, files.length - keep));
+// Sweep .tmp files left behind by a crashed/killed backup. The 1-hour age
+// guard keeps us safely clear of any in-progress write.
+const ORPHAN_TMP_MAX_AGE_MS = 1000 * 60 * 60;
+
+function cleanupOrphanTempFiles(dirPath) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dirPath);
+  } catch {
+    return;
+  }
+  const now = Date.now();
+  for (const name of entries) {
+    if (!name.startsWith("otto-backup-") || !name.endsWith(".tmp")) continue;
+    const tmpPath = path.join(dirPath, name);
+    try {
+      const stat = fs.statSync(tmpPath);
+      if (now - stat.mtimeMs > ORPHAN_TMP_MAX_AGE_MS) {
+        fs.unlinkSync(tmpPath);
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+// Tiered retention: keep all snapshots within the recent window (default 24 h),
+// keep one-per-day in the archive window (default 30 d), drop everything older.
+// The retentionCount parameter is accepted for backward compatibility but ignored.
+export function enforceBackupRetention(dirPath, _retentionCount) {
+  const files = listBackupFiles(dirPath);
+  cleanupOrphanTempFiles(dirPath);
+  if (files.length === 0) return;
+
+  const now = Date.now();
+  const latestPerDay = new Map();
+  const toDelete = new Set();
+
+  for (const filePath of files) {
+    const name = path.basename(filePath);
+    const ts = parseBackupTimestamp(name);
+    if (ts === null) continue;
+
+    const ageMs = now - ts;
+    if (ageMs < RECENT_RETENTION_MS) continue;
+    if (ageMs > ARCHIVE_RETENTION_MS) {
+      toDelete.add(filePath);
+      continue;
+    }
+
+    const dayKey = name.slice("otto-backup-".length, "otto-backup-".length + 10);
+    const previous = latestPerDay.get(dayKey);
+    if (previous) toDelete.add(previous);
+    latestPerDay.set(dayKey, filePath);
+  }
+
   for (const filePath of toDelete) {
     try {
       fs.unlinkSync(filePath);
@@ -373,7 +446,6 @@ export function scheduleAutomaticBackups({ readConfig, runLocalBackup, runNetwor
   const config = readConfig();
   if (config.mode !== "host") return;
 
-  const ONE_DAY_MS = 1000 * 60 * 60 * 24;
   const now = Date.now();
   const localEnabled = config.localBackupEnabled !== false;
   const networkEnabled = config.backupEnabled !== false && Boolean(config.backupDir);
@@ -381,8 +453,8 @@ export function scheduleAutomaticBackups({ readConfig, runLocalBackup, runNetwor
   const localLastAt = Number(config.localBackupLastAt) || 0;
   const networkLastAt = Number(config.backupLastAt) || 0;
 
-  const dueLocal = localEnabled && now - localLastAt > ONE_DAY_MS;
-  const dueNetwork = networkEnabled && now - networkLastAt > ONE_DAY_MS;
+  const dueLocal = localEnabled && now - localLastAt > BACKUP_INTERVAL_MS;
+  const dueNetwork = networkEnabled && now - networkLastAt > BACKUP_INTERVAL_MS;
 
   if (dueLocal) {
     setTimeout(() => {
@@ -401,7 +473,7 @@ export function scheduleAutomaticBackups({ readConfig, runLocalBackup, runNetwor
   setIntervalRef(setInterval(() => {
     runLocalBackup({ interactive: false, reason: "scheduled" }).catch(() => {});
     runNetworkBackup({ interactive: false, reason: "scheduled" }).catch(() => {});
-  }, ONE_DAY_MS));
+  }, BACKUP_INTERVAL_MS));
 }
 
 export async function maybePromptForBackupFolder({ dialog, readConfig, chooseNetworkBackupFolder: chooseFolder, scheduleAutomaticBackups: scheduleBackups }) {

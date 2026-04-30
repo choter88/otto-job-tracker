@@ -3178,6 +3178,22 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  // ── Backups: run-now ───────────────────────────────────────────────
+  // Recovery insurance for any office user; requireOffice + requireNotViewOnly
+  // is intentional — no role gate beyond that.
+  app.post("/api/backups/run-now", requireOffice, requireNotViewOnly, async (_req, res) => {
+    const runner = (globalThis as any).__ottoRunBackupNow;
+    if (typeof runner !== "function") {
+      return res.status(503).json({ ok: false, error: "Backups are only available when running on the Host." });
+    }
+    try {
+      const result = await runner();
+      res.json({ ok: true, ...result });
+    } catch (error: any) {
+      res.status(500).json({ ok: false, error: error?.message || String(error) });
+    }
+  });
+
   // ── Tablet Job Board (slot-gated, LAN-accessible) ──────────────────
   // Full tablet API + SPA serving is handled by tablet-routes.ts.
   registerTabletRoutes(app);

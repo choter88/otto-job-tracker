@@ -1,5 +1,5 @@
 // Sentry must be initialized before all other imports to capture early errors.
-import { initSentryMain, setSentryAppMode } from "./lib/sentry.js";
+import { initSentryMain, setSentryAppMode, Sentry } from "./lib/sentry.js";
 import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage, screen, shell } from "electron";
 import fs from "fs";
 import os from "os";
@@ -219,6 +219,73 @@ function _runBackupToNetworkFolder(opts) {
 
 function _restoreDatabase() {
   return restoreDatabaseRaw({ app, dialog, readConfig: _readConfig, getLocalBackupDir: _getLocalBackupDir });
+}
+
+let runBackupNowInFlight = null;
+
+async function _runBackupNow() {
+  if (runBackupNowInFlight) return runBackupNowInFlight;
+
+  runBackupNowInFlight = (async () => {
+    const before = _readConfig();
+    if (before.mode !== "host") {
+      throw new Error("Backups only run on the Host computer.");
+    }
+
+    const localTargeted = before.localBackupEnabled !== false;
+    const networkTargeted = before.backupEnabled !== false && Boolean(before.backupDir);
+    if (!localTargeted && !networkTargeted) {
+      throw new Error("No backup folder is configured.");
+    }
+
+    const beforeLocalAt = Number(before.localBackupLastAt) || 0;
+    const beforeNetworkAt = Number(before.backupLastAt) || 0;
+
+    await Promise.all([
+      _runBackupToLocalFolder({ interactive: false, reason: "manual" }),
+      _runBackupToNetworkFolder({ interactive: false, reason: "manual" }),
+    ]);
+
+    const after = _readConfig();
+    const localSucceeded = (Number(after.localBackupLastAt) || 0) > beforeLocalAt;
+    const networkSucceeded = (Number(after.backupLastAt) || 0) > beforeNetworkAt;
+
+    if (!localSucceeded && !networkSucceeded) {
+      const errors = [];
+      if (localTargeted && after.localBackupLastError) errors.push(`Local: ${after.localBackupLastError}`);
+      if (networkTargeted && after.backupLastError) errors.push(`Network: ${after.backupLastError}`);
+      throw new Error(errors.join("; ") || "Backup failed");
+    }
+
+    const result = { backupAt: new Date().toISOString() };
+    if (localSucceeded) result.localPath = after.localBackupLastPath;
+    if (networkSucceeded) result.networkPath = after.backupLastPath;
+    return result;
+  })();
+
+  try {
+    return await runBackupNowInFlight;
+  } finally {
+    runBackupNowInFlight = null;
+  }
+}
+
+globalThis.__ottoRunBackupNow = _runBackupNow;
+
+async function _runShutdownBackup() {
+  const config = _readConfig();
+  if (config.mode !== "host") return;
+
+  // Cap the wait so a wedged network folder can't trap a user trying to quit.
+  // Both writers swallow their own errors; if the backup is still running
+  // when we hit the timeout, app.exit(0) below will tear it down.
+  const SHUTDOWN_BACKUP_TIMEOUT_MS = 10_000;
+  const work = Promise.all([
+    _runBackupToLocalFolder({ interactive: false, reason: "shutdown" }).catch(() => {}),
+    _runBackupToNetworkFolder({ interactive: false, reason: "shutdown" }).catch(() => {}),
+  ]);
+  const timeout = new Promise((resolve) => setTimeout(resolve, SHUTDOWN_BACKUP_TIMEOUT_MS));
+  await Promise.race([work, timeout]);
 }
 
 async function _resetHost() {
@@ -2172,13 +2239,24 @@ function _runShutdown() {
   }
 }
 
-app.on("before-quit", async (event) => {
-  stopAutoUpdater();
+let beforeQuitInProgress = false;
 
-  // Warn Host users if Clients are still connected
+app.on("before-quit", async (event) => {
+  if (beforeQuitInProgress) {
+    // The first invocation already started teardown — block any subsequent
+    // quit attempts (e.g., second Cmd-Q during the shutdown backup) so the
+    // in-flight async work isn't yanked out from under us.
+    event.preventDefault();
+    return;
+  }
+  beforeQuitInProgress = true;
+
+  let isHost = false;
   try {
     const config = _readConfig();
-    if (config.mode === "host") {
+    isHost = config.mode === "host";
+
+    if (isHost) {
       const getCount = globalThis.__ottoGetConnectedClientCount;
       const clientCount = typeof getCount === "function" ? getCount() : 0;
       if (clientCount > 0) {
@@ -2192,17 +2270,37 @@ app.on("before-quit", async (event) => {
           defaultId: 1,
           cancelId: 1,
         });
-        if (response === 0) {
-          // Run shutdown inline and force-exit immediately.
-          // Calling app.quit() from inside an async before-quit handler can
-          // get stuck on macOS, so use app.exit() instead.
-          _runShutdown();
-          app.exit(0);
+        if (response !== 0) {
+          // User canceled — leave auto-updater running and let the app
+          // continue normally.
+          beforeQuitInProgress = false;
+          return;
         }
-        return;
+      } else {
+        // Hold the quit so the final backup has time to land. Calling
+        // app.quit() from inside an async before-quit handler can get stuck
+        // on macOS, so we use app.exit() after we're done.
+        event.preventDefault();
       }
     }
-  } catch { /* proceed with quit */ }
+  } catch {
+    // proceed with quit
+  }
+
+  // We're committed to quitting — safe to stop the auto-updater now.
+  stopAutoUpdater();
+
+  if (isHost) {
+    try {
+      await _runShutdownBackup();
+    } catch (error) {
+      console.error("Shutdown backup failed:", error?.message || error);
+      try { Sentry.captureException(error); } catch { /* sentry not configured */ }
+    }
+    _runShutdown();
+    app.exit(0);
+    return;
+  }
 
   _runShutdown();
 });
