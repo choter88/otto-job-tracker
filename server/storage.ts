@@ -48,7 +48,7 @@ import {
   type PinResetRequestWithUser,
 } from "@shared/schema";
 import { db } from "./db";
-import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
@@ -813,8 +813,49 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(users, eq(users.id, jobFlags.userId))
       .where(eq(jobs.officeId, officeId))
       .orderBy(desc(jobFlags.createdAt));
-    
-    return flaggedJobs;
+
+    if (flaggedJobs.length === 0) return flaggedJobs;
+
+    // Fetch the latest 3 comments per starred job in a single query, then
+    // bucket them client-side. SQLite has window functions but the syntax
+    // differs across drivers; the in-memory slice is bounded (max ~3×N
+    // comments where N is the office's starred-job count, typically <30
+    // total) so we keep the query simple.
+    const RECENT_LIMIT_PER_JOB = 3;
+    const flaggedJobIds = flaggedJobs.map((j) => j.id);
+    const commentsRaw = await db
+      .select({
+        id: jobComments.id,
+        jobId: jobComments.jobId,
+        authorId: jobComments.authorId,
+        content: jobComments.content,
+        isOverdueComment: jobComments.isOverdueComment,
+        createdAt: jobComments.createdAt,
+        author: {
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+        },
+      })
+      .from(jobComments)
+      .innerJoin(users, eq(users.id, jobComments.authorId))
+      .where(inArray(jobComments.jobId, flaggedJobIds))
+      .orderBy(desc(jobComments.createdAt));
+
+    const commentsByJob = new Map<string, any[]>();
+    const totalByJob = new Map<string, number>();
+    for (const c of commentsRaw) {
+      totalByJob.set(c.jobId, (totalByJob.get(c.jobId) || 0) + 1);
+      const bucket = commentsByJob.get(c.jobId) || [];
+      if (bucket.length < RECENT_LIMIT_PER_JOB) bucket.push(c);
+      commentsByJob.set(c.jobId, bucket);
+    }
+
+    return flaggedJobs.map((job) => ({
+      ...job,
+      recentComments: commentsByJob.get(job.id) || [],
+      commentCount: totalByJob.get(job.id) || 0,
+    }));
   }
 
   async updateJobFlagImportantNote(userId: string, jobId: string, note: string): Promise<void> {

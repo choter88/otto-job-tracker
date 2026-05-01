@@ -31,7 +31,22 @@ import {
   getDestinationBadgeStyle,
 } from "@/lib/default-colors";
 import { formatPatientDisplayName } from "@shared/name-format";
-import PageHead, { SubAccent, SubDot } from "@/components/page-head";
+import { SubAccent, SubDot } from "@/components/page-head";
+import { cn } from "@/lib/utils";
+
+interface RecentComment {
+  id: string;
+  jobId: string;
+  authorId: string;
+  content: string;
+  isOverdueComment: boolean;
+  createdAt: string;
+  author: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
+}
 
 interface FlaggedJob {
   id: string;
@@ -61,6 +76,8 @@ interface FlaggedJob {
     firstName: string;
     lastName: string;
   } | null;
+  recentComments?: RecentComment[];
+  commentCount?: number;
 }
 
 export default function ImportantJobs() {
@@ -189,11 +206,11 @@ export default function ImportantJobs() {
   if (!flaggedJobs || flaggedJobs.length === 0) {
     return (
       <div data-testid="page-important-jobs">
-        <PageHead
-          title="Starred"
-          className="mb-4"
-          sub={<span>Nothing starred right now</span>}
-        />
+        {/* No PageHead — the topbar already says "Starred". A small status
+            line keeps the empty state from feeling abandoned. */}
+        <p className="text-[calc(13px*var(--ui-scale))] text-ink-mute mb-4">
+          Nothing starred right now
+        </p>
         <div className="bg-panel border border-line rounded-xl px-6 py-12 flex flex-col items-center text-center">
           <span className="w-14 h-14 rounded-full bg-warn-bg/60 grid place-items-center mb-4 ring-1 ring-warn/20">
             <Star className="h-6 w-6 text-warn fill-warn" aria-hidden />
@@ -222,29 +239,25 @@ export default function ImportantJobs() {
 
   return (
     <div data-testid="page-important-jobs">
-      <PageHead
-        title="Starred"
-        className="mb-4"
-        sub={
+      {/* The topbar already crumb-labels this page "Starred". We replace the
+          big in-page title with a thin metadata line so the cards lead. */}
+      <div className="mb-4 flex items-center gap-2 flex-wrap text-[calc(13px*var(--ui-scale))] text-ink-mute tracking-[-0.005em]">
+        <span>
+          {flaggedJobs.length} starred job{flaggedJobs.length !== 1 ? "s" : ""}
+        </span>
+        {flaggedByMe > 0 && (
           <>
-            <span>
-              {flaggedJobs.length} starred job{flaggedJobs.length !== 1 ? "s" : ""}
-            </span>
-            {flaggedByMe > 0 && (
-              <>
-                <SubDot />
-                <SubAccent>{flaggedByMe} starred by you</SubAccent>
-              </>
-            )}
-            {lastFlaggedAt && (
-              <>
-                <SubDot />
-                <span>last starred {formatDistanceToNow(lastFlaggedAt, { addSuffix: true })}</span>
-              </>
-            )}
+            <SubDot />
+            <SubAccent>{flaggedByMe} starred by you</SubAccent>
           </>
-        }
-      />
+        )}
+        {lastFlaggedAt && (
+          <>
+            <SubDot />
+            <span>last starred {formatDistanceToNow(lastFlaggedAt, { addSuffix: true })}</span>
+          </>
+        )}
+      </div>
 
       <div className="space-y-3">
         {flaggedJobs.map((job) => (
@@ -336,6 +349,8 @@ function FlaggedJobCard({
     ? `${job.flaggedBy.firstName || ""} ${job.flaggedBy.lastName || ""}`.trim() || null
     : null;
   const flaggedAt = job.importantNoteUpdatedAt ? new Date(job.importantNoteUpdatedAt) : null;
+  const recentComments = job.recentComments ?? [];
+  const totalCommentCount = job.commentCount ?? recentComments.length;
 
   const initials =
     (patientName || "?")
@@ -349,13 +364,17 @@ function FlaggedJobCard({
   return (
     <>
       <div
-        className="bg-panel border border-line rounded-xl p-4 space-y-3 hover:shadow-soft transition-shadow"
+        className="bg-panel border border-line rounded-xl p-3 space-y-2.5 hover:shadow-soft transition-shadow"
         data-testid={`card-job-${job.id}`}
       >
-        {/* Header row — avatar, name, badges, unflag */}
-        <div className="flex items-start gap-3">
+        {/* Single header row — avatar, name, badges (incl. Lab), inline
+            actions (star toggle, edit note, comments, open). Folding the
+            old separate metadata line + bottom action row up here cuts
+            roughly 70px of vertical space per card without losing any
+            information that belongs on this page. */}
+        <div className="flex items-center gap-2 flex-wrap">
           <span
-            className="w-10 h-10 rounded-full grid place-items-center text-[calc(11.5px*var(--ui-scale))] font-semibold tracking-wider shrink-0 ring-1 ring-inset ring-line"
+            className="w-8 h-8 rounded-full grid place-items-center text-[calc(10.5px*var(--ui-scale))] font-semibold tracking-wider shrink-0 ring-1 ring-inset ring-line"
             style={{ backgroundColor: statusBadge.background, color: statusBadge.text }}
             aria-hidden
             data-testid={`avatar-${job.id}`}
@@ -363,128 +382,192 @@ function FlaggedJobCard({
             {initials}
           </span>
 
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3
-                className="font-display text-[calc(17px*var(--ui-scale))] font-medium tracking-[-0.015em] text-ink m-0 leading-tight"
-                data-testid={`text-patient-${job.id}`}
+          <h3
+            className="font-display text-[calc(16px*var(--ui-scale))] font-medium tracking-[-0.015em] text-ink m-0 leading-tight truncate min-w-0"
+            data-testid={`text-patient-${job.id}`}
+            title={patientName}
+          >
+            {patientName}
+          </h3>
+          <Badge
+            className="border-0 shrink-0"
+            style={{ backgroundColor: jobTypeBadge.background, color: jobTypeBadge.text }}
+            data-testid={`badge-job-type-${job.id}`}
+          >
+            <span className="max-w-[140px] truncate">{jobTypeLabel}</span>
+          </Badge>
+          <Badge
+            className="border-0 shrink-0"
+            style={{ backgroundColor: statusBadge.background, color: statusBadge.text }}
+            data-testid={`badge-status-${job.id}`}
+          >
+            <span className="max-w-[140px] truncate">{statusLabel}</span>
+          </Badge>
+          <Badge
+            className="border-0 shrink-0 bg-paper-2 text-ink-2"
+            data-testid={`badge-lab-${job.id}`}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full mr-1.5"
+              style={{ backgroundColor: destinationBadge.text }}
+              aria-hidden
+            />
+            <span className="max-w-[140px] truncate">{destinationLabel}</span>
+          </Badge>
+          {job.isRedoJob && (
+            <Badge
+              className="border-0 shrink-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+              data-testid={`badge-redo-${job.id}`}
+            >
+              REDO
+            </Badge>
+          )}
+
+          {/* Inline action stack — pushes to the right with ml-auto. Star
+              + Edit are icon-only (with tooltips) to stay compact; Open is
+              the primary CTA so it's a labeled button. */}
+          <div className="flex items-center gap-1 ml-auto shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onUnflag}
+              disabled={!canEditNote}
+              className="h-7 w-7"
+              title={canEditNote ? "Remove your star" : "Starred by a teammate"}
+              data-testid={`button-unflag-${job.id}`}
+            >
+              <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-400" />
+            </Button>
+            {(canEditNote || noteText) && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setNoteDialogOpen(true)}
+                className="h-7 w-7 text-ink-mute hover:text-ink"
+                title={canEditNote ? (noteText ? "Edit note" : "Add note") : "View note"}
+                data-testid={`button-note-${job.id}`}
               >
-                {patientName}
-              </h3>
-              <Badge
-                className="border-0"
-                style={{ backgroundColor: jobTypeBadge.background, color: jobTypeBadge.text }}
-                data-testid={`badge-job-type-${job.id}`}
-              >
-                <span className="max-w-[160px] truncate">{jobTypeLabel}</span>
-              </Badge>
-              <Badge
-                className="border-0"
-                style={{ backgroundColor: statusBadge.background, color: statusBadge.text }}
-                data-testid={`badge-status-${job.id}`}
-              >
-                <span className="max-w-[160px] truncate">{statusLabel}</span>
-              </Badge>
-              {job.isRedoJob && (
-                <Badge
-                  className="border-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                  data-testid={`badge-redo-${job.id}`}
-                >
-                  REDO
-                </Badge>
+                <NotebookPen className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onOpenComments}
+              className="h-7 px-2 gap-1 text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-ink"
+              data-testid={`button-show-comments-${job.id}`}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              {totalCommentCount > 0 && (
+                <span className="tabular-nums">{totalCommentCount}</span>
               )}
+            </Button>
+            <Button
+              size="sm"
+              onClick={onOpenDetails}
+              className="h-7 px-2.5 gap-1 text-[calc(12px*var(--ui-scale))]"
+              data-testid={`button-open-details-${job.id}`}
+            >
+              Open
+              <ArrowRight className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Note + Recent activity sit side-by-side on wide screens to keep
+            each card compact; collapse to stacked on narrow viewports so
+            content doesn't get cramped. The Recent activity column is
+            elided entirely when there are no comments — the note then
+            spans full-width rather than leaving an empty half. */}
+        <div
+          className={cn(
+            "grid gap-2.5",
+            recentComments.length > 0 ? "md:grid-cols-2" : "grid-cols-1",
+          )}
+        >
+          {/* Why-it's-starred — sticky-note treatment with a clear label so
+              users don't have to wonder what the box is. Same amber rail as
+              the Notes block in the Job Details modal so the two views feel
+              like family. */}
+          <div className="rounded-lg bg-warn-bg/40 border border-warn/15 border-l-[3px] border-l-warn/60 px-3 py-2 min-w-0">
+            <div className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] uppercase tracking-[0.10em] font-semibold text-warn mb-1.5">
+              <StickyNote className="h-3 w-3" aria-hidden />
+              Why it&rsquo;s starred
             </div>
-            <div className="flex items-center gap-2 flex-wrap mt-1.5 text-[calc(12px*var(--ui-scale))] text-ink-mute">
-              <span className="inline-flex items-center gap-1.5">
-                <span
-                  className="w-1.5 h-1.5 rounded-full"
-                  style={{ backgroundColor: destinationBadge.text }}
-                  aria-hidden
-                />
-                {destinationLabel}
-              </span>
-              <span className="text-ink-faint">·</span>
-              <span>Updated {formatDistanceToNow(new Date(job.updatedAt), { addSuffix: true })}</span>
-            </div>
+            {noteText ? (
+              <p
+                className="text-[calc(13px*var(--ui-scale))] text-ink-2 whitespace-pre-wrap leading-relaxed m-0"
+                data-testid={`text-note-${job.id}`}
+              >
+                {noteText}
+              </p>
+            ) : (
+              <p className="text-[calc(13px*var(--ui-scale))] text-ink-mute italic m-0">
+                No note yet — add one so your team knows why this matters.
+              </p>
+            )}
+            {(flaggedByName || flaggedAt) && (
+              <div className="flex items-center gap-1.5 mt-2 text-[calc(11px*var(--ui-scale))] text-ink-mute">
+                {flaggedByName && <span>&mdash; {flaggedByName}</span>}
+                {flaggedByName && flaggedAt && <span className="text-ink-faint">·</span>}
+                {flaggedAt && (
+                  <span className="font-mono">{format(flaggedAt, "MMM d · h:mm a")}</span>
+                )}
+              </div>
+            )}
           </div>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onUnflag}
-            disabled={!canEditNote}
-            className="h-8 w-8 shrink-0"
-            title={canEditNote ? "Remove your star" : "Starred by a teammate"}
-            data-testid={`button-unflag-${job.id}`}
-          >
-            <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-          </Button>
-        </div>
-
-        {/* Sticky-note treatment for the flag note — same amber rail as the
-            Notes block in the Job Details modal so the two views feel like
-            family. */}
-        <div className="rounded-lg bg-warn-bg/40 border border-warn/15 border-l-[3px] border-l-warn/60 px-3.5 py-2.5">
-          {noteText ? (
-            <p
-              className="text-[calc(13px*var(--ui-scale))] text-ink-2 whitespace-pre-wrap leading-relaxed m-0"
-              data-testid={`text-note-${job.id}`}
-            >
-              {noteText}
-            </p>
-          ) : (
-            <p className="text-[calc(13px*var(--ui-scale))] text-ink-mute italic m-0">
-              No note yet — add one so your team knows why this matters.
-            </p>
-          )}
-          {(flaggedByName || flaggedAt) && (
-            <div className="flex items-center gap-1.5 mt-2 text-[calc(11px*var(--ui-scale))] text-ink-mute">
-              <StickyNote className="h-3 w-3" aria-hidden />
-              {flaggedByName && (
-                <span>
-                  &mdash; {flaggedByName}
-                  {flaggedByName.toLowerCase() === "system" ? "" : ""}
-                </span>
-              )}
-              {flaggedByName && flaggedAt && <span className="text-ink-faint">·</span>}
-              {flaggedAt && (
-                <span className="font-mono">{format(flaggedAt, "MMM d · h:mm a")}</span>
-              )}
+          {/* Recent activity — surfaces the last few comments so users see
+              what's been happening without opening the comments sidebar.
+              Capped at 3, with an overflow link to the full thread. */}
+          {recentComments.length > 0 && (
+            <div className="rounded-lg bg-paper-2 border border-line-2 px-3 py-2 min-w-0">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] uppercase tracking-[0.10em] font-semibold text-ink-mute">
+                  <MessageSquare className="h-3 w-3" aria-hidden />
+                  Recent activity
+                </div>
+                {totalCommentCount > recentComments.length && (
+                  <button
+                    type="button"
+                    onClick={onOpenComments}
+                    className="text-[calc(11px*var(--ui-scale))] text-otto-accent-ink hover:text-otto-accent-strong"
+                    data-testid={`button-see-all-comments-${job.id}`}
+                  >
+                    See all {totalCommentCount}
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                {recentComments.map((c) => {
+                  const author = `${c.author?.firstName || ""} ${c.author?.lastName || ""}`.trim() || "Teammate";
+                  return (
+                    <div key={c.id} className="text-[calc(12.5px*var(--ui-scale))] leading-snug">
+                      <div className="flex items-baseline gap-1.5 flex-wrap">
+                        <span className="font-medium text-ink-2">{author}</span>
+                        <span className="text-[calc(10.5px*var(--ui-scale))] text-ink-mute font-mono">
+                          {format(new Date(c.createdAt), "MMM d · h:mm a")}
+                        </span>
+                        {c.isOverdueComment && (
+                          <span
+                            className="text-[calc(10px*var(--ui-scale))] uppercase tracking-wider text-warn font-semibold"
+                            title="Posted while this job was overdue"
+                          >
+                            Overdue
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-ink-2 line-clamp-2 break-words m-0 mt-0.5">
+                        {c.content}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
 
-        {/* Action row */}
-        <div className="flex items-center justify-end gap-2">
-          {(canEditNote || noteText) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setNoteDialogOpen(true)}
-              data-testid={`button-note-${job.id}`}
-            >
-              <NotebookPen className="h-3.5 w-3.5 mr-1.5" />
-              {canEditNote ? (noteText ? "Edit note" : "Add note") : "View note"}
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onOpenComments}
-            data-testid={`button-show-comments-${job.id}`}
-          >
-            <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
-            Comments
-          </Button>
-          <Button
-            size="sm"
-            onClick={onOpenDetails}
-            data-testid={`button-open-details-${job.id}`}
-          >
-            Open
-            <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
-          </Button>
-        </div>
       </div>
 
       {/* Note dialog — full editor */}

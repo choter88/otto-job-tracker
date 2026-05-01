@@ -18,7 +18,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List, AlertTriangle } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List, AlertTriangle, ListFilter } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -1006,99 +1007,135 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
           <div className="w-px h-5 bg-line" />
 
-          {/* Filter pills — Status / Type / Lab. Fixed width prevents the
-              trigger from growing as the user picks a longer label. */}
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger
-              className={cn(
-                "h-[30px] w-[140px] gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
-                statusFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
-              )}
-              data-testid="select-status-filter"
-            >
-              <span className="truncate">{statusFilter === "all" ? "Status" : (customStatuses.find((s: any) => s.id === statusFilter)?.label || "Status")}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              {(customStatuses.length > 0 ? customStatuses : [
-                { id: "job_created", label: "Job Created" },
-                { id: "ordered", label: "Ordered" },
-                { id: "in_progress", label: "In Progress" },
-                { id: "ready_for_pickup", label: "Ready for Pickup" },
-              ]).map((s: any) => (
-                <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* All filters live in one popover instead of three side-by-side
+              dropdowns. The trigger reads as a button (outlined), shows a
+              count badge when filters are applied, and the chevron makes it
+              obvious it opens something. Cuts the toolbar's interactive
+              surface from 6 controls to 1 + Filters. */}
+          {(() => {
+            const activeFilterCount =
+              (statusFilter !== "all" ? 1 : 0) +
+              (typeFilter !== "all" ? 1 : 0) +
+              (destinationFilter !== "all" ? 1 : 0) +
+              Object.values(customColumnFilters).filter((v) => v != null && v !== "").length;
+            const filterLabelClass = "text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold mb-1.5 block";
+            return (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      "h-[30px] gap-1.5 px-3 text-[calc(12.5px*var(--ui-scale))]",
+                      activeFilterCount > 0 &&
+                        "border-otto-accent-line bg-otto-accent-soft text-otto-accent-ink hover:bg-otto-accent-soft hover:text-otto-accent-ink",
+                    )}
+                    data-testid="button-filters-trigger"
+                  >
+                    <ListFilter className="h-3.5 w-3.5" />
+                    Filters
+                    {activeFilterCount > 0 && (
+                      <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-otto-accent text-white text-[calc(10px*var(--ui-scale))] px-1 font-semibold tabular-nums">
+                        {activeFilterCount}
+                      </span>
+                    )}
+                    <ChevronDown className="h-3 w-3 opacity-60" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-72 p-3" data-testid="popover-filters">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-display text-[calc(15px*var(--ui-scale))] font-medium tracking-[-0.01em] text-ink m-0">
+                        Filter jobs
+                      </h4>
+                      {activeFilterCount > 0 && (
+                        <button
+                          type="button"
+                          className="text-[calc(11.5px*var(--ui-scale))] text-otto-accent-ink hover:text-otto-accent-strong"
+                          onClick={() => {
+                            setStatusFilter("all");
+                            setTypeFilter("all");
+                            setDestinationFilter("all");
+                            setCustomColumnFilters({});
+                          }}
+                          data-testid="button-clear-filters"
+                        >
+                          Clear all
+                        </button>
+                      )}
+                    </div>
 
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger
-              className={cn(
-                "h-[30px] w-[130px] gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
-                typeFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
-              )}
-              data-testid="select-type-filter"
-            >
-              <span className="truncate">{typeFilter === "all" ? "Type" : (customJobTypes.find((t: any) => t.id === typeFilter)?.label || "Type")}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All types</SelectItem>
-              {(customJobTypes.length > 0 ? customJobTypes : [
-                { id: "contacts", label: "Contacts" },
-                { id: "glasses", label: "Glasses" },
-                { id: "sunglasses", label: "Sunglasses" },
-              ]).map((t: any) => (
-                <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                    <div>
+                      <Label className={filterLabelClass}>Status</Label>
+                      <Select value={statusFilter} onValueChange={setStatusFilter}>
+                        <SelectTrigger className="h-9 w-full" data-testid="select-status-filter">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All statuses</SelectItem>
+                          {(customStatuses.length > 0 ? customStatuses : [
+                            { id: "job_created", label: "Job Created" },
+                            { id: "ordered", label: "Ordered" },
+                            { id: "in_progress", label: "In Progress" },
+                            { id: "ready_for_pickup", label: "Ready for Pickup" },
+                          ]).map((s: any) => (
+                            <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-          <Select value={destinationFilter} onValueChange={setDestinationFilter}>
-            <SelectTrigger
-              className={cn(
-                "h-[30px] w-[140px] gap-1.5 px-3 border-0 rounded-lg text-[calc(12.5px*var(--ui-scale))] font-medium shadow-none focus:ring-0",
-                destinationFilter !== "all" ? "bg-otto-accent-soft text-otto-accent-ink" : "bg-transparent text-ink-2 hover:bg-line-2",
-              )}
-              data-testid="select-destination-filter"
-            >
-              <span className="truncate">{destinationFilter === "all" ? "Lab" : (customOrderDestinations.find((d: any) => d.label === destinationFilter || d.id === destinationFilter)?.label || "Lab")}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All labs</SelectItem>
-              {(customOrderDestinations.length > 0 ? customOrderDestinations : [
-                { id: "Vision Lab", label: "Vision Lab" },
-                { id: "EyeTech Labs", label: "EyeTech Labs" },
-                { id: "Premium Optics", label: "Premium Optics" },
-              ]).map((d: any) => (
-                <SelectItem key={d.id} value={d.label || d.id}>{d.label || d.id}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                    <div>
+                      <Label className={filterLabelClass}>Type</Label>
+                      <Select value={typeFilter} onValueChange={setTypeFilter}>
+                        <SelectTrigger className="h-9 w-full" data-testid="select-type-filter">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All types</SelectItem>
+                          {(customJobTypes.length > 0 ? customJobTypes : [
+                            { id: "contacts", label: "Contacts" },
+                            { id: "glasses", label: "Glasses" },
+                            { id: "sunglasses", label: "Sunglasses" },
+                          ]).map((t: any) => (
+                            <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-          {(statusFilter !== "all" || typeFilter !== "all" || destinationFilter !== "all" || Object.keys(customColumnFilters).some(k => customColumnFilters[k])) && (
-            <button
-              type="button"
-              className="text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-ink flex items-center gap-1"
-              onClick={() => {
-                setStatusFilter("all");
-                setTypeFilter("all");
-                setDestinationFilter("all");
-                setCustomColumnFilters({});
-              }}
-              data-testid="button-clear-filters"
-            >
-              <X className="h-3 w-3" />
-              Clear
-            </button>
-          )}
+                    <div>
+                      <Label className={filterLabelClass}>Lab</Label>
+                      <Select value={destinationFilter} onValueChange={setDestinationFilter}>
+                        <SelectTrigger className="h-9 w-full" data-testid="select-destination-filter">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All labs</SelectItem>
+                          {(customOrderDestinations.length > 0 ? customOrderDestinations : [
+                            { id: "Vision Lab", label: "Vision Lab" },
+                            { id: "EyeTech Labs", label: "EyeTech Labs" },
+                            { id: "Premium Optics", label: "Premium Optics" },
+                          ]).map((d: any) => (
+                            <SelectItem key={d.id} value={d.label || d.id}>{d.label || d.id}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            );
+          })()}
 
           <div className="flex-1" />
 
-          {/* Select / Link Jobs / Columns — secondary actions. Fixed widths
-              keep the row stable when toggling modes (label flips between
-              "Select"/"Cancel" and a count badge can appear). */}
+          {/* Select / Link Jobs / Columns — outlined so they read as buttons
+              (was ghost variant which only revealed the button on hover).
+              Fixed widths keep the row stable when toggling modes (label
+              flips between "Select"/"Cancel" and a count badge can appear). */}
           <Button
-            variant={selectionMode ? "secondary" : "ghost"}
+            variant={selectionMode ? "secondary" : "outline"}
             size="sm"
             className="h-[30px] w-[110px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))] justify-center"
             onClick={() => {
@@ -1117,7 +1154,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </Button>
 
           <Button
-            variant={linkMode ? "secondary" : "ghost"}
+            variant={linkMode ? "secondary" : "outline"}
             size="sm"
             className="h-[30px] w-[100px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))] justify-center"
             onClick={() => {
@@ -1137,9 +1174,10 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-[30px] w-[110px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))] justify-center">
+              <Button variant="outline" size="sm" className="h-[30px] w-[110px] px-3 gap-1.5 text-[calc(12.5px*var(--ui-scale))] justify-center">
                 <Columns3 className="h-3.5 w-3.5" />
                 Columns
+                <ChevronDown className="h-3 w-3 opacity-60" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">

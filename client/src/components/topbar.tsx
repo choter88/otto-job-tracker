@@ -12,7 +12,9 @@ interface TopbarProps {
 
 const TAB_LABELS: Record<string, string> = {
   all: "Worklist",
-  important: "Important",
+  // Route id stays "important" for URL stability; only the label flipped
+  // when we renamed the action to "starring" across the app.
+  important: "Starred",
   overdue: "Overdue",
   past: "Past Jobs",
   analytics: "Analytics",
