@@ -416,10 +416,16 @@ export default function JobDetailsModal({
             )}
           </TabsList>
 
+          {/* Reverted from forceMount + data-[state=inactive]:hidden because
+              keeping the Comments panel mounted while hidden made it appear
+              empty when the user actually clicked into the tab (the panel
+              has its own focus + read-mark side effects that mis-fired in
+              the hidden mount). overflow-y-scroll on every tab keeps the
+              scrollbar gutter present so switching tabs doesn't shift the
+              tab body width on systems with non-overlay scrollbars. */}
           <TabsContent
-            forceMount
             value="overview"
-            className="mt-0 flex-1 min-h-0 overflow-y-auto px-6 py-5 data-[state=inactive]:hidden"
+            className="mt-0 flex-1 min-h-0 overflow-y-scroll px-6 py-5"
           >
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-7">
               {/* Left column: Patient & Order, Custom fields, Notes */}
@@ -611,9 +617,8 @@ export default function JobDetailsModal({
           </TabsContent>
 
           <TabsContent
-            forceMount
             value="comments"
-            className="mt-0 flex-1 min-h-0 overflow-hidden data-[state=inactive]:hidden"
+            className="mt-0 flex-1 min-h-0 overflow-hidden"
           >
             <div className="h-full overflow-hidden bg-panel">
               <JobCommentsPanel job={job} />
@@ -623,9 +628,8 @@ export default function JobDetailsModal({
           {/* Related Jobs tab — auto-detected by patient name match + manually linked */}
           {relatedJobs.length > 0 && (
             <TabsContent
-              forceMount
               value="related"
-              className="mt-0 flex-1 min-h-0 overflow-y-auto px-6 py-5 data-[state=inactive]:hidden"
+              className="mt-0 flex-1 min-h-0 overflow-y-scroll px-6 py-5"
             >
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground">

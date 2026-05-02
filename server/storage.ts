@@ -816,46 +816,104 @@ export class DatabaseStorage implements IStorage {
 
     if (flaggedJobs.length === 0) return flaggedJobs;
 
-    // Fetch the latest 3 comments per starred job in a single query, then
-    // bucket them client-side. SQLite has window functions but the syntax
-    // differs across drivers; the in-memory slice is bounded (max ~3×N
-    // comments where N is the office's starred-job count, typically <30
-    // total) so we keep the query simple.
+    // Fetch comments + status history for these jobs in two parallel
+    // queries, then merge them into a single "recent activity" feed
+    // (last 3 of either kind) per job. We also keep a totalCommentCount
+    // so the comments button can show its number.
     const RECENT_LIMIT_PER_JOB = 3;
     const flaggedJobIds = flaggedJobs.map((j) => j.id);
-    const commentsRaw = await db
-      .select({
-        id: jobComments.id,
-        jobId: jobComments.jobId,
-        authorId: jobComments.authorId,
-        content: jobComments.content,
-        isOverdueComment: jobComments.isOverdueComment,
-        createdAt: jobComments.createdAt,
-        author: {
-          id: users.id,
-          firstName: users.firstName,
-          lastName: users.lastName,
-        },
-      })
-      .from(jobComments)
-      .innerJoin(users, eq(users.id, jobComments.authorId))
-      .where(inArray(jobComments.jobId, flaggedJobIds))
-      .orderBy(desc(jobComments.createdAt));
 
-    const commentsByJob = new Map<string, any[]>();
+    const [commentsRaw, statusChangesRaw] = await Promise.all([
+      db
+        .select({
+          id: jobComments.id,
+          jobId: jobComments.jobId,
+          authorId: jobComments.authorId,
+          content: jobComments.content,
+          isOverdueComment: jobComments.isOverdueComment,
+          createdAt: jobComments.createdAt,
+          author: {
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+          },
+        })
+        .from(jobComments)
+        .innerJoin(users, eq(users.id, jobComments.authorId))
+        .where(inArray(jobComments.jobId, flaggedJobIds))
+        .orderBy(desc(jobComments.createdAt)),
+      db
+        .select({
+          id: jobStatusHistory.id,
+          jobId: jobStatusHistory.jobId,
+          oldStatus: jobStatusHistory.oldStatus,
+          newStatus: jobStatusHistory.newStatus,
+          changedBy: jobStatusHistory.changedBy,
+          changedAt: jobStatusHistory.changedAt,
+          actor: {
+            id: users.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+          },
+        })
+        .from(jobStatusHistory)
+        .innerJoin(users, eq(users.id, jobStatusHistory.changedBy))
+        .where(inArray(jobStatusHistory.jobId, flaggedJobIds))
+        .orderBy(desc(jobStatusHistory.changedAt)),
+    ]);
+
+    type ActivityItem =
+      | {
+          kind: "comment";
+          jobId: string;
+          at: number;
+          comment: typeof commentsRaw[number];
+        }
+      | {
+          kind: "status";
+          jobId: string;
+          at: number;
+          status: typeof statusChangesRaw[number];
+        };
+
+    const activityByJob = new Map<string, ActivityItem[]>();
     const totalByJob = new Map<string, number>();
+    const pushActivity = (jobId: string, item: ActivityItem) => {
+      const bucket = activityByJob.get(jobId) || [];
+      bucket.push(item);
+      activityByJob.set(jobId, bucket);
+    };
     for (const c of commentsRaw) {
       totalByJob.set(c.jobId, (totalByJob.get(c.jobId) || 0) + 1);
-      const bucket = commentsByJob.get(c.jobId) || [];
-      if (bucket.length < RECENT_LIMIT_PER_JOB) bucket.push(c);
-      commentsByJob.set(c.jobId, bucket);
+      pushActivity(c.jobId, {
+        kind: "comment",
+        jobId: c.jobId,
+        at: c.createdAt instanceof Date ? c.createdAt.getTime() : Number(c.createdAt) || 0,
+        comment: c,
+      });
+    }
+    for (const s of statusChangesRaw) {
+      pushActivity(s.jobId, {
+        kind: "status",
+        jobId: s.jobId,
+        at: s.changedAt instanceof Date ? s.changedAt.getTime() : Number(s.changedAt) || 0,
+        status: s,
+      });
     }
 
-    return flaggedJobs.map((job) => ({
-      ...job,
-      recentComments: commentsByJob.get(job.id) || [],
-      commentCount: totalByJob.get(job.id) || 0,
-    }));
+    return flaggedJobs.map((job) => {
+      const merged = (activityByJob.get(job.id) || [])
+        .sort((a, b) => b.at - a.at)
+        .slice(0, RECENT_LIMIT_PER_JOB);
+      return {
+        ...job,
+        // Unified feed — most recent N of either kind. Each item is
+        // tagged with its kind so the client renders comments and
+        // status changes with their own visual treatment.
+        recentActivity: merged,
+        commentCount: totalByJob.get(job.id) || 0,
+      };
+    });
   }
 
   async updateJobFlagImportantNote(userId: string, jobId: string, note: string): Promise<void> {

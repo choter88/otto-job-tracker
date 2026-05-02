@@ -1,23 +1,15 @@
 import { useMemo, useState } from "react";
-import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -28,25 +20,16 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock,
-  Hourglass,
   Info,
-  MessageSquare,
   Minus,
-  MoreVertical,
-  StickyNote,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import LifecycleTrack from "@/components/lifecycle-track";
-import PageHead, { SubDanger, SubDot } from "@/components/page-head";
-import {
-  getStatusBadgeStyle,
-  getDestinationBadgeStyle,
-} from "@/lib/default-colors";
-import { buildTrackStatuses, getStepIndex } from "@/lib/lifecycle";
 import { sortByOrder } from "@/lib/custom-list-sort";
+import { buildTrackStatuses, getStepIndex } from "@/lib/lifecycle";
 import { formatPatientDisplayName } from "@shared/name-format";
-import type { Office, NotificationRule } from "@shared/schema";
+import JobDetailsModal, { type JobDetailsTab } from "@/components/job-details-modal";
+import JobDialog from "@/components/job-dialog";
+import type { Job, Office, NotificationRule } from "@shared/schema";
 
 interface OverdueJobsProps {
   jobs: any[];
@@ -55,21 +38,20 @@ interface OverdueJobsProps {
 
 type Severity = "critical" | "high" | "medium" | "low";
 
-// Design tokens — kept in one place so each severity is described by a single
-// vocabulary (label, range, icon, color tokens). The styling all flows from
-// here so changing a severity rail color is a single-line edit.
+// Each severity has one definition — label, range, icon, color tokens. The
+// triage UI all flows from this map so changing a severity color is a
+// single-line edit. Tokens use --danger / --warn so the page reads in the
+// same vocabulary the rest of the app uses for warnings + destructive
+// states (no hardcoded red-50 / orange-50 anywhere).
 const SEVERITY_META: Record<Severity, {
   label: string;
   range: string;
   Icon: typeof AlertOctagon;
-  // Tailwind classes built from the design tokens (--danger / --warn). No
-  // hardcoded red-50 / orange-50 — all severity colors come from the same
-  // palette the rest of Otto uses for warnings + destructive actions.
-  rail: string;        // left rail color on cards
-  bg: string;          // soft tint for severity stat tile
-  ring: string;        // active ring on selected stat
-  iconClass: string;   // icon color
-  daysClass: string;   // "X days over" text color
+  rail: string;
+  bg: string;
+  ring: string;
+  iconClass: string;
+  daysClass: string;
 }> = {
   critical: {
     label: "Critical",
@@ -114,6 +96,12 @@ const SEVERITY_META: Record<Severity, {
 };
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
+const SEVERITY_RANK: Record<Severity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
 
 function getLabelFromSettings(list: any[], value: string): string {
   if (!value) return "";
@@ -129,14 +117,8 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [, setLocation] = useLocation();
   const [priorityFilter, setPriorityFilter] = useState<"all" | Severity>("all");
-  // statusFilter mirrors priorityFilter — clicking a threshold pill scopes
-  // the list to jobs stuck in that status. Independent of the severity
-  // filter so both can be active at once (e.g. "Critical" + "Ordered").
   const [stuckStatusFilter, setStuckStatusFilter] = useState<string>("all");
-  const [noteDialogJobId, setNoteDialogJobId] = useState<string | null>(null);
-  const [noteContent, setNoteContent] = useState("");
 
   const { data: office } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
@@ -152,16 +134,6 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
     () => sortByOrder(((office?.settings as any)?.customStatuses || []) as any[]),
     [office],
   );
-  const customJobTypes = useMemo(
-    () => ((office?.settings as any)?.customJobTypes || []) as any[],
-    [office],
-  );
-  const customOrderDestinations = useMemo(
-    () => ((office?.settings as any)?.customOrderDestinations || []) as any[],
-    [office],
-  );
-  const jobIdentifierMode = (office?.settings as any)?.jobIdentifierMode || "patientName";
-  const useTrayNumber = jobIdentifierMode === "trayNumber";
 
   const updateJobMutation = useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: any }) => {
@@ -182,42 +154,54 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
     },
   });
 
-  const addNoteMutation = useMutation({
-    mutationFn: async ({ jobId, content }: { jobId: string; content: string }) => {
-      const res = await apiRequest("POST", `/api/jobs/${jobId}/comments`, {
-        content,
-        isOverdueComment: true,
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
-      toast({ title: "Note added", description: "Saved to the job's comments thread." });
-      setNoteDialogJobId(null);
-      setNoteContent("");
-    },
-    onError: (error: Error) => {
-      toast({ title: "Couldn't add note", description: error.message, variant: "destructive" });
-    },
-  });
+  // Job Details modal mounts in place — clicking a row opens it without
+  // navigating away from the Overdue page.
+  const [selectedJobForDetails, setSelectedJobForDetails] = useState<Job | null>(null);
+  const [jobDetailsOpen, setJobDetailsOpen] = useState(false);
+  const [jobDetailsTab, setJobDetailsTab] = useState<JobDetailsTab>("overview");
+  const [editingJob, setEditingJob] = useState<Job | undefined>(undefined);
+  const [jobDialogOpen, setJobDialogOpen] = useState(false);
 
-  // Filter
+  const openJob = (job: Job, panel: JobDetailsTab = "overview") => {
+    setSelectedJobForDetails(job);
+    setJobDetailsTab(panel);
+    setJobDetailsOpen(true);
+  };
+
+  const handleStartEditingJob = (job: Job) => {
+    setEditingJob(job);
+    setJobDialogOpen(true);
+  };
+
+  const overdueJobIds = useMemo(
+    () => new Set((jobs || []).map((j) => j.id)),
+    [jobs],
+  );
+
+  // Filter — search + severity + stuck-status filters all combine, then sort
+  // by severity (worst first) so the top of the table is the most urgent.
   const filteredJobs = useMemo(() => {
-    return jobs.filter((job) => {
-      const q = searchQuery.toLowerCase();
-      const matchesSearch =
-        searchQuery === "" ||
-        job.patientFirstName?.toLowerCase().includes(q) ||
-        job.patientLastName?.toLowerCase().includes(q) ||
-        job.trayNumber?.toLowerCase().includes(q) ||
-        job.phone?.includes(searchQuery.replace(/\D/g, ""));
-      const matchesPriority = priorityFilter === "all" || job.severity === priorityFilter;
-      const matchesStuck = stuckStatusFilter === "all" || job.status === stuckStatusFilter;
-      return matchesSearch && matchesPriority && matchesStuck;
-    });
+    return jobs
+      .filter((job) => {
+        const q = searchQuery.toLowerCase();
+        const matchesSearch =
+          searchQuery === "" ||
+          job.patientFirstName?.toLowerCase().includes(q) ||
+          job.patientLastName?.toLowerCase().includes(q) ||
+          job.trayNumber?.toLowerCase().includes(q) ||
+          job.phone?.includes(searchQuery.replace(/\D/g, ""));
+        const matchesPriority = priorityFilter === "all" || job.severity === priorityFilter;
+        const matchesStuck = stuckStatusFilter === "all" || job.status === stuckStatusFilter;
+        return matchesSearch && matchesPriority && matchesStuck;
+      })
+      .sort((a, b) => {
+        const sa = SEVERITY_RANK[(a.severity as Severity) || "low"];
+        const sb = SEVERITY_RANK[(b.severity as Severity) || "low"];
+        if (sa !== sb) return sa - sb;
+        return (b.daysOverdue || 0) - (a.daysOverdue || 0);
+      });
   }, [jobs, searchQuery, priorityFilter, stuckStatusFilter]);
 
-  // Counts by severity (always from full jobs list, not filtered)
   const counts = useMemo(() => {
     const c: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
     for (const job of jobs) {
@@ -230,36 +214,12 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
     updateJobMutation.mutate({ id: jobId, updates: { status: newStatus } });
   };
 
-  const handleSubmitNote = () => {
-    if (noteContent.trim() && noteDialogJobId) {
-      addNoteMutation.mutate({ jobId: noteDialogJobId, content: noteContent.trim() });
-    }
-  };
-
-  const handleOpenDetails = (jobId: string) => {
-    setLocation("/");
-    window.setTimeout(() => {
-      try {
-        window.dispatchEvent(
-          new CustomEvent("otto:openJob", { detail: { jobId, panel: "overview" } }),
-        );
-      } catch {
-        /* ignore */
-      }
-    }, 150);
-  };
-
-  // Empty state — celebratory, not bland. Emerald check inside an emerald
-  // ring lets the "everything's fine" state read as a small win instead of
-  // an empty list.
   if (jobs.length === 0) {
     return (
       <div data-testid="overdue-jobs-empty">
-        <PageHead
-          title="Overdue"
-          className="mb-4"
-          sub={<span>Nothing past its threshold</span>}
-        />
+        <p className="text-[calc(13px*var(--ui-scale))] text-ink-mute mb-4">
+          Nothing past its threshold
+        </p>
         <div className="bg-panel border border-line rounded-xl px-6 py-12 flex flex-col items-center text-center">
           <span className="w-14 h-14 rounded-full bg-otto-accent-soft grid place-items-center mb-4 ring-1 ring-otto-accent-line">
             <CheckCircle2 className="h-7 w-7 text-otto-accent-ink" aria-hidden />
@@ -280,29 +240,24 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
 
   return (
     <div className="space-y-4" data-testid="overdue-jobs">
-      <PageHead
-        title="Overdue"
-        className="mb-2"
-        sub={
-          <>
-            <SubDanger>
-              {totalOverdue} job{totalOverdue !== 1 ? "s" : ""} past their threshold
-            </SubDanger>
-            {SEVERITIES.filter((s) => counts[s] > 0).map((s) => (
-              <span key={s} className="inline-flex items-center gap-1.5">
-                <SubDot />
-                <span>
-                  {counts[s]} {SEVERITY_META[s].label.toLowerCase()}
-                </span>
-              </span>
-            ))}
-          </>
-        }
-      />
+      {/* Thin metadata line — topbar already says "Overdue" */}
+      <div className="flex items-center gap-2 flex-wrap text-[calc(13px*var(--ui-scale))] text-ink-mute tracking-[-0.005em]">
+        <span className="text-danger font-medium">
+          {totalOverdue} job{totalOverdue !== 1 ? "s" : ""} past their threshold
+        </span>
+        {SEVERITIES.filter((s) => counts[s] > 0).map((s) => (
+          <span key={s} className="inline-flex items-center gap-1.5">
+            <span className="text-ink-faint">·</span>
+            <span>
+              {counts[s]} {SEVERITY_META[s].label.toLowerCase()}
+            </span>
+          </span>
+        ))}
+      </div>
 
-      {/* Severity stat strip — clickable filter pills sized to the same
-          design tokens as the rest of the app. Each tile has a left rail
-          in the severity color so it reads as triage at a glance. */}
+      {/* Severity stat strip — clickable filter pills. Empty buckets are
+          neutral (no severity color) so a practice with zero "Critical"
+          jobs doesn't see a red tile shouting at them. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
         {SEVERITIES.map((severity) => {
           const meta = SEVERITY_META[severity];
@@ -320,9 +275,6 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
               className={cn(
                 "relative overflow-hidden text-left rounded-xl border border-line bg-panel pl-4 pr-3 py-3 transition-all",
                 "before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px]",
-                // Rail color only shows when the tile has jobs OR is the
-                // active filter — silent rails for empty buckets cuts
-                // visual noise from severities you don't have any of.
                 isActive || count > 0 ? meta.rail : "before:bg-line",
                 "hover:shadow-soft",
                 isActive && cn(meta.bg, "ring-1 ring-inset", meta.ring),
@@ -332,9 +284,6 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
               aria-pressed={isActive}
             >
               <div className="flex items-baseline justify-between">
-                {/* Count is only severity-tinted when the bucket has jobs
-                    in it, otherwise stays neutral so empty buckets don't
-                    pull the eye. */}
                 <span className={cn(
                   "text-[calc(24px*var(--ui-scale))] font-bold tabular-nums",
                   count > 0 ? meta.daysClass : "text-ink-mute",
@@ -358,10 +307,7 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
       </div>
 
       {/* Threshold pills — clickable filter toggles. Click one to scope
-          the list to jobs stuck in that status; click again (or "Clear")
-          to drop the filter. The active pill carries the otto-accent
-          treatment so the user can see at a glance which threshold is
-          driving the current view. */}
+          the list to jobs stuck in that status. */}
       {notificationRules.length > 0 && (
         <div className="flex items-start gap-2 flex-wrap text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
           <Tooltip>
@@ -386,9 +332,7 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
               <button
                 key={rule.id}
                 type="button"
-                onClick={() =>
-                  setStuckStatusFilter(active ? "all" : rule.status)
-                }
+                onClick={() => setStuckStatusFilter(active ? "all" : rule.status)}
                 aria-pressed={active}
                 className={cn(
                   "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 transition-colors",
@@ -431,274 +375,132 @@ export default function OverdueJobs({ jobs, searchQuery = "" }: OverdueJobsProps
 
       {filteredJobs.length === 0 ? (
         <div className="bg-panel border border-line rounded-xl px-6 py-10 text-center text-[calc(13px*var(--ui-scale))] text-ink-mute">
-          No jobs match the {priorityFilter} filter.
+          No jobs match the current filters.
           <Button
             size="sm"
             variant="link"
             className="ml-1.5 h-auto p-0 text-otto-accent-ink"
-            onClick={() => setPriorityFilter("all")}
+            onClick={() => {
+              setPriorityFilter("all");
+              setStuckStatusFilter("all");
+            }}
           >
-            Show all severities.
+            Clear filters.
           </Button>
         </div>
       ) : (
-        <div className="space-y-2.5">
-          {filteredJobs.map((job) => {
-            const severity = (job.severity as Severity) || "low";
-            const meta = SEVERITY_META[severity];
-            const Icon = meta.Icon;
-            const patientName = useTrayNumber
-              ? job.trayNumber || "Tray not set"
-              : formatPatientDisplayName(job.patientFirstName, job.patientLastName) || "Unnamed";
-            const statusLabel = getLabelFromSettings(customStatuses, job.status);
-            const jobTypeLabel = getLabelFromSettings(customJobTypes, job.jobType);
-            const destinationLabel = getLabelFromSettings(customOrderDestinations, job.orderDestination);
-            // destinationBadge is the only badge style still used (small
-            // colored dot next to the lab name); status + type colors are
-            // omitted to keep the card calm.
-            const destinationBadge = getDestinationBadgeStyle(job.orderDestination, customOrderDestinations as any);
+        /* Table view — five columns, one row per overdue job. Severity
+           reads from a colored dot in the leftmost column; everything else
+           is calmly typeset so the user's eye lands on the urgency signal
+           and the days-over count, not on five competing pill colors. The
+           inline Advance button is the most common remediation; clicking
+           anywhere else on the row opens the shared Job Details modal. */
+        <div className="bg-panel border border-line rounded-xl overflow-hidden">
+          <Table className="text-[calc(13px*var(--ui-scale))] [&_th]:h-[34px] [&_th]:px-[14px] [&_th]:text-[calc(10.5px*var(--ui-scale))] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-[0.10em] [&_th]:text-ink-mute [&_td]:px-[14px] [&_td]:py-2 [&_td]:h-[calc(48px*var(--ui-scale))] [&_td]:max-h-[calc(48px*var(--ui-scale))] [&_td]:align-middle [&_td]:overflow-hidden">
+            <TableHeader className="[&_tr]:border-b [&_tr]:border-line [&_th]:bg-panel">
+              <TableRow>
+                <TableHead className="w-[110px] text-left">Severity</TableHead>
+                <TableHead className="min-w-[160px] text-left">Patient</TableHead>
+                <TableHead className="min-w-[140px] text-left">Stuck in</TableHead>
+                <TableHead className="w-[100px] text-right tabular-nums">Days over</TableHead>
+                <TableHead className="w-[200px] text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredJobs.map((job) => {
+                const severity = (job.severity as Severity) || "low";
+                const meta = SEVERITY_META[severity];
+                const Icon = meta.Icon;
+                const patientName =
+                  formatPatientDisplayName(job.patientFirstName, job.patientLastName) ||
+                  job.trayNumber ||
+                  "Unnamed";
+                const statusLabel = getLabelFromSettings(customStatuses, job.status);
+                const trackStatuses = buildTrackStatuses(customStatuses);
+                const stepIdx = getStepIndex(trackStatuses, job.status);
+                const nextStatus =
+                  stepIdx >= 0 && stepIdx < trackStatuses.length - 1
+                    ? trackStatuses[stepIdx + 1]
+                    : null;
 
-            const trackStatuses = buildTrackStatuses(customStatuses);
-            const stepIdx = getStepIndex(trackStatuses, job.status);
-            const nextStatus =
-              stepIdx >= 0 && stepIdx < trackStatuses.length - 1 ? trackStatuses[stepIdx + 1] : null;
-            const ruleMaxDays = job.rule?.maxDays;
-            const stuckFor = (job.daysOverdue ?? 0) + (typeof ruleMaxDays === "number" ? ruleMaxDays : 0);
-
-            const initials =
-              (patientName || "?")
-                .split(" ")
-                .filter(Boolean)
-                .slice(0, 2)
-                .map((s: string) => s[0] || "")
-                .join("")
-                .toUpperCase() || "?";
-
-            return (
-              <div
-                key={job.id}
-                className={cn(
-                  "relative overflow-hidden bg-panel border border-line rounded-xl px-4 py-3",
-                  "before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px]",
-                  meta.rail,
-                  "hover:shadow-soft transition-shadow",
-                )}
-                data-testid={`overdue-job-${job.id}`}
-              >
-                <div className="flex items-start gap-3">
-                  {/* Avatar is intentionally neutral here — the severity
-                      rail + icon + tinted "X days over" text already carry
-                      the urgency. Tinting the avatar too would compete with
-                      that signal. */}
-                  <span
-                    className="w-9 h-9 rounded-full grid place-items-center text-[calc(11px*var(--ui-scale))] font-semibold tracking-wider shrink-0 bg-paper-2 text-ink-2 ring-1 ring-inset ring-line"
-                    aria-hidden
+                return (
+                  <TableRow
+                    key={job.id}
+                    className="cursor-pointer transition-colors border-b border-line-2 last:border-b-0 bg-panel hover:bg-panel-2"
+                    onClick={() => openJob(job as Job, "overview")}
+                    data-testid={`row-overdue-${job.id}`}
                   >
-                    {initials}
-                  </span>
-
-                  <div className="flex-1 min-w-0 space-y-1.5">
-                    {/* Top row — patient name only. Type / status / lab go
-                        on a quiet metadata line below so the eye lands on
-                        the name and the severity signal, not on six
-                        competing pill colors. */}
-                    <h3
-                      className="font-display text-[calc(15px*var(--ui-scale))] font-medium tracking-[-0.01em] text-ink m-0 leading-tight"
-                      data-testid={`text-patient-${job.id}`}
+                    <TableCell>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Icon className={cn("h-3.5 w-3.5 shrink-0", meta.iconClass)} aria-hidden />
+                        <span className={cn("font-medium", meta.daysClass)}>
+                          {meta.label}
+                        </span>
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="font-medium text-ink truncate block">
+                        {patientName}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className="border-0 bg-paper-2 text-ink-2">
+                        {statusLabel}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className={cn("font-medium tabular-nums", meta.daysClass)}>
+                        {job.daysOverdue}d
+                      </span>
+                    </TableCell>
+                    <TableCell
+                      className="text-right"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      {patientName}
-                    </h3>
-
-                    {/* Quiet metadata line — type / lab as muted text with
-                        a small destination dot. Status is intentionally
-                        omitted here because the severity line directly
-                        below repeats it ("stuck in <Status> for X days"). */}
-                    <div className="flex items-center gap-1.5 flex-wrap text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
-                      <span>{jobTypeLabel}</span>
-                      <span className="text-ink-faint">·</span>
-                      <span className="inline-flex items-center gap-1">
-                        <span
-                          className="w-1.5 h-1.5 rounded-full"
-                          style={{ backgroundColor: destinationBadge.text }}
-                          aria-hidden
-                        />
-                        {destinationLabel}
-                      </span>
-                    </div>
-
-                    {/* Severity line — leads with the icon + the human-readable
-                        "stuck for X days" rather than an opaque "Days Overdue"
-                        column. The status name is rendered in ink-2 (slightly
-                        stronger than ink-mute around it) so the eye still
-                        catches "which status" even without a colored badge. */}
-                    <div className="flex items-center gap-1.5 text-[calc(12.5px*var(--ui-scale))]">
-                      <Icon className={cn("h-3.5 w-3.5", meta.iconClass)} aria-hidden />
-                      <span className={cn("font-medium", meta.daysClass)}>
-                        {job.daysOverdue} day{job.daysOverdue === 1 ? "" : "s"} over
-                      </span>
-                      {typeof ruleMaxDays === "number" && (
-                        <span className="text-ink-mute">
-                          <span className="text-ink-faint mx-1">·</span>
-                          stuck in <span className="text-ink-2 font-medium">{statusLabel}</span> for {stuckFor} day{stuckFor === 1 ? "" : "s"}
-                          <span className="text-ink-faint mx-1">·</span>
-                          rule: max {ruleMaxDays}d
+                      {nextStatus ? (
+                        <Button
+                          size="sm"
+                          className="h-7 px-2.5 gap-1 text-[calc(12px*var(--ui-scale))]"
+                          onClick={() => handleStatusChange(job.id, nextStatus.id)}
+                          disabled={updateJobMutation.isPending}
+                          data-testid={`button-advance-${job.id}`}
+                        >
+                          Advance to {nextStatus.label}
+                          <ArrowRight className="h-3 w-3" />
+                        </Button>
+                      ) : (
+                        <span className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute italic">
+                          No next status
                         </span>
                       )}
-                    </div>
-
-                    {/* Lifecycle bar — visual answer to "where is this job?".
-                        Compact size matches the worklist row treatment. */}
-                    {customStatuses.length > 0 && (
-                      <div className="pt-0.5">
-                        <LifecycleTrack
-                          statuses={customStatuses as any}
-                          currentStatusId={job.status}
-                          interactive={false}
-                          hideLabel
-                          size="compact"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action stack on the right */}
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {nextStatus && (
-                      <Button
-                        size="sm"
-                        onClick={() => handleStatusChange(job.id, nextStatus.id)}
-                        disabled={updateJobMutation.isPending}
-                        data-testid={`button-advance-${job.id}`}
-                      >
-                        Advance to {nextStatus.label}
-                        <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
-                      </Button>
-                    )}
-
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          data-testid={`button-menu-${job.id}`}
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56">
-                        <DropdownMenuItem
-                          onSelect={() => {
-                            setNoteDialogJobId(job.id);
-                            setNoteContent("");
-                          }}
-                          data-testid={`menu-add-note-${job.id}`}
-                        >
-                          <MessageSquare className="h-4 w-4 mr-2" />
-                          Add note to thread
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onSelect={() => handleOpenDetails(job.id)}
-                          data-testid={`menu-open-${job.id}`}
-                        >
-                          <ArrowRight className="h-4 w-4 mr-2" />
-                          Open job details
-                        </DropdownMenuItem>
-                        {customStatuses.length > 0 && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuLabel className="text-[calc(10.5px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
-                              Set status
-                            </DropdownMenuLabel>
-                            {customStatuses.map((status: any) => (
-                              <DropdownMenuItem
-                                key={status.id}
-                                disabled={status.id === job.status}
-                                onSelect={() => handleStatusChange(job.id, status.id)}
-                                data-testid={`menu-status-${status.id}-${job.id}`}
-                              >
-                                <span
-                                  className="w-2 h-2 rounded-full mr-2.5"
-                                  style={{ backgroundColor: getStatusBadgeStyle(status.id, customStatuses as any).text }}
-                                  aria-hidden
-                                />
-                                {status.label}
-                                {status.id === job.status && (
-                                  <span className="ml-auto text-[calc(10px*var(--ui-scale))] text-ink-mute">
-                                    current
-                                  </span>
-                                )}
-                              </DropdownMenuItem>
-                            ))}
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-
-                {/* Latest activity timestamp footer — small, monospaced so it
-                    reads as data, not chrome. */}
-                <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-line-2 text-[calc(10.5px*var(--ui-scale))] text-ink-mute">
-                  <Hourglass className="h-3 w-3" aria-hidden />
-                  <span className="font-mono">
-                    Status set {format(new Date(job.statusChangedAt || job.createdAt), "MMM d · HH:mm")}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         </div>
       )}
 
-      {/* Add Note dialog — sticky-note styling matches the Job Details
-          modal Notes block + Important page note dialog. */}
-      <Dialog open={!!noteDialogJobId} onOpenChange={(open) => !open && setNoteDialogJobId(null)}>
-        <DialogContent className="w-full max-w-xl">
-          <DialogHeader>
-            <DialogTitle asChild>
-              <div className="flex items-center gap-2">
-                <StickyNote className="h-4 w-4 text-warn" />
-                <h3 className="font-display text-[calc(18px*var(--ui-scale))] font-medium tracking-[-0.02em] text-ink m-0">
-                  Add overdue note
-                </h3>
-              </div>
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute">
-              Note goes into the job&rsquo;s comments thread so the rest of your
-              team sees the context.
-            </p>
-            <Textarea
-              placeholder="What's the holdup? e.g. waiting on lab confirmation, patient hasn't picked up the phone…"
-              value={noteContent}
-              onChange={(e) => setNoteContent(e.target.value)}
-              rows={5}
-              className="resize-none bg-warn-bg/30 border-warn/20 focus-visible:ring-warn/40"
-              data-testid="textarea-overdue-note"
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setNoteDialogJobId(null)}
-              data-testid="button-cancel-note"
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleSubmitNote}
-              disabled={!noteContent.trim() || addNoteMutation.isPending}
-              data-testid="button-submit-note"
-            >
-              {addNoteMutation.isPending ? "Adding…" : "Add note"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Job Details modal mounted in place — clicking a row opens it
+          without navigating to the Worklist. */}
+      {selectedJobForDetails && (
+        <JobDetailsModal
+          open={jobDetailsOpen}
+          onOpenChange={setJobDetailsOpen}
+          job={selectedJobForDetails}
+          activeTab={jobDetailsTab}
+          onActiveTabChange={setJobDetailsTab}
+          onEditJob={handleStartEditingJob}
+          overdueJobIds={overdueJobIds}
+        />
+      )}
+
+      <JobDialog
+        open={jobDialogOpen}
+        onOpenChange={setJobDialogOpen}
+        job={editingJob}
+      />
     </div>
   );
 }

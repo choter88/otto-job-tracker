@@ -210,9 +210,9 @@ export default function AnalyticsDashboard() {
 
   const destinationOptions = useMemo(() => {
     const defaults = [
-      { id: "vision_lab", label: "Vision Lab", order: 1 },
-      { id: "eyetech_labs", label: "EyeTech Labs", order: 2 },
-      { id: "premium_optics", label: "Premium Optics", order: 3 },
+      { id: "hoya", label: "Hoya", order: 1 },
+      { id: "essilor", label: "Essilor", order: 2 },
+      { id: "zeiss", label: "Zeiss", order: 3 },
     ].map((d) => ({ value: d.id, label: d.label }));
 
     const fromSettings = customOrderDestinations

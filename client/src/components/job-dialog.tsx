@@ -503,9 +503,9 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                           ))
                         ) : (
                           <>
-                            <SelectItem value="job_created">Job Created</SelectItem>
+                            <SelectItem value="job_created">Created</SelectItem>
                             <SelectItem value="ordered">Ordered</SelectItem>
-                            <SelectItem value="in_progress">In Progress</SelectItem>
+                            <SelectItem value="in_progress">Lab Processing</SelectItem>
                             <SelectItem value="quality_check">Quality Check</SelectItem>
                             <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
                           </>
@@ -540,9 +540,9 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                           ))
                         ) : (
                           <>
-                            <SelectItem value="Vision Lab">Vision Lab</SelectItem>
-                            <SelectItem value="EyeTech Labs">EyeTech Labs</SelectItem>
-                            <SelectItem value="Premium Optics">Premium Optics</SelectItem>
+                            <SelectItem value="hoya">Hoya</SelectItem>
+                            <SelectItem value="essilor">Essilor</SelectItem>
+                            <SelectItem value="zeiss">Zeiss</SelectItem>
                           </>
                         )}
                       </SelectContent>

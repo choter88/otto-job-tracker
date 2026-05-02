@@ -49,12 +49,12 @@ interface JobsTableProps {
 // today since createOffice seeds defaults, but kept as a safety net for
 // older offices upgraded from versions before custom statuses).
 const DEFAULT_STATUSES_FALLBACK = [
-  { id: "job_created", label: "Job Created", order: 1 },
+  { id: "job_created", label: "Created", order: 1 },
   { id: "ordered", label: "Ordered", order: 2 },
-  { id: "in_progress", label: "In Progress", order: 3 },
+  { id: "in_progress", label: "Lab Processing", order: 3 },
   { id: "quality_check", label: "Quality Check", order: 4 },
   { id: "ready_for_pickup", label: "Ready for Pickup", order: 5 },
-  { id: "completed", label: "Completed", order: 6 },
+  { id: "completed", label: "Dispensed", order: 6 },
   { id: "cancelled", label: "Cancelled", order: 7 },
 ];
 
@@ -956,9 +956,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             the chosen label); the action buttons use fixed widths sized for
             their longest possible label + count badge ("Cancel (12)"). */}
         <div className="flex items-center gap-2 mb-3 flex-wrap">
-          {/* Search — clear-X appears on the right when there's a value so
-              the user has a one-click way out without selecting + deleting. */}
-          <div className="relative flex-1 max-w-[320px] min-w-[180px]">
+          {/* Search — fixed width so the bar never resizes when other
+              toolbar elements grow/shrink (Filters count badge appearing
+              etc.). flex-wrap on the parent handles narrow viewports.
+              Clear-X appears on the right when there's a value so the
+              user has a one-click way out without selecting + deleting. */}
+          <div className="relative w-[280px] shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-[14px] w-[14px] text-ink-mute pointer-events-none" />
             <Input
               placeholder={useTrayNumber ? "Search trays, phone…" : "Search patients, phone…"}
@@ -1019,53 +1022,48 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               (destinationFilter !== "all" ? 1 : 0) +
               Object.values(customColumnFilters).filter((v) => v != null && v !== "").length;
             const filterLabelClass = "text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold mb-1.5 block";
+            const clearAllFilters = () => {
+              setStatusFilter("all");
+              setTypeFilter("all");
+              setDestinationFilter("all");
+              setCustomColumnFilters({});
+            };
             return (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                      "h-[30px] gap-1.5 px-3 text-[calc(12.5px*var(--ui-scale))]",
-                      activeFilterCount > 0 &&
-                        "border-otto-accent-line bg-otto-accent-soft text-otto-accent-ink hover:bg-otto-accent-soft hover:text-otto-accent-ink",
-                    )}
-                    data-testid="button-filters-trigger"
-                  >
-                    <ListFilter className="h-3.5 w-3.5" />
-                    Filters
-                    {activeFilterCount > 0 && (
-                      <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-otto-accent text-white text-[calc(10px*var(--ui-scale))] px-1 font-semibold tabular-nums">
-                        {activeFilterCount}
-                      </span>
-                    )}
-                    <ChevronDown className="h-3 w-3 opacity-60" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-72 p-3" data-testid="popover-filters">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
+              <>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    {/* Fixed width so the count badge appearing/disappearing
+                        doesn't grow the trigger and reflow neighboring
+                        elements. Width is sized to fit the wide-state
+                        ("Filters [99] ▾") with justify-start so contents
+                        stay left-aligned in either state. */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={cn(
+                        "h-[30px] w-[110px] gap-1.5 px-3 text-[calc(12.5px*var(--ui-scale))] justify-start",
+                        activeFilterCount > 0 &&
+                          "border-otto-accent-line bg-otto-accent-soft text-otto-accent-ink hover:bg-otto-accent-soft hover:text-otto-accent-ink",
+                      )}
+                      data-testid="button-filters-trigger"
+                    >
+                      <ListFilter className="h-3.5 w-3.5 shrink-0" />
+                      <span className="flex-1 text-left">Filters</span>
+                      {activeFilterCount > 0 && (
+                        <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-otto-accent text-white text-[calc(10px*var(--ui-scale))] px-1 font-semibold tabular-nums shrink-0">
+                          {activeFilterCount}
+                        </span>
+                      )}
+                      <ChevronDown className="h-3 w-3 opacity-60 shrink-0" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-72 p-3" data-testid="popover-filters">
+                    <div className="space-y-3">
                       <h4 className="font-display text-[calc(15px*var(--ui-scale))] font-medium tracking-[-0.01em] text-ink m-0">
                         Filter jobs
                       </h4>
-                      {activeFilterCount > 0 && (
-                        <button
-                          type="button"
-                          className="text-[calc(11.5px*var(--ui-scale))] text-otto-accent-ink hover:text-otto-accent-strong"
-                          onClick={() => {
-                            setStatusFilter("all");
-                            setTypeFilter("all");
-                            setDestinationFilter("all");
-                            setCustomColumnFilters({});
-                          }}
-                          data-testid="button-clear-filters"
-                        >
-                          Clear all
-                        </button>
-                      )}
-                    </div>
 
-                    <div>
+                      <div>
                       <Label className={filterLabelClass}>Status</Label>
                       <Select value={statusFilter} onValueChange={setStatusFilter}>
                         <SelectTrigger className="h-9 w-full" data-testid="select-status-filter">
@@ -1074,9 +1072,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         <SelectContent>
                           <SelectItem value="all">All statuses</SelectItem>
                           {(customStatuses.length > 0 ? customStatuses : [
-                            { id: "job_created", label: "Job Created" },
+                            { id: "job_created", label: "Created" },
                             { id: "ordered", label: "Ordered" },
-                            { id: "in_progress", label: "In Progress" },
+                            { id: "in_progress", label: "Lab Processing" },
                             { id: "ready_for_pickup", label: "Ready for Pickup" },
                           ]).map((s: any) => (
                             <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
@@ -1113,9 +1111,9 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                         <SelectContent>
                           <SelectItem value="all">All labs</SelectItem>
                           {(customOrderDestinations.length > 0 ? customOrderDestinations : [
-                            { id: "Vision Lab", label: "Vision Lab" },
-                            { id: "EyeTech Labs", label: "EyeTech Labs" },
-                            { id: "Premium Optics", label: "Premium Optics" },
+                            { id: "hoya", label: "Hoya" },
+                            { id: "essilor", label: "Essilor" },
+                            { id: "zeiss", label: "Zeiss" },
                           ]).map((d: any) => (
                             <SelectItem key={d.id} value={d.label || d.id}>{d.label || d.id}</SelectItem>
                           ))}
@@ -1125,6 +1123,23 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   </div>
                 </PopoverContent>
               </Popover>
+              {/* Clear-all lives outside the popover so users can drop
+                  every active filter without opening it. Only renders
+                  when filters are applied; the absence-of-button case
+                  is fine because there's nothing to clear. */}
+              {activeFilterCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearAllFilters}
+                  className="h-[30px] px-2 gap-1 text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-ink"
+                  data-testid="button-clear-filters"
+                >
+                  <X className="h-3 w-3" />
+                  Clear
+                </Button>
+              )}
+              </>
             );
           })()}
 
@@ -1232,11 +1247,11 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                   </SelectTrigger>
                   <SelectContent>
                     {(customStatuses.length > 0 ? customStatuses : [
-                      { id: "job_created", label: "Job Created" },
+                      { id: "job_created", label: "Created" },
                       { id: "ordered", label: "Ordered" },
-                      { id: "in_progress", label: "In Progress" },
+                      { id: "in_progress", label: "Lab Processing" },
                       { id: "ready_for_pickup", label: "Ready for Pickup" },
-                      { id: "completed", label: "Completed" },
+                      { id: "completed", label: "Dispensed" },
                       { id: "cancelled", label: "Cancelled" },
                     ]).map((s: any) => (
                       <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
@@ -1283,14 +1298,46 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </div>
         )}
 
-        {/* Jobs Table — clean white surface, hairline rows, mockup-aligned typography */}
+        {/* Jobs Table — clean white surface, hairline rows, mockup-aligned typography.
+            When the user enters Select / Link mode, the wrapper picks up
+            an otto-accent border + soft outer glow and a header strip
+            appears with mode-specific instructions. The visual change
+            tells the user "this is where to focus" without needing to
+            read the bulk-action bar at the bottom. */}
         <div
           ref={(el) => {
             tableViewportRef.current = el;
             setTableEl(el);
           }}
-          className="bg-panel rounded-lg border border-line overflow-hidden"
+          className={cn(
+            "bg-panel rounded-lg overflow-hidden transition-shadow",
+            (selectionMode || linkMode)
+              ? "border-2 border-otto-accent shadow-[0_0_0_4px_var(--otto-accent-soft)]"
+              : "border border-line",
+          )}
         >
+          {(selectionMode || linkMode) && (
+            <div
+              className="flex items-center gap-2 px-4 py-2 bg-otto-accent-soft border-b border-otto-accent-line text-[calc(12.5px*var(--ui-scale))] text-otto-accent-ink font-medium"
+              data-testid="table-mode-strip"
+            >
+              {selectionMode ? (
+                <CheckSquare className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <Link2 className="h-3.5 w-3.5" aria-hidden />
+              )}
+              <span>
+                {selectionMode
+                  ? "Select jobs by clicking any row"
+                  : "Link jobs by clicking rows to add them to the group"}
+              </span>
+              <span className="text-otto-accent-ink/70 ml-auto text-[calc(11.5px*var(--ui-scale))] font-normal">
+                {selectedJobs.length > 0
+                  ? `${selectedJobs.length} selected`
+                  : "Nothing selected yet"}
+              </span>
+            </div>
+          )}
           {/* Cell heights are pinned to two rows of leading-tight body text
               + vertical padding, scaled by --ui-scale so the row grows with
               the user's font-size preference but never extends to a third

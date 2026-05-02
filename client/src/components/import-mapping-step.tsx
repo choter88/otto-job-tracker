@@ -25,12 +25,12 @@ interface ImportMappingStepProps {
 }
 
 const DEFAULT_STATUSES = [
-  { id: "job_created", label: "Job Created" },
+  { id: "job_created", label: "Created" },
   { id: "ordered", label: "Ordered" },
-  { id: "in_progress", label: "In Progress" },
+  { id: "in_progress", label: "Lab Processing" },
   { id: "quality_check", label: "Quality Check" },
   { id: "ready_for_pickup", label: "Ready for Pickup" },
-  { id: "completed", label: "Completed" },
+  { id: "completed", label: "Dispensed" },
   { id: "cancelled", label: "Cancelled" },
 ];
 

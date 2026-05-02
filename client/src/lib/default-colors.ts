@@ -62,11 +62,14 @@ export function chooseHighContrastColor(existingColors: string[]) {
   return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
-// Job Status Default Colors
+// Job Status Default Colors. Keep IDs stable (job_created, in_progress,
+// completed) — they're stored on every job row + referenced by lifecycle
+// helpers and terminal-status checks. Labels are user-facing and can change
+// freely without breaking existing data.
 export const DEFAULT_STATUS_COLORS: ColorDefinition[] = [
   {
     id: 'job_created',
-    label: 'Job Created',
+    label: 'Created',
     hsl: hexToHSL('#2563EB'),
     hex: '#2563EB',
     order: 1
@@ -80,7 +83,7 @@ export const DEFAULT_STATUS_COLORS: ColorDefinition[] = [
   },
   {
     id: 'in_progress',
-    label: 'In Progress',
+    label: 'Lab Processing',
     hsl: hexToHSL('#0284C7'),
     hex: '#0284C7',
     order: 3
@@ -101,7 +104,7 @@ export const DEFAULT_STATUS_COLORS: ColorDefinition[] = [
   },
   {
     id: 'completed',
-    label: 'Completed',
+    label: 'Dispensed',
     hsl: hexToHSL('#059669'),
     hex: '#059669',
     order: 6
@@ -147,29 +150,19 @@ export const DEFAULT_JOB_TYPE_COLORS: ColorDefinition[] = [
   }
 ];
 
-// Destination Default Colors
+// Destination Default Colors — major optical labs / contact lens vendors.
+// Existing offices with custom destinations keep theirs (settings merge in
+// settings-modal.tsx prefers existing customOrderDestinations). New offices
+// seed from this list.
 export const DEFAULT_DESTINATION_COLORS: ColorDefinition[] = [
-  {
-    id: 'vision_lab',
-    label: 'Vision Lab',
-    hsl: hexToHSL('#0284C7'),
-    hex: '#0284C7',
-    order: 1
-  },
-  {
-    id: 'eyetech_labs',
-    label: 'EyeTech Labs',
-    hsl: hexToHSL('#16A34A'),
-    hex: '#16A34A',
-    order: 2
-  },
-  {
-    id: 'premium_optics',
-    label: 'Premium Optics',
-    hsl: hexToHSL('#D97706'),
-    hex: '#D97706',
-    order: 3
-  }
+  { id: 'hoya', label: 'Hoya', hsl: hexToHSL('#0284C7'), hex: '#0284C7', order: 1 },
+  { id: 'essilor', label: 'Essilor', hsl: hexToHSL('#16A34A'), hex: '#16A34A', order: 2 },
+  { id: 'zeiss', label: 'Zeiss', hsl: hexToHSL('#7C3AED'), hex: '#7C3AED', order: 3 },
+  { id: 'abb', label: 'ABB', hsl: hexToHSL('#4F46E5'), hex: '#4F46E5', order: 4 },
+  { id: 'alcon', label: 'Alcon', hsl: hexToHSL('#DC2626'), hex: '#DC2626', order: 5 },
+  { id: 'coopervision', label: 'CooperVision', hsl: hexToHSL('#0891B2'), hex: '#0891B2', order: 6 },
+  { id: 'jj_vision', label: 'J&J Vision', hsl: hexToHSL('#D97706'), hex: '#D97706', order: 7 },
+  { id: 'bausch_lomb', label: 'B+L', hsl: hexToHSL('#65A30D'), hex: '#65A30D', order: 8 },
 ];
 
 // Helper function to get default color by ID
