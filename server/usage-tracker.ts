@@ -98,6 +98,19 @@ export type UsageEventSource = "app" | "tablet";
 let insertStmt: ReturnType<typeof db.insert> | null = null;
 
 /**
+ * Wall-clock time (ms) of the most recent tracked event since this process
+ * started. Used by the license check-in scheduler as an idle signal —
+ * "nothing has happened, no point talking to the portal." Reset to 0 on
+ * process restart, so the first scheduled check-in after launch always
+ * runs (it bypasses this gate via the startup path).
+ */
+let lastEventAt = 0;
+
+export function getLastEventAt(): number {
+  return lastEventAt;
+}
+
+/**
  * Track a usage event. Writes directly to SQLite on every call.
  * No in-memory buffering — events persist immediately and survive
  * crashes, restarts, and auto-updater cycles without data loss.
@@ -121,6 +134,7 @@ export function trackEvent(opts: {
       metadata: opts.metadata ?? {},
       createdAt: new Date(),
     }).run();
+    lastEventAt = Date.now();
   } catch {
     // Non-critical — never fail the caller
   }

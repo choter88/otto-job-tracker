@@ -285,19 +285,24 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
  * 1. MINIMUM_INTERVAL (2 min) — hard floor between any two check-in attempts
  *    to prevent flooding the portal during error loops or rapid restarts.
  *
- * 2. ROUTINE_INTERVAL (30 min) — normal cadence during active hours. Frequent
- *    enough for fresh analytics without excessive load.
+ * 2. ROUTINE_INTERVAL (30 min) — normal cadence when the office is active.
+ *    Frequent enough for fresh analytics without excessive load.
  *
- * 3. Active hours: 7am–9pm local time. Outside this window, check-ins are
- *    skipped entirely (office is closed, no new data to send).
+ * 3. Idle gate: once we've already checked in after the most recent tracked
+ *    event, there's nothing new to ship — skip until activity resumes.
+ *    HEARTBEAT_INTERVAL puts a ceiling on how long a powered-on but idle
+ *    host can go without pinging the portal so the dashboard's "host
+ *    healthy" indicator stays current.
  *
  * 4. On startup: first check-in fires after 10 seconds, subject only to the
- *    2-minute minimum interval — NOT the 30-minute routine interval. This
- *    ensures a freshly launched app checks in quickly.
+ *    2-minute minimum interval — NOT the routine interval or idle gate.
+ *    This ensures a freshly launched app syncs quickly even before any
+ *    user activity has been recorded.
  */
-const MINIMUM_INTERVAL_MS = 1000 * 60 * 2;   // 2 minutes — hard floor
-const ROUTINE_INTERVAL_MS = 1000 * 60 * 30;  // 30 minutes — normal cadence
-const POLL_INTERVAL_MS    = 1000 * 60 * 5;   // 5 minutes — how often we evaluate
+const MINIMUM_INTERVAL_MS  = 1000 * 60 * 2;        // 2 minutes — hard floor
+const ROUTINE_INTERVAL_MS  = 1000 * 60 * 30;       // 30 minutes — normal cadence
+const HEARTBEAT_INTERVAL_MS = 1000 * 60 * 60 * 4;  // 4 hours — idle ceiling
+const POLL_INTERVAL_MS     = 1000 * 60 * 5;        // 5 minutes — how often we evaluate
 
 async function maybeCheckin(isStartup = false): Promise<void> {
   const current = getState();
@@ -312,15 +317,25 @@ async function maybeCheckin(isStartup = false): Promise<void> {
     return;
   }
 
-  // Active hours: 7am–9pm local time
-  const localHour = new Date(now).getHours();
-  if (localHour < 7 || localHour >= 21) { logToFile(`[checkin] Skipped: outside active hours (${localHour}h)`); return; }
-
-  // Routine cadence: every 30 minutes (startup bypasses this)
   if (!isStartup) {
     const lastOk = typeof current.lastSuccessfulCheckinAt === "number" ? current.lastSuccessfulCheckinAt : 0;
-    if (lastOk && now + (current.serverTimeOffsetMs || 0) - lastOk < ROUTINE_INTERVAL_MS) {
+    const sinceLastOk = lastOk ? now + (current.serverTimeOffsetMs || 0) - lastOk : Infinity;
+
+    // Routine cadence: don't check in more often than every 30 minutes
+    if (sinceLastOk < ROUTINE_INTERVAL_MS) {
       return; // Silent skip — routine interval not yet reached
+    }
+
+    // Idle gate: if nothing has been tracked since the last successful
+    // check-in, there's nothing new to ship. Skip until activity resumes
+    // OR the heartbeat ceiling is hit (so dashboard "last seen" stays
+    // current for powered-on but unused machines).
+    const { getLastEventAt } = await import("./usage-tracker");
+    const lastEvent = getLastEventAt();
+    const idleSinceLastOk = lastOk > 0 && lastEvent <= lastOk;
+    if (idleSinceLastOk && sinceLastOk < HEARTBEAT_INTERVAL_MS) {
+      logToFile(`[checkin] Skipped: idle (no events since last check-in ${Math.round(sinceLastOk / 60000)}min ago)`);
+      return;
     }
   }
 
