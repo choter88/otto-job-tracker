@@ -52,6 +52,9 @@ export async function notifyJobStatusChange(
 
     debugLog(`[notifyJobStatusChange] created=${notifications.length}`);
 
+    if (notifications.length > 0) {
+      broadcastToOffice(job.officeId, { type: "office_updated", ts: Date.now(), source: "status_change" });
+    }
   } catch (error) {
     console.error("Error sending job status change notifications:", error);
     // Notification delivery is best-effort and should not fail job updates.
@@ -65,21 +68,35 @@ export async function notifyNewComment(
   storage: IStorage
 ): Promise<void> {
   try {
-    // Only notify users who have flagged this job as important
-    const flaggedBy = await storage.getJobFlaggedBy(job.id);
-    const recipientIds = flaggedBy
-      .map(f => f.userId)
-      .filter(id => id !== author.id);
+    // Recipient set = "everyone with skin in the game on this job":
+    //   - the job's creator
+    //   - everyone who has commented on this job before (the conversation
+    //     thread)
+    //   - everyone who has starred it
+    // …minus the author, who already knows.
+    //
+    // This was previously only "users who starred the job", which is why
+    // a comment correctly bumped the per-job comment bubble but never
+    // produced a notification for the creator or other participants.
+    const [flaggedBy, allComments] = await Promise.all([
+      storage.getJobFlaggedBy(job.id),
+      storage.getJobComments(job.id),
+    ]);
+    const recipientSet = new Set<string>();
+    if (job.createdBy) recipientSet.add(job.createdBy);
+    for (const f of flaggedBy) recipientSet.add(f.userId);
+    for (const c of allComments) recipientSet.add(c.authorId);
+    recipientSet.delete(author.id);
 
-    if (recipientIds.length === 0) return;
+    if (recipientSet.size === 0) return;
 
     const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
     const truncatedContent = comment.content.length > 100
       ? `${comment.content.substring(0, 100)}...`
       : comment.content;
 
-    await Promise.all(
-      recipientIds.map(userId =>
+    const created = await Promise.all(
+      Array.from(recipientSet).map((userId) =>
         storage.createNotification({
           userId,
           type: "comment",
@@ -90,14 +107,70 @@ export async function notifyNewComment(
           actorId: author.id,
           metadata: {
             commentId: comment.id,
-            orderId: job.orderId
-          }
-        })
-      )
+            orderId: job.orderId,
+          },
+        }),
+      ),
     );
 
+    // Tell every connected client to refetch — the bell's unread-count
+    // query invalidates on office_updated, so badges update without
+    // waiting for the 30s poll.
+    if (created.length > 0) {
+      broadcastToOffice(job.officeId, { type: "office_updated", ts: Date.now(), source: "comment" });
+    }
   } catch (error) {
     console.error("Error sending new comment notifications:", error);
+  }
+}
+
+export async function notifyJobStarred(
+  job: Job,
+  starredBy: User,
+  storage: IStorage,
+  importantNote?: string,
+): Promise<void> {
+  try {
+    // Notify every other user in the office. Starring is a "this job
+    // matters, please pay attention" signal; the team-wide notification
+    // is the whole point of the feature.
+    const officeUsers = await storage.getUsersInOffice(job.officeId);
+    const recipients = officeUsers.filter((u) => u.id !== starredBy.id);
+    if (recipients.length === 0) return;
+
+    const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
+    const noteSnippet = importantNote && importantNote.trim()
+      ? importantNote.trim().length > 100
+        ? `${importantNote.trim().substring(0, 100)}…`
+        : importantNote.trim()
+      : null;
+    const message = noteSnippet
+      ? `${starredBy.firstName} starred this — "${noteSnippet}"`
+      : `${starredBy.firstName} starred this job`;
+
+    const created = await Promise.all(
+      recipients.map((user) =>
+        storage.createNotification({
+          userId: user.id,
+          type: "team_update",
+          title: `${patientName} — starred`,
+          message,
+          jobId: job.id,
+          linkTo: `/jobs/${job.id}`,
+          actorId: starredBy.id,
+          metadata: {
+            orderId: job.orderId,
+            importantNote: importantNote ?? null,
+          },
+        }),
+      ),
+    );
+
+    if (created.length > 0) {
+      broadcastToOffice(job.officeId, { type: "office_updated", ts: Date.now(), source: "job_flagged" });
+    }
+  } catch (error) {
+    console.error("Error sending star-job notifications:", error);
   }
 }
 

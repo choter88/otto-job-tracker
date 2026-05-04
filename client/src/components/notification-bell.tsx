@@ -16,8 +16,19 @@ export default function NotificationBell() {
   const [, setLocation] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
 
+  // Poll the unread count so the badge stays current without requiring the
+  // user to open the popover. The default queryClient has staleTime: Infinity
+  // and refetchInterval: false, so without an explicit interval here the
+  // count would only update when the popover is opened (which invalidates
+  // the query). 30s is a small-office friendly cadence — the WebSocket
+  // sync-manager also invalidates everything on `office_updated`, so any
+  // notification that broadcasts that message refreshes immediately; this
+  // poll catches notifications that don't broadcast (or arrive while the WS
+  // is reconnecting).
   const { data: unreadCountData } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
   });
 
   const unreadCount = unreadCountData?.count || 0;

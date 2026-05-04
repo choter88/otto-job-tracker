@@ -30,7 +30,7 @@ import {
 } from "@shared/schema";
 import { sendSMS } from "./twilioClient";
 import { requireAdmin, requireAuth, requireNotViewOnly, requireOffice, requireRole, requireSameOfficeParam } from "./middleware";
-import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob } from "./notification-service";
+import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob, notifyJobStarred } from "./notification-service";
 import {
   generateJobSummary,
   checkAndRegenerateSummary,
@@ -750,6 +750,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
             }),
           ),
         );
+        // Tell every connected client to refetch — the bell's unread-count
+        // query invalidates on office_updated, so approvers see the badge
+        // increment without waiting for the 30s poll.
+        if (approvers.length > 0) {
+          broadcastToOffice(office.id, { type: "office_updated", ts: Date.now(), source: "account_request" });
+        }
       } catch (notifyError) {
         console.error("Failed to notify approvers about client registration:", notifyError);
       }
@@ -1797,6 +1803,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (importantNote) {
         await storage.updateJobFlagImportantNote(getAuthUser(req).id, req.params.jobId, importantNote);
       }
+
+      // Notify the rest of the office. Starring is the explicit "this
+      // matters, please pay attention" signal — surface it on every
+      // teammate's bell, not just on the Starred page.
+      await notifyJobStarred(job, getAuthUser(req), storage, importantNote || undefined);
 
       const shouldGenerateAiSummary = isAiSummaryEnabled();
 
