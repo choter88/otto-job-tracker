@@ -9,8 +9,10 @@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { ShieldCheck, Share2 } from "lucide-react";
 import { useMemo } from "react";
+import { cn } from "@/lib/utils";
 
 const PATIENT_FACING_STATUS_LABELS: Record<string, string> = {
   job_created: "Order received",
@@ -39,17 +41,21 @@ export interface TrackingLinkDefaults {
   // placeholders. PHI never goes through this template — it's the office's
   // own outbound voice, not the patient page itself.
   messageTemplate?: string;
+  // Per-job-type overrides for visible statuses. Falls back to the global
+  // `visibleStatuses` for any type not present here.
+  byJobType?: Record<string, { visibleStatuses?: string[] }>;
 }
 
 export const DEFAULT_MESSAGE_TEMPLATE = "Hi! Here's a link to follow your order: {url}";
 
 interface Props {
   customStatuses: { id: string; label: string; color: string; order: number }[];
+  customJobTypes: { id: string; label: string; color: string; order: number }[];
   value: TrackingLinkDefaults;
   onChange: (next: TrackingLinkDefaults) => void;
 }
 
-export default function TrackingLinkDefaultsEditor({ customStatuses, value, onChange }: Props) {
+export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTypes, value, onChange }: Props) {
   const visible = useMemo(
     () => (Array.isArray(value.visibleStatuses) && value.visibleStatuses.length > 0
       ? value.visibleStatuses
@@ -124,6 +130,14 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, value, onCh
         </div>
       </section>
 
+      <PerJobTypeOverridesSection
+        customStatuses={customStatuses}
+        customJobTypes={customJobTypes}
+        globalDefault={visible}
+        byJobType={value.byJobType ?? {}}
+        onChange={(next) => onChange({ ...value, byJobType: next })}
+      />
+
       <section>
         <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
           Default note (optional)
@@ -166,6 +180,107 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, value, onCh
         </div>
       </section>
     </div>
+  );
+}
+
+// Per-job-type override section. Per-type overrides are opt-in: each row
+// has a switch. When off, that type uses the global default. When on, the
+// office picks per-type visible statuses. Patient-facing labels still
+// resolve through Otto's static map first; this only changes which
+// statuses are listed.
+function PerJobTypeOverridesSection({
+  customStatuses,
+  customJobTypes,
+  globalDefault,
+  byJobType,
+  onChange,
+}: {
+  customStatuses: { id: string; label: string; color: string; order: number }[];
+  customJobTypes: { id: string; label: string; color: string; order: number }[];
+  globalDefault: string[];
+  byJobType: Record<string, { visibleStatuses?: string[] }>;
+  onChange: (next: Record<string, { visibleStatuses?: string[] }>) => void;
+}) {
+  const sortedTypes = useMemo(
+    () => customJobTypes.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    [customJobTypes],
+  );
+  const orderedStatuses = customStatuses.filter((s) => s.id !== "delayed");
+
+  if (sortedTypes.length === 0) return null;
+
+  return (
+    <section>
+      <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
+        Different defaults by job type (optional)
+      </Label>
+      <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1 mb-2.5">
+        Override the global default per job type. Useful when, e.g., contacts skip a "Quality Check" stage that glasses go through.
+      </p>
+      <div className="rounded-lg border border-line bg-panel divide-y divide-line-2" data-testid="tracking-defaults-by-job-type">
+        {sortedTypes.map((t) => {
+          const entry = byJobType[t.id];
+          const overrideOn = Array.isArray(entry?.visibleStatuses);
+          const effective = overrideOn ? (entry!.visibleStatuses as string[]) : globalDefault;
+          const effectiveSet = new Set(effective);
+          return (
+            <div key={t.id} className="px-3 py-2.5">
+              <div className="flex items-center gap-3">
+                <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: t.color }} aria-hidden />
+                <span className="text-[calc(13px*var(--ui-scale))] font-medium text-ink min-w-[120px]">{t.label}</span>
+                <span className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute flex-1 truncate">
+                  {overrideOn
+                    ? `Custom — ${effective.length} status${effective.length === 1 ? "" : "es"}`
+                    : "Using global default"}
+                </span>
+                <Switch
+                  checked={overrideOn}
+                  onCheckedChange={(v) => {
+                    const next = { ...byJobType };
+                    if (v) {
+                      next[t.id] = { visibleStatuses: globalDefault };
+                    } else {
+                      delete next[t.id];
+                    }
+                    onChange(next);
+                  }}
+                  aria-label={`Override defaults for ${t.label}`}
+                />
+              </div>
+              {overrideOn && (
+                <div className={cn("mt-2 ml-5 grid grid-cols-2 gap-x-3 gap-y-1.5")}>
+                  {orderedStatuses.map((s) => {
+                    const checked = effectiveSet.has(s.id);
+                    const id = `vis-${t.id}-${s.id}`;
+                    return (
+                      <label
+                        key={s.id}
+                        htmlFor={id}
+                        className="flex items-center gap-2 cursor-pointer text-[calc(12.5px*var(--ui-scale))] text-ink"
+                      >
+                        <Checkbox
+                          id={id}
+                          checked={checked}
+                          onCheckedChange={(v) => {
+                            const current = effective;
+                            const nextList = v
+                              ? Array.from(new Set([...current, s.id]))
+                              : current.filter((x) => x !== s.id);
+                            onChange({ ...byJobType, [t.id]: { visibleStatuses: nextList } });
+                          }}
+                        />
+                        <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: s.color }} aria-hidden />
+                        <span>{s.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

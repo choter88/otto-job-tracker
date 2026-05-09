@@ -38,6 +38,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -61,6 +66,7 @@ import {
   Plus,
   MessageSquare,
   Sparkles,
+  Sliders,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { renderMessageTemplate } from "@/components/customization/tracking-link-defaults-editor";
@@ -128,6 +134,34 @@ interface EtaSuggestion {
   medianDays?: number;
 }
 
+// Compute the union of default visible statuses for a set of jobs, taking
+// per-job-type overrides from office settings into account. If every job
+// shares a type and that type has an override, use it; otherwise union
+// across types so the patient sees every stage that any job will go
+// through. Caller can still narrow per-link via the customize panel.
+function computeDefaultVisibleStatuses(
+  selectedJobTypes: string[],
+  globalDefault: string[],
+  byJobType: Record<string, { visibleStatuses?: string[] } | undefined> | undefined,
+): string[] {
+  if (selectedJobTypes.length === 0) return globalDefault;
+  const typed = byJobType ?? {};
+  const out = new Set<string>();
+  const uniqueTypes: string[] = [];
+  const seen = new Set<string>();
+  for (const t of selectedJobTypes) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    uniqueTypes.push(t);
+  }
+  for (const t of uniqueTypes) {
+    const override = typed[t]?.visibleStatuses;
+    const list = Array.isArray(override) && override.length > 0 ? override : globalDefault;
+    for (const s of list) out.add(s);
+  }
+  return Array.from(out);
+}
+
 export default function TrackingLinkDialog({
   open,
   onOpenChange,
@@ -154,7 +188,10 @@ export default function TrackingLinkDialog({
       : DEFAULT_VISIBLE_STATUSES;
     const defaultNotes = typeof fromSettings.defaultNotes === "string" ? fromSettings.defaultNotes : "";
     const messageTemplate = typeof fromSettings.messageTemplate === "string" ? fromSettings.messageTemplate : "";
-    return { visibleStatuses: visible, defaultNotes, messageTemplate };
+    const byJobType = (fromSettings.byJobType && typeof fromSettings.byJobType === "object")
+      ? fromSettings.byJobType as Record<string, { visibleStatuses?: string[] }>
+      : undefined;
+    return { visibleStatuses: visible, defaultNotes, messageTemplate, byJobType };
   }, [office?.settings]);
 
   const customStatuses = useMemo(
@@ -213,7 +250,10 @@ export default function TrackingLinkDialog({
       setGeneratedLink(existingLink);
       setPhase("share");
     } else {
-      setVisible(officeDefaults.visibleStatuses);
+      // Seed the visible-statuses from per-jobType defaults if the office
+      // has them; falls back to the global default.
+      const seedTypes = effectiveJobs.map((j) => j.jobType);
+      setVisible(computeDefaultVisibleStatuses(seedTypes, officeDefaults.visibleStatuses, officeDefaults.byJobType));
       setEta("");
       setEtaTouched(false);
       setNotes(officeDefaults.defaultNotes || "");
@@ -222,7 +262,11 @@ export default function TrackingLinkDialog({
     }
     setCustomizeOpen(false);
     setCopied("none");
-  }, [open, existingLink, officeDefaults]);
+    // We *want* this effect to re-fire when the effective job set changes
+    // (sibling include/exclude flips the per-jobType seed). The
+    // `effectiveJobs` reference identity stays stable enough for the
+    // initial seed; we don't reset the user's customizations on toggle.
+  }, [open, existingLink, officeDefaults, effectiveJobs.length]);
 
   const effectiveJobIds = useMemo(() => effectiveJobs.map((j) => j.id), [effectiveJobs]);
 
@@ -435,18 +479,27 @@ export default function TrackingLinkDialog({
                     )}
                   </div>
                   {showEtaSuggestion && suggestedEtaDate && (
-                    <button
-                      type="button"
-                      className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-otto-accent-line bg-otto-accent-soft text-[calc(11.5px*var(--ui-scale))] text-otto-accent-ink hover:bg-otto-accent-soft/70 transition-colors"
-                      onClick={() => { setEta(suggestedEtaDate); setEtaTouched(true); }}
-                      data-testid="eta-suggestion-pill"
-                    >
-                      <Sparkles className="h-3 w-3" aria-hidden />
-                      Suggest <strong className="font-semibold">{format(new Date(suggestedEtaDate + "T00:00:00"), "MMM d")}</strong>
-                      {etaSuggestion?.basis && (
-                        <span className="text-otto-accent-ink/70">— {etaSuggestion.basis}</span>
-                      )}
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-otto-accent-line bg-otto-accent-soft text-[calc(11.5px*var(--ui-scale))] text-otto-accent-ink hover:bg-otto-accent-soft/70 transition-colors"
+                          onClick={() => { setEta(suggestedEtaDate); setEtaTouched(true); }}
+                          data-testid="eta-suggestion-pill"
+                        >
+                          <Sparkles className="h-3 w-3" aria-hidden />
+                          Suggest <strong className="font-semibold">{format(new Date(suggestedEtaDate + "T00:00:00"), "MMM d")}</strong>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        <p className="text-xs leading-snug">
+                          {etaSuggestion?.basis || "Based on past similar orders"}
+                          {typeof etaSuggestion?.medianDays === "number" && (
+                            <> · typically ready in {etaSuggestion.medianDays} {etaSuggestion.medianDays === 1 ? "day" : "days"}</>
+                          )}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                 </section>
 
@@ -464,10 +517,26 @@ export default function TrackingLinkDialog({
                     maxLength={500}
                   />
                   <div className="mt-1 flex items-start justify-between gap-2 text-[calc(11px*var(--ui-scale))] text-ink-faint">
-                    <span className="inline-flex items-center gap-1">
-                      <AlertTriangle className="h-3 w-3 text-warn" aria-hidden />
-                      No names, phone numbers, or clinical details — page is public.
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          className="inline-flex items-center gap-1 cursor-help focus:outline-none focus-visible:ring-1 focus-visible:ring-otto-accent rounded-sm"
+                          data-testid="note-warning"
+                        >
+                          <AlertTriangle className="h-3 w-3 text-warn" aria-hidden />
+                          No names or phone numbers — patients see this.
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        <p className="text-xs leading-snug">
+                          The tracking page is publicly accessible to anyone with the link.
+                          Don't include patient names, phone numbers, addresses, dates of
+                          birth, or anything clinical (Rx, diagnosis, prescription details).
+                          Otto will reject notes that look like they contain these.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
                     <span className="tabular-nums shrink-0">{notes.length}/500</span>
                   </div>
                 </section>
@@ -603,7 +672,7 @@ function StatusPreview({
   // the patient would actually see if all stages happen in sequence.
   const ordered = customStatuses.filter((s) => !SIDE_STATE_STATUSES.has(s.id));
   const visibleEntries = ordered.filter((s) => visibleSet.has(s.id));
-  const hiddenEntries = ordered.filter((s) => !visibleSet.has(s.id));
+  const hiddenCount = ordered.filter((s) => !visibleSet.has(s.id)).length;
 
   return (
     <section data-testid="track-status-preview">
@@ -616,56 +685,62 @@ function StatusPreview({
         )}
       </div>
 
+      {/* Always-visible preview: flat dots for every visible step. No fake
+          "current/complete" state — the patient hasn't progressed yet. The
+          shape is what we're previewing, not the progress. */}
       <div className="mt-2 rounded-lg border border-line bg-panel">
         {visibleEntries.length > 0 && (
           <ol className="divide-y divide-line-2">
-            {visibleEntries.map((s, i) => (
-              <li key={s.id} className="flex items-center gap-2.5 px-3 py-2">
-                <div
-                  className={cn(
-                    "h-5 w-5 rounded-full grid place-items-center shrink-0 ring-1 ring-otto-accent-line",
-                    i === 0 ? "bg-otto-accent text-white" : "bg-otto-accent-soft text-otto-accent-ink",
-                  )}
+            {visibleEntries.map((s) => (
+              <li key={s.id} className="flex items-center gap-3 px-3 py-2">
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-otto-accent shrink-0"
                   aria-hidden
-                >
-                  {i === 0 ? <Check className="h-3 w-3" /> : null}
-                </div>
-                <span className="text-[calc(13px*var(--ui-scale))] font-medium text-ink">
+                />
+                <span className="text-[calc(13px*var(--ui-scale))] text-ink">
                   {patientLabel(s.id)}
-                </span>
-                <span className="ml-auto text-[calc(10.5px*var(--ui-scale))] text-ink-faint uppercase tracking-wider">
-                  Internal: {s.label}
                 </span>
               </li>
             ))}
           </ol>
         )}
-        {hiddenEntries.length > 0 && (
-          <div className="px-3 py-2 border-t border-line-2 bg-paper-2/40 text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
-            Hidden from patient:{" "}
-            {hiddenEntries.map((s, i) => (
-              <span key={s.id}>
-                {i > 0 && ", "}
-                <span className="line-through">{patientLabel(s.id)}</span>
-              </span>
-            ))}
-          </div>
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            className="w-full px-3 py-2 border-t border-line-2 bg-paper-2/40 text-[calc(11.5px*var(--ui-scale))] text-ink-mute hover:text-ink hover:bg-paper-2 text-left transition-colors"
+            onClick={() => onCustomizeOpenChange(true)}
+            data-testid="tracking-hidden-count"
+          >
+            {hiddenCount === 1 ? "1 status hidden" : `${hiddenCount} statuses hidden`}
+            <span className="text-ink-faint"> — Customize</span>
+          </button>
         )}
       </div>
 
       <Collapsible open={customizeOpen} onOpenChange={onCustomizeOpenChange}>
-        <CollapsibleTrigger
-          className="mt-2 inline-flex items-center gap-1.5 text-[calc(11.5px*var(--ui-scale))] text-ink-mute hover:text-ink transition-colors"
-          data-testid="tracking-customize-toggle"
-        >
-          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", customizeOpen && "rotate-180")} />
-          {customizeOpen ? "Hide options" : "Customize for this patient"}
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[calc(11.5px*var(--ui-scale))] transition-colors",
+              customizeOpen
+                ? "border-otto-accent-line bg-otto-accent-soft text-otto-accent-ink"
+                : "border-line bg-paper hover:bg-paper-2 text-ink-2",
+            )}
+            data-testid="tracking-customize-toggle"
+          >
+            <Sliders className="h-3.5 w-3.5" />
+            {customizeOpen ? "Hide options" : "Customize for this patient"}
+            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", customizeOpen && "rotate-180")} />
+          </button>
         </CollapsibleTrigger>
         <CollapsibleContent className="mt-2">
           <div className="rounded-md border border-line bg-paper-2/50 divide-y divide-line-2">
             {customStatuses.map((s) => {
               const checked = visibleSet.has(s.id);
               const isSideState = SIDE_STATE_STATUSES.has(s.id);
+              const patientText = patientLabel(s.id);
+              const renamedFromStatic = !isSideState && s.label.trim() !== patientText;
               return (
                 <label
                   key={s.id}
@@ -682,12 +757,21 @@ function StatusPreview({
                     onCheckedChange={(v) => onToggleStatus(s.id, !!v)}
                   />
                   <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} aria-hidden />
-                  <span className="text-[calc(12.5px*var(--ui-scale))] text-ink">{s.label}</span>
-                  <span className="ml-auto text-[calc(11px*var(--ui-scale))] text-ink-faint">
-                    {isSideState
-                      ? "Banner only"
-                      : `Patient sees "${patientLabel(s.id)}"`}
-                  </span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[calc(12.5px*var(--ui-scale))] text-ink">{s.label}</span>
+                    {/* Bridge text: the office's internal label vs. what the
+                        patient actually reads on the public page. Reads
+                        especially helpful when the office has renamed a
+                        standard ID — Otto's static map still wins. */}
+                    {!isSideState && renamedFromStatic && (
+                      <span className="text-[calc(10.5px*var(--ui-scale))] text-ink-faint">
+                        Patient sees "{patientText}"
+                      </span>
+                    )}
+                  </div>
+                  {isSideState && (
+                    <span className="ml-auto text-[calc(11px*var(--ui-scale))] text-ink-faint">Banner only</span>
+                  )}
                 </label>
               );
             })}

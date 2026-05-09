@@ -360,6 +360,9 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
           : DEFAULT_VISIBLE_STATUSES,
         defaultNotes: typeof tld.defaultNotes === "string" ? tld.defaultNotes : "",
         messageTemplate: typeof tld.messageTemplate === "string" ? tld.messageTemplate : "",
+        byJobType: tld.byJobType && typeof tld.byJobType === "object" && !Array.isArray(tld.byJobType)
+          ? tld.byJobType as Record<string, { visibleStatuses?: string[] }>
+          : undefined,
       });
     }
   }, [office]);
@@ -501,6 +504,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 <TabsContent value="tracking" className="mt-0">
                   <TrackingLinkDefaultsEditor
                     customStatuses={customStatuses as any}
+                    customJobTypes={customJobTypes as any}
                     value={trackingLinkDefaults}
                     onChange={setTrackingLinkDefaults}
                   />
