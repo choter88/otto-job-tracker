@@ -459,3 +459,151 @@ export async function portalSubmitFeedback(payload: {
   if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
   return { ok: true };
 }
+
+// --- Patient tracking links (host-token authenticated) ---
+
+export interface TrackingLinkRecord {
+  id: string;
+  token: string;
+  url: string;
+  jobIds: string[];
+  visibleStatuses: string[];
+  statusLabelOverrides: Record<string, string>;
+  eta: string | null;
+  customNotes: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  viewCount: number;
+  lastViewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TrackingLinkResult =
+  | { ok: true; link: TrackingLinkRecord }
+  | { ok: false; error: LicenseRequestError };
+
+export type TrackingLinkListResult =
+  | { ok: true; links: TrackingLinkRecord[] }
+  | { ok: false; error: LicenseRequestError };
+
+function parseTrackingLink(json: any): TrackingLinkRecord | null {
+  if (!json || typeof json !== "object") return null;
+  if (typeof json.id !== "string" || typeof json.token !== "string") return null;
+  return {
+    id: json.id,
+    token: json.token,
+    url: typeof json.url === "string" ? json.url : "",
+    jobIds: Array.isArray(json.jobIds) ? json.jobIds.map((s: any) => String(s)) : [],
+    visibleStatuses: Array.isArray(json.visibleStatuses) ? json.visibleStatuses.map((s: any) => String(s)) : [],
+    statusLabelOverrides: (json.statusLabelOverrides && typeof json.statusLabelOverrides === "object") ? json.statusLabelOverrides : {},
+    eta: typeof json.eta === "string" ? json.eta : null,
+    customNotes: typeof json.customNotes === "string" ? json.customNotes : null,
+    expiresAt: typeof json.expiresAt === "string" ? json.expiresAt : null,
+    revokedAt: typeof json.revokedAt === "string" ? json.revokedAt : null,
+    viewCount: typeof json.viewCount === "number" ? json.viewCount : 0,
+    lastViewedAt: typeof json.lastViewedAt === "string" ? json.lastViewedAt : null,
+    createdAt: typeof json.createdAt === "string" ? json.createdAt : new Date(0).toISOString(),
+    updatedAt: typeof json.updatedAt === "string" ? json.updatedAt : new Date(0).toISOString(),
+  };
+}
+
+export async function portalCreateTrackingLink(payload: {
+  hostToken: string;
+  jobIds: string[];
+  visibleStatuses?: string[];
+  statusLabelOverrides?: Record<string, string>;
+  eta?: string | null;
+  customNotes?: string | null;
+  expiresAt?: string | null;
+}): Promise<TrackingLinkResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/tracking-links", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  const link = parseTrackingLink(json);
+  if (!link) {
+    return { ok: false, error: { statusCode: 502, code: "BAD_PORTAL_RESPONSE", message: "Tracking link response was malformed." } };
+  }
+  return { ok: true, link };
+}
+
+async function patchJson(url: URL, body: unknown): Promise<PostJsonResult> {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    const json = await res.json().catch(() => null);
+    return { status: res.status, json, networkError: null };
+  } catch (error: any) {
+    const isTimeout = error?.name === "AbortError";
+    return {
+      status: 0,
+      json: null,
+      networkError: {
+        statusCode: 503,
+        code: isTimeout ? "PORTAL_TIMEOUT" : "PORTAL_UNREACHABLE",
+        message: isTimeout
+          ? "Tracking service timed out. Check internet access and try again."
+          : "Could not reach the tracking service. Check internet access and try again.",
+      },
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function portalUpdateTrackingLink(payload: {
+  hostToken: string;
+  id: string;
+  jobIds?: string[];
+  visibleStatuses?: string[];
+  statusLabelOverrides?: Record<string, string>;
+  eta?: string | null;
+  customNotes?: string | null;
+  expiresAt?: string | null;
+}): Promise<TrackingLinkResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL(`/license/v1/tracking-links/${encodeURIComponent(payload.id)}`, base);
+  const { id, ...body } = payload;
+  const { status, json, networkError } = await patchJson(url, body);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  const link = parseTrackingLink(json);
+  if (!link) {
+    return { ok: false, error: { statusCode: 502, code: "BAD_PORTAL_RESPONSE", message: "Tracking link response was malformed." } };
+  }
+  return { ok: true, link };
+}
+
+export async function portalRevokeTrackingLink(payload: {
+  hostToken: string;
+  id: string;
+}): Promise<{ ok: true } | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL(`/license/v1/tracking-links/${encodeURIComponent(payload.id)}/revoke`, base);
+  const { status, json, networkError } = await fetchJson(url, { hostToken: payload.hostToken });
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return { ok: true };
+}
+
+export async function portalListTrackingLinks(payload: {
+  hostToken: string;
+  jobIds: string[];
+}): Promise<TrackingLinkListResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/tracking-links/list", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  const arr = Array.isArray(json?.links) ? json.links : [];
+  const links = arr.map(parseTrackingLink).filter((l: TrackingLinkRecord | null): l is TrackingLinkRecord => Boolean(l));
+  return { ok: true, links };
+}

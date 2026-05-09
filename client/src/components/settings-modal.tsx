@@ -19,12 +19,14 @@ import {
   Copy,
   Check,
   Tablet,
+  Share2,
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
 import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, DEFAULT_DESTINATION_COLORS, hexToHSL, normalizeToHex } from "@/lib/default-colors";
 import SortableListEditor, { type CustomListItem } from "./customization/sortable-list-editor";
 import CustomColumnsEditor, { type CustomColumn, cleanColumnsForSave } from "./customization/custom-columns-editor";
 import IdentifierModeEditor, { type JobIdentifierMode } from "./customization/identifier-mode-editor";
+import TrackingLinkDefaultsEditor, { type TrackingLinkDefaults, DEFAULT_VISIBLE_STATUSES } from "./customization/tracking-link-defaults-editor";
 import SetupWizardCard from "./setup-wizard-card";
 import type { Office } from "@shared/schema";
 
@@ -288,6 +290,11 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
   const [customOrderDestinations, setCustomOrderDestinations] = useState<CustomListItem[]>([]);
   const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
   const [jobIdentifierMode, setJobIdentifierMode] = useState<JobIdentifierMode>("patientName");
+  const [trackingLinkDefaults, setTrackingLinkDefaults] = useState<TrackingLinkDefaults>({
+    visibleStatuses: DEFAULT_VISIBLE_STATUSES,
+    defaultNotes: "",
+    messageTemplate: "",
+  });
 
   // Initialize state when office data loads
   useEffect(() => {
@@ -343,6 +350,17 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
       setCustomOrderDestinations(mergedDestinations);
       setCustomColumns(existingColumns);
       setJobIdentifierMode(settings.jobIdentifierMode === "trayNumber" ? "trayNumber" : "patientName");
+
+      const tld = (settings.trackingLinkDefaults && typeof settings.trackingLinkDefaults === "object")
+        ? settings.trackingLinkDefaults as TrackingLinkDefaults
+        : {};
+      setTrackingLinkDefaults({
+        visibleStatuses: Array.isArray(tld.visibleStatuses) && tld.visibleStatuses.length > 0
+          ? tld.visibleStatuses
+          : DEFAULT_VISIBLE_STATUSES,
+        defaultNotes: typeof tld.defaultNotes === "string" ? tld.defaultNotes : "",
+        messageTemplate: typeof tld.messageTemplate === "string" ? tld.messageTemplate : "",
+      });
     }
   }, [office]);
 
@@ -363,6 +381,7 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
       customOrderDestinations,
       customColumns: cleanedColumns,
       jobIdentifierMode,
+      trackingLinkDefaults,
     };
 
     updateOfficeMutation.mutate(updatedSettings);
@@ -412,6 +431,10 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
                 <TabsTrigger value="customColumns" className={tabTriggerClass} data-testid="tab-custom-columns">
                   <Columns className="h-4 w-4" />
                   <span className="truncate">Custom Columns</span>
+                </TabsTrigger>
+                <TabsTrigger value="tracking" className={tabTriggerClass} data-testid="tab-tracking-links">
+                  <Share2 className="h-4 w-4" />
+                  <span className="truncate">Tracking Links</span>
                 </TabsTrigger>
                 <TabsTrigger value="notifications" className={tabTriggerClass} data-testid="tab-notifications">
                   <Bell className="h-4 w-4" />
@@ -473,6 +496,14 @@ export default function SettingsModal({ open, onOpenChange }: SettingsModalProps
 
                 <TabsContent value="customColumns" className="mt-0">
                   <CustomColumnsEditor columns={customColumns} onChange={setCustomColumns} />
+                </TabsContent>
+
+                <TabsContent value="tracking" className="mt-0">
+                  <TrackingLinkDefaultsEditor
+                    customStatuses={customStatuses as any}
+                    value={trackingLinkDefaults}
+                    onChange={setTrackingLinkDefaults}
+                  />
                 </TabsContent>
 
                 <TabsContent value="notifications" className="mt-0">

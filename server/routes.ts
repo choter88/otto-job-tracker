@@ -41,7 +41,17 @@ import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
 import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot, getCachedPlan } from "./license";
-import { portalGetInviteCode, portalRegenerateInviteCode, portalDesktopAuth, portalSubmitFeedback, getLicenseBaseUrl } from "./license-client";
+import {
+  portalGetInviteCode,
+  portalRegenerateInviteCode,
+  portalDesktopAuth,
+  portalSubmitFeedback,
+  portalCreateTrackingLink,
+  portalUpdateTrackingLink,
+  portalRevokeTrackingLink,
+  portalListTrackingLinks,
+  getLicenseBaseUrl,
+} from "./license-client";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
@@ -382,6 +392,104 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to submit feedback" });
+    }
+  });
+
+  // ── Patient tracking links (proxied to portal, host-token-authenticated) ──
+  // The desktop server holds the hostToken; the desktop UI calls these local
+  // routes which forward to /license/v1/tracking-links/* on the portal.
+  app.post("/api/tracking-links", requireAuth, requireNotViewOnly, async (req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(503).json({ error: "Host is not activated" });
+    }
+    const { jobIds, visibleStatuses, statusLabelOverrides, eta, customNotes, expiresAt } = req.body || {};
+    if (!Array.isArray(jobIds) || jobIds.length === 0) {
+      return res.status(400).json({ error: "jobIds must be a non-empty array" });
+    }
+    try {
+      const result = await portalCreateTrackingLink({
+        hostToken,
+        jobIds,
+        visibleStatuses,
+        statusLabelOverrides,
+        eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
+        customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
+        expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
+      });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
+      }
+      const user = getOfficeUser(req);
+      trackEvent({ userId: user.id, officeId: user.officeId, eventType: "tracking_link_created", metadata: { jobCount: jobIds.length } });
+      res.status(201).json({ link: result.link });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to create tracking link" });
+    }
+  });
+
+  app.patch("/api/tracking-links/:id", requireAuth, requireNotViewOnly, async (req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(503).json({ error: "Host is not activated" });
+    }
+    const { id } = req.params;
+    const { jobIds, visibleStatuses, statusLabelOverrides, eta, customNotes, expiresAt } = req.body || {};
+    try {
+      const result = await portalUpdateTrackingLink({
+        hostToken,
+        id,
+        jobIds,
+        visibleStatuses,
+        statusLabelOverrides,
+        eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
+        customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
+        expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
+      });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
+      }
+      res.json({ link: result.link });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to update tracking link" });
+    }
+  });
+
+  app.post("/api/tracking-links/:id/revoke", requireAuth, requireNotViewOnly, async (req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(503).json({ error: "Host is not activated" });
+    }
+    try {
+      const result = await portalRevokeTrackingLink({ hostToken, id: req.params.id });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
+      }
+      const user = getOfficeUser(req);
+      trackEvent({ userId: user.id, officeId: user.officeId, eventType: "tracking_link_revoked" });
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to revoke tracking link" });
+    }
+  });
+
+  app.post("/api/tracking-links/list", requireAuth, async (req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(503).json({ error: "Host is not activated" });
+    }
+    const { jobIds } = req.body || {};
+    if (!Array.isArray(jobIds) || jobIds.length === 0) {
+      return res.status(400).json({ error: "jobIds must be a non-empty array" });
+    }
+    try {
+      const result = await portalListTrackingLinks({ hostToken, jobIds });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message });
+      }
+      res.json({ links: result.links });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to list tracking links" });
     }
   });
 

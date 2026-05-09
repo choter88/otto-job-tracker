@@ -2,9 +2,13 @@ import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  CalendarPlus,
   Clock3,
+  Copy,
+  Eye,
   Hash,
   Info,
   Link2,
@@ -12,6 +16,7 @@ import {
   Phone,
   Save,
   Send,
+  Share2,
   Star,
   StickyNote,
   Trash2,
@@ -27,6 +32,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import JobCommentsPanel from "@/components/job-comments-panel";
+import TrackingLinkDialog, { type TrackingLinkRecord } from "@/components/tracking-link-dialog";
 import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { sortByOrder } from "@/lib/custom-list-sort";
 import { buildTrackStatuses, getStepIndex } from "@/lib/lifecycle";
@@ -119,6 +125,62 @@ export default function JobDetailsModal({
   });
   const relatedJobs = relatedData?.jobs ?? [];
   const linkGroupId = relatedData?.groupId ?? null;
+
+  // Patient tracking links covering this job. We pass through both the focus
+  // job and any auto/manually linked siblings — a single link can cover the
+  // whole group, and we want to surface it from any sibling's detail view.
+  const groupJobIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (job?.id) ids.add(job.id);
+    for (const rj of relatedJobs) {
+      if (rj?.id && !rj.archived) ids.add(rj.id);
+    }
+    return Array.from(ids);
+  }, [job?.id, relatedJobs]);
+
+  const { data: trackingLinks } = useQuery<{ links: TrackingLinkRecord[] }>({
+    queryKey: ["/api/tracking-links/list", groupJobIds.slice().sort().join(",")],
+    queryFn: async () => {
+      if (groupJobIds.length === 0) return { links: [] };
+      const res = await apiRequest("POST", "/api/tracking-links/list", { jobIds: groupJobIds });
+      return res.json();
+    },
+    enabled: open && groupJobIds.length > 0,
+  });
+
+  const activeTrackingLink = useMemo<TrackingLinkRecord | null>(() => {
+    const links = trackingLinks?.links ?? [];
+    const active = links.filter((l) => !l.revokedAt);
+    if (active.length === 0) return null;
+    // Prefer the most recently created active link.
+    return active.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+  }, [trackingLinks?.links]);
+
+  const [trackingDialogOpen, setTrackingDialogOpen] = useState(false);
+  const [trackingDialogEditing, setTrackingDialogEditing] = useState<TrackingLinkRecord | undefined>(undefined);
+  const [trackingUrlCopied, setTrackingUrlCopied] = useState(false);
+
+  // Days until the active link expires — drives the warn state and the
+  // Extend CTA below. Recomputed on render; we don't bother memoizing.
+  const trackingDaysUntilExpiry = activeTrackingLink?.expiresAt
+    ? Math.ceil((new Date(activeTrackingLink.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
+    : null;
+  const trackingExpiringSoon = typeof trackingDaysUntilExpiry === "number" && trackingDaysUntilExpiry <= 7;
+
+  const extendTrackingMutation = useMutation({
+    mutationFn: async (linkId: string) => {
+      const newExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const res = await apiRequest("PATCH", `/api/tracking-links/${linkId}`, { expiresAt: newExpiresAt });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      toast({ title: "Link extended", description: "Now valid for another 30 days." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't extend link", description: error.message, variant: "destructive" });
+    },
+  });
 
   // Group notes for linked jobs
   const { data: groupNotes = [] } = useQuery<any[]>({
@@ -541,6 +603,107 @@ export default function JobDetailsModal({
                     <p className="text-ink-mute italic m-0">No notes added.</p>
                   )}
                 </div>
+
+                <div className="border-t border-line my-5" />
+                <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+                  <Share2 className="h-3 w-3" aria-hidden />
+                  Patient tracking
+                </h4>
+                {activeTrackingLink ? (
+                  <div className="rounded-lg border border-otto-accent-line bg-otto-accent-soft/40 px-3.5 py-3 space-y-2.5" data-testid="tracking-link-summary">
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-[calc(11.5px*var(--ui-scale))] font-mono text-ink truncate">
+                        {activeTrackingLink.url}
+                      </code>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 shrink-0"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(activeTrackingLink.url);
+                            setTrackingUrlCopied(true);
+                            setTimeout(() => setTrackingUrlCopied(false), 2000);
+                          } catch {
+                            toast({ title: "Copy failed", variant: "destructive" });
+                          }
+                        }}
+                      >
+                        {trackingUrlCopied ? <span className="text-brand-emerald">Copied</span> : <><Copy className="h-3 w-3 mr-1" />Copy</>}
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
+                      <span className="inline-flex items-center gap-1">
+                        <Eye className="h-3 w-3" />
+                        {activeTrackingLink.viewCount} view{activeTrackingLink.viewCount === 1 ? "" : "s"}
+                      </span>
+                      {activeTrackingLink.lastViewedAt && (
+                        <span>· last {format(new Date(activeTrackingLink.lastViewedAt), "MMM d · HH:mm")}</span>
+                      )}
+                      {activeTrackingLink.expiresAt && (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            trackingExpiringSoon ? "text-warn font-medium" : "",
+                          )}
+                          data-testid="tracking-link-expiry"
+                        >
+                          {trackingExpiringSoon && <AlertTriangle className="h-3 w-3" aria-hidden />}
+                          {trackingDaysUntilExpiry !== null && trackingDaysUntilExpiry > 0
+                            ? `Expires ${trackingDaysUntilExpiry === 1 ? "tomorrow" : `in ${trackingDaysUntilExpiry} days`}`
+                            : trackingDaysUntilExpiry === 0
+                              ? "Expires today"
+                              : `Expired ${format(new Date(activeTrackingLink.expiresAt), "MMM d")}`}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[calc(11.5px*var(--ui-scale))]"
+                        onClick={() => {
+                          setTrackingDialogEditing(activeTrackingLink);
+                          setTrackingDialogOpen(true);
+                        }}
+                        data-testid="button-edit-tracking-link"
+                      >
+                        Edit settings
+                      </Button>
+                      {trackingExpiringSoon && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[calc(11.5px*var(--ui-scale))] border-warn/40 text-warn hover:bg-warn-bg/50"
+                          onClick={() => extendTrackingMutation.mutate(activeTrackingLink.id)}
+                          disabled={extendTrackingMutation.isPending}
+                          data-testid="button-extend-tracking-link-summary"
+                        >
+                          <CalendarPlus className="h-3.5 w-3.5 mr-1" />
+                          {extendTrackingMutation.isPending ? "Extending…" : "Extend 30 days"}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-line bg-panel px-3.5 py-3">
+                    <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute m-0">
+                      No tracking link yet. Generate one to share order status with the patient — no PHI, no office identity, just the statuses you choose.
+                    </p>
+                    <Button
+                      size="sm"
+                      className="mt-2.5"
+                      onClick={() => {
+                        setTrackingDialogEditing(undefined);
+                        setTrackingDialogOpen(true);
+                      }}
+                      data-testid="button-generate-tracking-link"
+                    >
+                      <Share2 className="h-3.5 w-3.5 mr-1.5" />
+                      Generate tracking link
+                    </Button>
+                  </div>
+                )}
               </div>
 
               {/* Right column: Timeline (lifecycle history with actor + timestamp). */}
@@ -932,6 +1095,38 @@ export default function JobDetailsModal({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Patient tracking link dialog — opened from the Patient tracking
+          section in the Overview tab. Covers the focus job + any sibling
+          jobs in the same link group so a single shared link can track an
+          entire patient's order. */}
+      <TrackingLinkDialog
+        open={trackingDialogOpen}
+        onOpenChange={setTrackingDialogOpen}
+        jobs={(() => {
+          if (!job) return [];
+          if (trackingDialogEditing) {
+            // When editing an existing link, scope to just that link's jobs —
+            // we don't want the dialog re-targeting more or fewer jobs than
+            // the user originally chose. The server enforces this too.
+            return relatedJobs.filter((rj: any) => trackingDialogEditing.jobIds.includes(rj.id))
+              .concat(trackingDialogEditing.jobIds.includes(job.id) ? [job] : []);
+          }
+          // Default scope when creating: focus job + any non-archived linked
+          // siblings.
+          return [job, ...relatedJobs.filter((rj: any) => !rj.archived)];
+        })()}
+        existingLink={trackingDialogEditing}
+        onCreated={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+        }}
+        onUpdated={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+        }}
+        onRevoked={() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+        }}
+      />
     </Dialog>
   );
 }

@@ -18,7 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List, AlertTriangle, ListFilter } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List, AlertTriangle, ListFilter, Share2 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -28,6 +28,7 @@ import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
 import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
 import ImportWizard from "./import-wizard";
+import TrackingLinkDialog from "./tracking-link-dialog";
 import PageHead, { SubAccent, SubDanger, SubDot } from "./page-head";
 import LifecycleTrack from "./lifecycle-track";
 import { sortByOrder } from "@/lib/custom-list-sort";
@@ -214,6 +215,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [linkMode, setLinkMode] = useState(false);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [trackingDialogOpen, setTrackingDialogOpen] = useState(false);
+  const [trackingDialogJobs, setTrackingDialogJobs] = useState<Job[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [destinationFilter, setDestinationFilter] = useState("all");
@@ -1260,6 +1263,21 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                 </Select>
                 <Button
                   size="sm"
+                  variant="outline"
+                  className="h-7 text-xs bg-white/10 border-white/20 text-white hover:bg-white/20"
+                  onClick={() => {
+                    const selected = jobs.filter((j) => selectedJobs.includes(j.id));
+                    if (selected.length === 0) return;
+                    setTrackingDialogJobs(selected);
+                    setTrackingDialogOpen(true);
+                  }}
+                  data-testid="button-bulk-tracking-link"
+                >
+                  <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                  Tracking link
+                </Button>
+                <Button
+                  size="sm"
                   variant="destructive"
                   className="h-7 text-xs"
                   onClick={() => setBulkDeleteConfirmOpen(true)}
@@ -1805,6 +1823,19 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <TrackingLinkDialog
+        open={trackingDialogOpen}
+        onOpenChange={(o) => {
+          setTrackingDialogOpen(o);
+          if (!o) {
+            setTrackingDialogJobs([]);
+            setSelectionMode(false);
+            setSelectedJobs([]);
+          }
+        }}
+        jobs={trackingDialogJobs}
+      />
     </>
   );
 }

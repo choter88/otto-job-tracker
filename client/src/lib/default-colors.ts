@@ -89,32 +89,39 @@ export const DEFAULT_STATUS_COLORS: ColorDefinition[] = [
     order: 3
   },
   {
+    id: 'delayed',
+    label: 'Delayed',
+    hsl: hexToHSL('#EA580C'),
+    hex: '#EA580C',
+    order: 4
+  },
+  {
     id: 'quality_check',
     label: 'Quality Check',
     hsl: hexToHSL('#7C3AED'),
     hex: '#7C3AED',
-    order: 4
+    order: 5
   },
   {
     id: 'ready_for_pickup',
     label: 'Ready for Pickup',
     hsl: hexToHSL('#16A34A'),
     hex: '#16A34A',
-    order: 5
+    order: 6
   },
   {
     id: 'completed',
     label: 'Dispensed',
     hsl: hexToHSL('#059669'),
     hex: '#059669',
-    order: 6
+    order: 7
   },
   {
     id: 'cancelled',
     label: 'Cancelled',
     hsl: hexToHSL('#DC2626'),
     hex: '#DC2626',
-    order: 7
+    order: 8
   }
 ];
 
