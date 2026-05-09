@@ -461,6 +461,31 @@ export async function portalSubmitFeedback(payload: {
 }
 
 // --- Patient tracking links (host-token authenticated) ---
+//
+// PHI guarantee — what we send to otto-web for tracking links:
+//
+//   ✅ SENT
+//     - hostToken (random secret, not patient data)
+//     - jobs[] snapshot — strictly { id, jobType, currentStatus,
+//       statusChangedAt, history? }. Built by `buildJobSnapshots` in
+//       routes.ts which never spreads the raw Job row.
+//     - visibleStatuses[] — array of status IDs (e.g. "in_progress")
+//     - statusCatalog[] — { id, label } from office.settings.customStatuses,
+//       length-capped server-side. Lets the patient page render office-
+//       custom status IDs sensibly. Office-defined labels — never patient
+//       data.
+//     - eta — ISO date for the order, not the patient
+//     - customNotes — free text, scanned by `scanNotesForPhi` BEFORE this
+//       is called. Rejected if it contains a phone, email, SSN, DOB, the
+//       patient's first/last name, or "prescription"/"diagnosis".
+//     - expiresAt — ISO date
+//
+//   ❌ NEVER SENT (anywhere in the tracking-link flow)
+//     - patientFirstName / patientLastName / patientFirstInitial
+//     - phone (patient phone)
+//     - trayNumber, orderId, internal `notes`, customColumnValues
+//     - office name / address / phone / email
+//     - user names
 
 export interface TrackingJobSnapshot {
   id: string;
@@ -468,6 +493,11 @@ export interface TrackingJobSnapshot {
   currentStatus: string;
   statusChangedAt: string;
   history?: Array<{ status: string; at: string }>;
+}
+
+export interface TrackingStatusCatalogEntry {
+  id: string;
+  label: string;
 }
 
 export interface TrackingLinkRecord {
@@ -543,6 +573,7 @@ export async function portalCreateTrackingLink(payload: {
   hostToken: string;
   jobs: TrackingJobSnapshot[];
   visibleStatuses?: string[];
+  statusCatalog?: TrackingStatusCatalogEntry[];
   eta?: string | null;
   customNotes?: string | null;
   expiresAt?: string | null;
@@ -559,6 +590,18 @@ export async function portalCreateTrackingLink(payload: {
   return { ok: true, link };
 }
 
+export async function portalRefreshTrackingCatalog(payload: {
+  hostToken: string;
+  statusCatalog: TrackingStatusCatalogEntry[];
+}): Promise<{ ok: true } | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/tracking-links/refresh-catalog", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return { ok: true };
+}
+
 export async function portalSyncTrackingJob(payload: {
   hostToken: string;
   jobId: string;
@@ -566,6 +609,7 @@ export async function portalSyncTrackingJob(payload: {
   currentStatus: string;
   statusChangedAt: string;
   appendHistory?: { status: string; at: string };
+  statusCatalog?: TrackingStatusCatalogEntry[];
 }): Promise<{ ok: true; updatedLinks: number } | { ok: false; error: LicenseRequestError }> {
   const base = getLicenseBaseUrl();
   const url = new URL("/license/v1/tracking-links/sync-job", base);
@@ -610,6 +654,7 @@ export async function portalUpdateTrackingLink(payload: {
   id: string;
   jobs?: TrackingJobSnapshot[];
   visibleStatuses?: string[];
+  statusCatalog?: TrackingStatusCatalogEntry[];
   eta?: string | null;
   customNotes?: string | null;
   expiresAt?: string | null;

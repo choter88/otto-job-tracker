@@ -51,8 +51,10 @@ import {
   portalRevokeTrackingLink,
   portalListTrackingLinks,
   portalSyncTrackingJob,
+  portalRefreshTrackingCatalog,
   getLicenseBaseUrl,
   type TrackingJobSnapshot,
+  type TrackingStatusCatalogEntry,
 } from "./license-client";
 import { scanNotesForPhi } from "./tracking-link-phi-scan";
 import { importSnapshotV1 } from "./migration-import";
@@ -424,9 +426,14 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   }
 
   /**
-   * Build the per-job snapshot the portal stores. Pulls each job's
-   * localized status history (if any) so the patient page can render a
-   * meaningful timeline at first lookup.
+   * Build the per-job snapshot the portal stores. PHI guard: this function
+   * is the *only* path from a local Job row to a portal-bound payload.
+   * It explicitly enumerates the four non-PHI fields below and never
+   * spreads `j` — adding a new column to the local jobs table cannot leak
+   * to the portal without code-level changes here.
+   *
+   * Excluded by construction: patientFirstName, patientLastName, phone,
+   * trayNumber, orderId, notes, customColumnValues.
    */
   async function buildJobSnapshots(jobRows: typeof jobs.$inferSelect[]): Promise<TrackingJobSnapshot[]> {
     if (jobRows.length === 0) return [];
@@ -445,13 +452,36 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       arr.push({ status: h.newStatus, at: new Date(h.changedAt).toISOString() });
       byJob.set(h.jobId, arr);
     }
-    return jobRows.map((j) => ({
+    return jobRows.map((j): TrackingJobSnapshot => ({
       id: j.id,
       jobType: j.jobType,
       currentStatus: j.status,
       statusChangedAt: new Date(j.statusChangedAt).toISOString(),
       history: byJob.get(j.id) ?? [],
     }));
+  }
+
+  /**
+   * Build the status catalog (status ID → patient-facing label) the
+   * portal stores alongside the link. Pulled from office.settings.
+   * customStatuses. We pluck only `id` and `label` (capping label
+   * length to match the portal's z.string().max(60)) — no `color`,
+   * `order`, or other fields ride along.
+   */
+  async function buildStatusCatalog(officeId: string): Promise<TrackingStatusCatalogEntry[]> {
+    const office = await storage.getOffice(officeId);
+    const settings = (office?.settings || {}) as { customStatuses?: Array<{ id?: unknown; label?: unknown }> };
+    const list = Array.isArray(settings.customStatuses) ? settings.customStatuses : [];
+    const out: TrackingStatusCatalogEntry[] = [];
+    for (const s of list) {
+      if (!s) continue;
+      const id = typeof s.id === "string" ? s.id.trim() : "";
+      const label = typeof s.label === "string" ? s.label.trim() : "";
+      if (id.length === 0 || id.length > 50) continue;
+      if (label.length === 0) continue;
+      out.push({ id, label: label.slice(0, 60) });
+    }
+    return out.slice(0, 30);
   }
 
   app.post("/api/tracking-links", requireAuth, requireNotViewOnly, async (req, res) => {
@@ -486,11 +516,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const snapshots = await buildJobSnapshots(localJobs);
+      const statusCatalog = await buildStatusCatalog(user.officeId);
 
       const result = await portalCreateTrackingLink({
         hostToken,
         jobs: snapshots,
         visibleStatuses,
+        statusCatalog,
         eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
         customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
         expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
@@ -540,11 +572,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
 
+      // Refresh the catalog on every update so label edits in office
+      // settings flow to the patient page.
+      const statusCatalog = await buildStatusCatalog(user.officeId);
+
       const result = await portalUpdateTrackingLink({
         hostToken,
         id,
         jobs: snapshots,
         visibleStatuses,
+        statusCatalog,
         eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
         customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
         expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
@@ -617,7 +654,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const basis = cycleDays.length >= 3
         ? `Median of ${cycleDays.length} similar past orders`
-        : `Median of ${sample.length} past ${[...targetTypes].join(" / ")} orders`;
+        : `Median of ${sample.length} past ${Array.from(targetTypes).join(" / ")} orders`;
 
       res.json({
         suggestedDate: suggestedDate.toISOString(),
@@ -1420,18 +1457,24 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
         // Push the new status to any active patient tracking link covering
         // this job. Fire-and-forget — a portal hiccup must not block the
-        // local status change.
+        // local status change. We also refresh the office's status catalog
+        // so label changes in settings propagate to the patient page.
         const localHostToken = getHostToken();
         if (localHostToken) {
           const changedAt = new Date(job.statusChangedAt).toISOString();
-          portalSyncTrackingJob({
-            hostToken: localHostToken,
-            jobId: job.id,
-            jobType: job.jobType,
-            currentStatus: job.status,
-            statusChangedAt: changedAt,
-            appendHistory: { status: job.status, at: changedAt },
-          }).catch((err) => console.error("[tracking-links] sync failed:", err?.message || err));
+          buildStatusCatalog(job.officeId)
+            .then((statusCatalog) =>
+              portalSyncTrackingJob({
+                hostToken: localHostToken,
+                jobId: job.id,
+                jobType: job.jobType,
+                currentStatus: job.status,
+                statusChangedAt: changedAt,
+                appendHistory: { status: job.status, at: changedAt },
+                statusCatalog,
+              }),
+            )
+            .catch((err) => console.error("[tracking-links] sync failed:", err?.message || err));
         }
 
         if (isAiSummaryEnabled()) {
@@ -1493,6 +1536,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       let archived = 0;
 
       const bulkHostToken = getHostToken();
+      // Compute the catalog once for this batch — shared across every
+      // sync push since it only depends on office settings.
+      const bulkCatalog = bulkHostToken ? await buildStatusCatalog(officeId) : null;
       for (const jobId of jobIds) {
         if (typeof jobId !== "string") continue;
         const job = await storage.getJob(jobId);
@@ -1514,6 +1560,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               currentStatus: refreshed.status,
               statusChangedAt: at,
               appendHistory: { status: refreshed.status, at },
+              statusCatalog: bulkCatalog ?? undefined,
             }).catch((err) => console.error("[tracking-links] bulk sync failed:", err?.message || err));
           }
         }
@@ -2323,6 +2370,21 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const office = await storage.updateOffice(req.params.id, updates);
       trackEvent({ userId: getAuthUser(req)?.id, officeId: req.params.id, eventType: "settings_changed" });
+
+      // If customStatuses changed, push a single catalog refresh to all
+      // active tracking links in this office so label edits propagate to
+      // the patient page immediately. One DB write on the portal side.
+      const customStatusesChanged = Object.prototype.hasOwnProperty.call(updates, "settings")
+        && Array.isArray((updates.settings as any)?.customStatuses);
+      const settingsHostToken = getHostToken();
+      if (customStatusesChanged && settingsHostToken) {
+        buildStatusCatalog(req.params.id)
+          .then((statusCatalog) =>
+            portalRefreshTrackingCatalog({ hostToken: settingsHostToken, statusCatalog }),
+          )
+          .catch((err) => console.error("[tracking-links] catalog refresh failed:", err?.message || err));
+      }
+
       res.json(office);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
