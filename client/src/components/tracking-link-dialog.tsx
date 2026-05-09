@@ -1,13 +1,15 @@
-// Patient tracking-link dialog: one-click create with two optional inputs
-// (ETA, note) shown by default. Heavier customization (visible-statuses
-// override) is collapsed behind a disclosure since 90% of links use the
-// office defaults set in Settings → Tracking Links.
+// Patient tracking-link dialog. Designed for one-click generation:
 //
-// Linked-sibling detection: when the dialog is opened from the bulk action
-// bar with a subset of a link group, we surface a one-line prompt at the
-// top so the user can include the rest with one click. The job-details
-// path opens with the full group already selected, so this prompt only
-// fires when the user really did pick a subset.
+//   1. Scope chip (small, top)
+//   2. "What the patient will see" — status preview always visible. Hidden
+//      statuses are dimmed inline; "Customize" toggles the per-link override.
+//   3. Estimated ready (optional) — pre-fills with a suggestion derived from
+//      past completed orders of the same type+lab. User can override or clear.
+//   4. Note (optional) — smaller, less prominent, with a one-line warning.
+//   5. Privacy assurance — single line, footer-style.
+//
+// After Generate, the dialog flips to the share view (URL, QR, copy-message,
+// extend, revoke).
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -56,27 +58,48 @@ import {
   CalendarPlus,
   StickyNote,
   ChevronDown,
-  Sliders,
   Plus,
   MessageSquare,
+  Sparkles,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { renderMessageTemplate } from "@/components/customization/tracking-link-defaults-editor";
 import type { Job, Office } from "@shared/schema";
 
-// Show the expiry warning + extend CTA when the link expires within this
-// many days. Picked by feel: long enough that staff have time to react,
-// short enough that it doesn't nag for the whole 30-day lifetime.
+const DEFAULT_VISIBLE_STATUSES = ["ordered", "in_progress", "ready_for_pickup"];
+const SIDE_STATE_STATUSES = new Set(["delayed"]);
+
+const PATIENT_FACING_STATUS_LABELS: Record<string, string> = {
+  job_created: "Order received",
+  ordered: "Sent to lab",
+  in_progress: "In production",
+  delayed: "Delayed",
+  quality_check: "Final quality check",
+  ready_for_pickup: "Ready for pickup",
+  completed: "Picked up",
+  cancelled: "Cancelled",
+};
+function patientLabel(id: string): string {
+  return PATIENT_FACING_STATUS_LABELS[id] ?? id;
+}
+
 const EXPIRY_WARN_DAYS = 7;
 const EXTEND_BY_DAYS = 30;
 
-const DEFAULT_VISIBLE_STATUSES = ["ordered", "in_progress", "ready_for_pickup"];
+export interface TrackingJobSnapshot {
+  id: string;
+  jobType: string;
+  currentStatus: string;
+  statusChangedAt: string;
+  history?: Array<{ status: string; at: string }>;
+}
 
 export interface TrackingLinkRecord {
   id: string;
   token: string;
   url: string;
   jobIds: string[];
+  jobs: TrackingJobSnapshot[];
   visibleStatuses: string[];
   eta: string | null;
   customNotes: string | null;
@@ -91,15 +114,18 @@ export interface TrackingLinkRecord {
 interface TrackingLinkDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Jobs the user explicitly selected. The dialog will detect any linked
-  // siblings not in this set and offer to include them.
   jobs: Job[];
-  // If provided, the dialog opens directly into the share view against an
-  // existing link (edit mode).
   existingLink?: TrackingLinkRecord;
   onCreated?: (link: TrackingLinkRecord) => void;
   onUpdated?: (link: TrackingLinkRecord) => void;
   onRevoked?: () => void;
+}
+
+interface EtaSuggestion {
+  suggestedDate: string | null;
+  sampleSize: number;
+  basis: string | null;
+  medianDays?: number;
 }
 
 export default function TrackingLinkDialog({
@@ -120,8 +146,6 @@ export default function TrackingLinkDialog({
     enabled: !!user?.officeId && open,
   });
 
-  // Office-wide defaults (set via Settings → Tracking Links). Used to seed
-  // the per-link state, so the user typically just clicks Generate.
   const officeDefaults = useMemo(() => {
     const settings = (office?.settings || {}) as any;
     const fromSettings = settings?.trackingLinkDefaults || {};
@@ -138,23 +162,15 @@ export default function TrackingLinkDialog({
     [office?.settings],
   );
 
-  // Linked-job sibling detection. We pull the office's full link-group map
-  // and compute, for the explicitly-passed `jobs`, any siblings that aren't
-  // already included. If the user is editing an existing link we skip the
-  // prompt — the link's job set is already settled.
+  // Sibling detection (bulk-action path only).
   const { data: linkGroupsMap } = useQuery<Record<string, string[]>>({
     queryKey: ["/api/jobs/linked-ids"],
     enabled: open && !existingLink && jobs.length > 0,
   });
-
-  // Cross-cache lookup: the worklist already has all jobs in queryClient. We
-  // pull from there to render sibling badges (jobType, etc.) without an
-  // extra fetch.
   const allJobs = useMemo<Job[]>(() => {
     const cached = queryClient.getQueryData<Job[]>(["/api/jobs"]) || [];
     return Array.isArray(cached) ? cached : [];
   }, [queryClient, open]);
-
   const siblingJobs = useMemo<Job[]>(() => {
     if (!linkGroupsMap || jobs.length === 0) return [];
     const selectedIds = new Set(jobs.map((j) => j.id));
@@ -162,21 +178,12 @@ export default function TrackingLinkDialog({
     for (const groupJobIds of Object.values(linkGroupsMap)) {
       const overlap = groupJobIds.some((id) => selectedIds.has(id));
       if (!overlap) continue;
-      for (const id of groupJobIds) {
-        if (!selectedIds.has(id)) siblingIdSet.add(id);
-      }
+      for (const id of groupJobIds) if (!selectedIds.has(id)) siblingIdSet.add(id);
     }
     return allJobs.filter((j) => siblingIdSet.has(j.id));
   }, [linkGroupsMap, jobs, allJobs]);
-
-  // The set the user has chosen to actually share — defaults to the
-  // explicit selection; user can opt-in to siblings from the prompt.
   const [includeSiblings, setIncludeSiblings] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    setIncludeSiblings(false);
-  }, [open]);
-
+  useEffect(() => { if (open) setIncludeSiblings(false); }, [open]);
   const effectiveJobs = useMemo<Job[]>(() => {
     if (!includeSiblings) return jobs;
     const map = new Map<string, Job>();
@@ -185,9 +192,10 @@ export default function TrackingLinkDialog({
     return Array.from(map.values());
   }, [includeSiblings, jobs, siblingJobs]);
 
-  // ── Editable form state ─────────────────────────────────────────────
+  // Editable form state
   const [visible, setVisible] = useState<string[]>([]);
-  const [eta, setEta] = useState<string>(""); // ISO yyyy-mm-dd or ""
+  const [eta, setEta] = useState<string>(""); // ISO yyyy-mm-dd
+  const [etaTouched, setEtaTouched] = useState(false);
   const [notes, setNotes] = useState<string>("");
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [phase, setPhase] = useState<"configure" | "share">("configure");
@@ -200,22 +208,39 @@ export default function TrackingLinkDialog({
     if (existingLink) {
       setVisible(existingLink.visibleStatuses.length > 0 ? existingLink.visibleStatuses : officeDefaults.visibleStatuses);
       setEta(existingLink.eta ? existingLink.eta.slice(0, 10) : "");
+      setEtaTouched(true);
       setNotes(existingLink.customNotes ?? "");
       setGeneratedLink(existingLink);
       setPhase("share");
-      setCustomizeOpen(false);
     } else {
       setVisible(officeDefaults.visibleStatuses);
       setEta("");
+      setEtaTouched(false);
       setNotes(officeDefaults.defaultNotes || "");
       setGeneratedLink(null);
       setPhase("configure");
-      setCustomizeOpen(false);
     }
+    setCustomizeOpen(false);
     setCopied("none");
   }, [open, existingLink, officeDefaults]);
 
   const effectiveJobIds = useMemo(() => effectiveJobs.map((j) => j.id), [effectiveJobs]);
+
+  // ETA suggestion — pulled from local archived-job history.
+  const { data: etaSuggestion } = useQuery<EtaSuggestion>({
+    queryKey: ["/api/tracking-links/estimate-eta", effectiveJobIds.slice().sort().join(",")],
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/tracking-links/estimate-eta", { jobIds: effectiveJobIds });
+      return res.json();
+    },
+    enabled: open && phase === "configure" && !existingLink && effectiveJobIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const suggestedEtaDate = etaSuggestion?.suggestedDate
+    ? new Date(etaSuggestion.suggestedDate).toISOString().slice(0, 10)
+    : null;
+  const showEtaSuggestion = !etaTouched && suggestedEtaDate && (etaSuggestion?.sampleSize ?? 0) > 0;
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -233,7 +258,7 @@ export default function TrackingLinkDialog({
       setPhase("share");
       queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
       onCreated?.(link);
-      toast({ title: "Tracking link generated", description: "Copy the URL or QR to share with your patient." });
+      toast({ title: "Tracking link generated", description: "Copy the message or URL to share with your patient." });
     },
     onError: (error: Error) => {
       toast({ title: "Couldn't generate link", description: error.message, variant: "destructive" });
@@ -279,12 +304,28 @@ export default function TrackingLinkDialog({
     },
   });
 
+  const extendMutation = useMutation({
+    mutationFn: async () => {
+      if (!generatedLink) throw new Error("No link to extend");
+      const newExpiresAt = new Date(Date.now() + EXTEND_BY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+      const res = await apiRequest("PATCH", `/api/tracking-links/${generatedLink.id}`, { expiresAt: newExpiresAt });
+      const json = await res.json();
+      return json.link as TrackingLinkRecord;
+    },
+    onSuccess: (link) => {
+      setGeneratedLink(link);
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      onUpdated?.(link);
+      toast({ title: "Link extended", description: `Now expires ${format(new Date(link.expiresAt!), "MMM d, yyyy")}.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't extend link", description: error.message, variant: "destructive" });
+    },
+  });
+
   const [qrSvg, setQrSvg] = useState<string | null>(null);
   useEffect(() => {
-    if (!generatedLink?.url) {
-      setQrSvg(null);
-      return;
-    }
+    if (!generatedLink?.url) { setQrSvg(null); return; }
     (async () => {
       try {
         const svg = await QRCode.toString(generatedLink.url, { type: "svg", margin: 1, width: 200 });
@@ -302,52 +343,22 @@ export default function TrackingLinkDialog({
       setCopied("url");
       setTimeout(() => setCopied("none"), 2000);
     } catch {
-      toast({ title: "Copy failed", description: "Could not copy to clipboard.", variant: "destructive" });
+      toast({ title: "Copy failed", variant: "destructive" });
     }
   };
-
   const handleCopyMessage = async () => {
     if (!generatedLink?.url) return;
-    const etaFormatted = generatedLink.eta
-      ? format(new Date(generatedLink.eta), "EEEE, MMMM d")
-      : null;
-    const message = renderMessageTemplate(officeDefaults.messageTemplate, {
-      url: generatedLink.url,
-      eta: etaFormatted,
-    });
+    const etaFormatted = generatedLink.eta ? format(new Date(generatedLink.eta), "EEEE, MMMM d") : null;
+    const message = renderMessageTemplate(officeDefaults.messageTemplate, { url: generatedLink.url, eta: etaFormatted });
     try {
       await navigator.clipboard.writeText(message);
       setCopied("message");
       setTimeout(() => setCopied("none"), 2000);
       toast({ title: "Message copied", description: "Paste into Weave, SMS, or email." });
     } catch {
-      toast({ title: "Copy failed", description: "Could not copy to clipboard.", variant: "destructive" });
+      toast({ title: "Copy failed", variant: "destructive" });
     }
   };
-
-  // Push the link's expiry out by EXTEND_BY_DAYS days. The patient's URL
-  // (token) stays the same, so any text/email already in their hands keeps
-  // working — no need to re-send.
-  const extendMutation = useMutation({
-    mutationFn: async () => {
-      if (!generatedLink) throw new Error("No link to extend");
-      const newExpiresAt = new Date(Date.now() + EXTEND_BY_DAYS * 24 * 60 * 60 * 1000).toISOString();
-      const res = await apiRequest("PATCH", `/api/tracking-links/${generatedLink.id}`, {
-        expiresAt: newExpiresAt,
-      });
-      const json = await res.json();
-      return json.link as TrackingLinkRecord;
-    },
-    onSuccess: (link) => {
-      setGeneratedLink(link);
-      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
-      onUpdated?.(link);
-      toast({ title: "Link extended", description: `Now expires ${format(new Date(link.expiresAt!), "MMM d, yyyy")}.` });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Couldn't extend link", description: error.message, variant: "destructive" });
-    },
-  });
 
   const isEdit = !!existingLink;
   const dirty = isEdit && (
@@ -355,8 +366,6 @@ export default function TrackingLinkDialog({
     || (eta || "") !== (existingLink!.eta?.slice(0, 10) || "")
     || (notes || "") !== (existingLink!.customNotes || "")
   );
-
-  const visibleSet = new Set(visible);
 
   return (
     <>
@@ -386,98 +395,87 @@ export default function TrackingLinkDialog({
                   />
                 )}
 
+                <StatusPreview
+                  customStatuses={customStatuses as any[]}
+                  visible={visible}
+                  customizeOpen={customizeOpen}
+                  onCustomizeOpenChange={setCustomizeOpen}
+                  onToggleStatus={(id, checked) => {
+                    setVisible((prev) =>
+                      checked
+                        ? Array.from(new Set([...prev, id]))
+                        : prev.filter((x) => x !== id),
+                    );
+                  }}
+                />
+
                 <section>
                   <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold flex items-center gap-1.5">
                     <CalendarClock className="h-3.5 w-3.5" />
-                    Estimated ready (optional)
+                    Estimated ready
+                    <span className="text-[calc(10.5px*var(--ui-scale))] text-ink-faint normal-case tracking-normal font-normal">— optional</span>
                   </Label>
-                  <Input
-                    type="date"
-                    value={eta}
-                    onChange={(e) => setEta(e.target.value)}
-                    className="mt-1.5 max-w-[220px] bg-white"
-                  />
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={eta}
+                      onChange={(e) => { setEta(e.target.value); setEtaTouched(true); }}
+                      className="max-w-[220px] bg-white"
+                    />
+                    {eta && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-[calc(11.5px*var(--ui-scale))] text-ink-mute hover:text-ink"
+                        onClick={() => { setEta(""); setEtaTouched(true); }}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  {showEtaSuggestion && suggestedEtaDate && (
+                    <button
+                      type="button"
+                      className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-otto-accent-line bg-otto-accent-soft text-[calc(11.5px*var(--ui-scale))] text-otto-accent-ink hover:bg-otto-accent-soft/70 transition-colors"
+                      onClick={() => { setEta(suggestedEtaDate); setEtaTouched(true); }}
+                      data-testid="eta-suggestion-pill"
+                    >
+                      <Sparkles className="h-3 w-3" aria-hidden />
+                      Suggest <strong className="font-semibold">{format(new Date(suggestedEtaDate + "T00:00:00"), "MMM d")}</strong>
+                      {etaSuggestion?.basis && (
+                        <span className="text-otto-accent-ink/70">— {etaSuggestion.basis}</span>
+                      )}
+                    </button>
+                  )}
                 </section>
 
                 <section>
                   <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold flex items-center gap-1.5">
                     <StickyNote className="h-3.5 w-3.5" />
-                    Note for the patient (optional)
+                    Note
+                    <span className="text-[calc(10.5px*var(--ui-scale))] text-ink-faint normal-case tracking-normal font-normal">— optional</span>
                   </Label>
                   <Textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="e.g. Your frames arrived early — we'll text you when ready."
-                    className="mt-1.5 min-h-[68px] bg-white text-[calc(13px*var(--ui-scale))]"
+                    className="mt-1.5 min-h-[56px] bg-white text-[calc(13px*var(--ui-scale))]"
                     maxLength={500}
                   />
-                  <div className="mt-1.5 flex items-start gap-2 rounded-md border border-warn-bg bg-warn-bg/40 px-3 py-2">
-                    <AlertTriangle className="h-3.5 w-3.5 text-warn shrink-0 mt-0.5" aria-hidden />
-                    <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-2 leading-snug">
-                      Don't include patient names, phone numbers, or clinical details. The page is public.
-                    </p>
-                  </div>
-                  <div className="mt-1 text-right text-[calc(11px*var(--ui-scale))] text-ink-faint">
-                    {notes.length}/500
+                  <div className="mt-1 flex items-start justify-between gap-2 text-[calc(11px*var(--ui-scale))] text-ink-faint">
+                    <span className="inline-flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 text-warn" aria-hidden />
+                      No names, phone numbers, or clinical details — page is public.
+                    </span>
+                    <span className="tabular-nums shrink-0">{notes.length}/500</span>
                   </div>
                 </section>
 
-                <Collapsible open={customizeOpen} onOpenChange={setCustomizeOpen}>
-                  <CollapsibleTrigger
-                    className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-line bg-paper-2 hover:bg-paper text-[calc(12.5px*var(--ui-scale))] text-ink-2 font-medium transition-colors"
-                    data-testid="tracking-customize-toggle"
-                  >
-                    <span className="inline-flex items-center gap-1.5">
-                      <Sliders className="h-3.5 w-3.5" />
-                      Customize visible statuses for this patient
-                    </span>
-                    <ChevronDown className={cn("h-4 w-4 text-ink-mute transition-transform", customizeOpen && "rotate-180")} />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-3">
-                    <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mb-2 leading-snug">
-                      Office defaults from Settings are pre-selected. Untoggle a status to hide it from this patient.
-                    </p>
-                    <div className="rounded-md border border-line bg-panel divide-y divide-line-2">
-                      {customStatuses.map((s: any) => {
-                        const checked = visibleSet.has(s.id);
-                        return (
-                          <label
-                            key={s.id}
-                            htmlFor={`vis-${s.id}`}
-                            className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-paper-2/50"
-                          >
-                            <Checkbox
-                              id={`vis-${s.id}`}
-                              checked={checked}
-                              onCheckedChange={(v) => {
-                                setVisible((prev) =>
-                                  v
-                                    ? Array.from(new Set([...prev, s.id]))
-                                    : prev.filter((x) => x !== s.id),
-                                );
-                              }}
-                            />
-                            <span
-                              className="h-2 w-2 rounded-full shrink-0"
-                              style={{ backgroundColor: s.color }}
-                              aria-hidden
-                            />
-                            <span className="text-[calc(13px*var(--ui-scale))] text-ink">
-                              {s.label}
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-
-                <div className="flex items-start gap-2 rounded-md border border-line bg-paper-2 px-3 py-2">
-                  <ShieldCheck className="h-3.5 w-3.5 text-brand-emerald shrink-0 mt-0.5" />
-                  <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute leading-snug">
-                    The patient page shows no name, contact info, or office identity — only the statuses, ETA, and your note.
-                  </p>
-                </div>
+                <p className="text-[calc(11px*var(--ui-scale))] text-ink-faint flex items-center gap-1.5 m-0">
+                  <ShieldCheck className="h-3 w-3 text-brand-emerald" aria-hidden />
+                  No name, no contact info, no office identity — just status, ETA, and your note.
+                </p>
               </>
             )}
 
@@ -506,7 +504,7 @@ export default function TrackingLinkDialog({
               <>
                 <Button
                   className="flex-1"
-                  disabled={createMutation.isPending || effectiveJobIds.length === 0}
+                  disabled={createMutation.isPending || effectiveJobIds.length === 0 || visible.length === 0}
                   onClick={() => createMutation.mutate()}
                   data-testid="button-generate-tracking-link"
                 >
@@ -580,17 +578,123 @@ function ScopeSummary({ jobs }: { jobs: Job[] }) {
         : `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
 
   return (
-    <div
-      className="rounded-md border border-otto-accent-line bg-otto-accent-soft px-3.5 py-2.5"
-      data-testid="track-scope"
-    >
-      <div className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-wider text-otto-accent-ink">
-        Tracking
-      </div>
-      <p className="mt-0.5 text-[calc(13px*var(--ui-scale))] text-ink m-0">
-        {jobs.length === 1 ? "This job" : `${jobs.length} jobs`} — patient will see "{list}".
-      </p>
+    <div className="text-[calc(12px*var(--ui-scale))] text-ink-mute" data-testid="track-scope">
+      Tracking <span className="text-ink font-medium">{jobs.length === 1 ? "this job" : `${jobs.length} jobs`}</span>
+      {labels.length > 0 && <> — patient sees "<span className="text-ink-2">{list}</span>".</>}
     </div>
+  );
+}
+
+function StatusPreview({
+  customStatuses,
+  visible,
+  customizeOpen,
+  onCustomizeOpenChange,
+  onToggleStatus,
+}: {
+  customStatuses: { id: string; label: string; color: string }[];
+  visible: string[];
+  customizeOpen: boolean;
+  onCustomizeOpenChange: (open: boolean) => void;
+  onToggleStatus: (id: string, checked: boolean) => void;
+}) {
+  const visibleSet = new Set(visible);
+  // Order from the office's customStatuses list so the preview matches what
+  // the patient would actually see if all stages happen in sequence.
+  const ordered = customStatuses.filter((s) => !SIDE_STATE_STATUSES.has(s.id));
+  const visibleEntries = ordered.filter((s) => visibleSet.has(s.id));
+  const hiddenEntries = ordered.filter((s) => !visibleSet.has(s.id));
+
+  return (
+    <section data-testid="track-status-preview">
+      <div className="flex items-center justify-between">
+        <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
+          What the patient will see
+        </Label>
+        {visibleEntries.length === 0 && (
+          <span className="text-[calc(11px*var(--ui-scale))] text-warn font-medium">Pick at least one</span>
+        )}
+      </div>
+
+      <div className="mt-2 rounded-lg border border-line bg-panel">
+        {visibleEntries.length > 0 && (
+          <ol className="divide-y divide-line-2">
+            {visibleEntries.map((s, i) => (
+              <li key={s.id} className="flex items-center gap-2.5 px-3 py-2">
+                <div
+                  className={cn(
+                    "h-5 w-5 rounded-full grid place-items-center shrink-0 ring-1 ring-otto-accent-line",
+                    i === 0 ? "bg-otto-accent text-white" : "bg-otto-accent-soft text-otto-accent-ink",
+                  )}
+                  aria-hidden
+                >
+                  {i === 0 ? <Check className="h-3 w-3" /> : null}
+                </div>
+                <span className="text-[calc(13px*var(--ui-scale))] font-medium text-ink">
+                  {patientLabel(s.id)}
+                </span>
+                <span className="ml-auto text-[calc(10.5px*var(--ui-scale))] text-ink-faint uppercase tracking-wider">
+                  Internal: {s.label}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {hiddenEntries.length > 0 && (
+          <div className="px-3 py-2 border-t border-line-2 bg-paper-2/40 text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
+            Hidden from patient:{" "}
+            {hiddenEntries.map((s, i) => (
+              <span key={s.id}>
+                {i > 0 && ", "}
+                <span className="line-through">{patientLabel(s.id)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Collapsible open={customizeOpen} onOpenChange={onCustomizeOpenChange}>
+        <CollapsibleTrigger
+          className="mt-2 inline-flex items-center gap-1.5 text-[calc(11.5px*var(--ui-scale))] text-ink-mute hover:text-ink transition-colors"
+          data-testid="tracking-customize-toggle"
+        >
+          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", customizeOpen && "rotate-180")} />
+          {customizeOpen ? "Hide options" : "Customize for this patient"}
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">
+          <div className="rounded-md border border-line bg-paper-2/50 divide-y divide-line-2">
+            {customStatuses.map((s) => {
+              const checked = visibleSet.has(s.id);
+              const isSideState = SIDE_STATE_STATUSES.has(s.id);
+              return (
+                <label
+                  key={s.id}
+                  htmlFor={`vis-${s.id}`}
+                  className={cn(
+                    "flex items-center gap-2.5 px-3 py-2",
+                    isSideState ? "opacity-60" : "cursor-pointer hover:bg-paper-2",
+                  )}
+                >
+                  <Checkbox
+                    id={`vis-${s.id}`}
+                    checked={checked}
+                    disabled={isSideState}
+                    onCheckedChange={(v) => onToggleStatus(s.id, !!v)}
+                  />
+                  <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} aria-hidden />
+                  <span className="text-[calc(12.5px*var(--ui-scale))] text-ink">{s.label}</span>
+                  <span className="ml-auto text-[calc(11px*var(--ui-scale))] text-ink-faint">
+                    {isSideState
+                      ? "Banner only"
+                      : `Patient sees "${patientLabel(s.id)}"`}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </section>
   );
 }
 
@@ -626,15 +730,13 @@ function SiblingPrompt({
       className="rounded-md border border-info/30 bg-info/[0.06] px-3.5 py-2.5 flex items-start gap-3"
       data-testid="tracking-sibling-prompt"
     >
-      <div className="h-7 w-7 rounded-full bg-info/15 grid place-items-center text-info shrink-0 mt-0.5">
-        <Link2 className="h-3.5 w-3.5" />
-      </div>
+      <Link2 className="h-4 w-4 text-info shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
         <div className="text-[calc(12.5px*var(--ui-scale))] font-medium text-ink">
           {siblingJobs.length === 1 ? "1 linked job not included" : `${siblingJobs.length} linked jobs not included`}
         </div>
         <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute mt-0.5 m-0">
-          Also tracking: {summary}. The patient probably wants one link covering everything.
+          Also tracking: {summary}.
         </p>
       </div>
       <Button
@@ -644,17 +746,7 @@ function SiblingPrompt({
         onClick={() => onToggle(!included)}
         data-testid="button-include-siblings"
       >
-        {included ? (
-          <>
-            <Check className="h-3.5 w-3.5 mr-1" />
-            Included
-          </>
-        ) : (
-          <>
-            <Plus className="h-3.5 w-3.5 mr-1" />
-            Include
-          </>
-        )}
+        {included ? <><Check className="h-3.5 w-3.5 mr-1" />Included</> : <><Plus className="h-3.5 w-3.5 mr-1" />Include</>}
       </Button>
     </div>
   );
@@ -694,9 +786,6 @@ function ShareView({
   const expiresAt = link.expiresAt ? new Date(link.expiresAt) : null;
   const expiresAtLabel = expiresAt ? format(expiresAt, "MMM d, yyyy") : null;
   const lastViewed = link.lastViewedAt ? format(new Date(link.lastViewedAt), "MMM d, yyyy h:mm a") : null;
-
-  // Days-until-expiry — used to drive the warn state. Negative means already
-  // expired (the public lookup would already 404; this is here for safety).
   const daysUntilExpiry = expiresAt
     ? Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000))
     : null;
@@ -727,15 +816,9 @@ function ShareView({
             data-testid="button-copy-tracking-message"
           >
             {copied === "message" ? (
-              <>
-                <Check className="h-4 w-4 mr-1.5" />
-                Message copied
-              </>
+              <><Check className="h-4 w-4 mr-1.5" />Message copied</>
             ) : (
-              <>
-                <MessageSquare className="h-4 w-4 mr-1.5" />
-                Copy message
-              </>
+              <><MessageSquare className="h-4 w-4 mr-1.5" />Copy message</>
             )}
           </Button>
         </div>
@@ -794,7 +877,7 @@ function ShareView({
 
       {isEdit && dirty && (
         <div className="rounded-md border border-otto-accent-line bg-otto-accent-soft px-3.5 py-2.5 flex items-center gap-3">
-          <p className="text-[calc(12.5px*var(--ui-scale))] text-otto-accent-ink flex-1">
+          <p className="text-[calc(12.5px*var(--ui-scale))] text-otto-accent-ink flex-1 m-0">
             You've changed link settings. Save to update what the patient sees.
           </p>
           <Button size="sm" onClick={onSaveEdits} disabled={isSaving}>
@@ -835,18 +918,8 @@ function Stat({
   warn?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "rounded-md border px-3 py-2.5",
-        warn ? "border-warn/40 bg-warn-bg/40" : "border-line bg-panel",
-      )}
-    >
-      <div
-        className={cn(
-          "text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-wider flex items-center gap-1",
-          warn ? "text-warn" : "text-ink-mute",
-        )}
-      >
+    <div className={cn("rounded-md border px-3 py-2.5", warn ? "border-warn/40 bg-warn-bg/40" : "border-line bg-panel")}>
+      <div className={cn("text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-wider flex items-center gap-1", warn ? "text-warn" : "text-ink-mute")}>
         {icon}
         {label}
       </div>

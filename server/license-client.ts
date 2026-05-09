@@ -462,13 +462,21 @@ export async function portalSubmitFeedback(payload: {
 
 // --- Patient tracking links (host-token authenticated) ---
 
+export interface TrackingJobSnapshot {
+  id: string;
+  jobType: string;
+  currentStatus: string;
+  statusChangedAt: string;
+  history?: Array<{ status: string; at: string }>;
+}
+
 export interface TrackingLinkRecord {
   id: string;
   token: string;
   url: string;
   jobIds: string[];
+  jobs: TrackingJobSnapshot[];
   visibleStatuses: string[];
-  statusLabelOverrides: Record<string, string>;
   eta: string | null;
   customNotes: string | null;
   expiresAt: string | null;
@@ -487,6 +495,29 @@ export type TrackingLinkListResult =
   | { ok: true; links: TrackingLinkRecord[] }
   | { ok: false; error: LicenseRequestError };
 
+function parseTrackingJobs(raw: any): TrackingJobSnapshot[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TrackingJobSnapshot[] = [];
+  for (const j of raw) {
+    if (!j || typeof j !== "object") continue;
+    if (typeof j.id !== "string" || typeof j.jobType !== "string") continue;
+    if (typeof j.currentStatus !== "string" || typeof j.statusChangedAt !== "string") continue;
+    const history = Array.isArray(j.history)
+      ? j.history
+          .filter((h: any) => h && typeof h.status === "string" && typeof h.at === "string")
+          .map((h: any) => ({ status: String(h.status), at: String(h.at) }))
+      : undefined;
+    out.push({
+      id: j.id,
+      jobType: j.jobType,
+      currentStatus: j.currentStatus,
+      statusChangedAt: j.statusChangedAt,
+      history,
+    });
+  }
+  return out;
+}
+
 function parseTrackingLink(json: any): TrackingLinkRecord | null {
   if (!json || typeof json !== "object") return null;
   if (typeof json.id !== "string" || typeof json.token !== "string") return null;
@@ -495,8 +526,8 @@ function parseTrackingLink(json: any): TrackingLinkRecord | null {
     token: json.token,
     url: typeof json.url === "string" ? json.url : "",
     jobIds: Array.isArray(json.jobIds) ? json.jobIds.map((s: any) => String(s)) : [],
+    jobs: parseTrackingJobs(json.jobs),
     visibleStatuses: Array.isArray(json.visibleStatuses) ? json.visibleStatuses.map((s: any) => String(s)) : [],
-    statusLabelOverrides: (json.statusLabelOverrides && typeof json.statusLabelOverrides === "object") ? json.statusLabelOverrides : {},
     eta: typeof json.eta === "string" ? json.eta : null,
     customNotes: typeof json.customNotes === "string" ? json.customNotes : null,
     expiresAt: typeof json.expiresAt === "string" ? json.expiresAt : null,
@@ -510,9 +541,8 @@ function parseTrackingLink(json: any): TrackingLinkRecord | null {
 
 export async function portalCreateTrackingLink(payload: {
   hostToken: string;
-  jobIds: string[];
+  jobs: TrackingJobSnapshot[];
   visibleStatuses?: string[];
-  statusLabelOverrides?: Record<string, string>;
   eta?: string | null;
   customNotes?: string | null;
   expiresAt?: string | null;
@@ -527,6 +557,22 @@ export async function portalCreateTrackingLink(payload: {
     return { ok: false, error: { statusCode: 502, code: "BAD_PORTAL_RESPONSE", message: "Tracking link response was malformed." } };
   }
   return { ok: true, link };
+}
+
+export async function portalSyncTrackingJob(payload: {
+  hostToken: string;
+  jobId: string;
+  jobType?: string;
+  currentStatus: string;
+  statusChangedAt: string;
+  appendHistory?: { status: string; at: string };
+}): Promise<{ ok: true; updatedLinks: number } | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/tracking-links/sync-job", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return { ok: true, updatedLinks: typeof json?.updatedLinks === "number" ? json.updatedLinks : 0 };
 }
 
 async function patchJson(url: URL, body: unknown): Promise<PostJsonResult> {
@@ -562,9 +608,8 @@ async function patchJson(url: URL, body: unknown): Promise<PostJsonResult> {
 export async function portalUpdateTrackingLink(payload: {
   hostToken: string;
   id: string;
-  jobIds?: string[];
+  jobs?: TrackingJobSnapshot[];
   visibleStatuses?: string[];
-  statusLabelOverrides?: Record<string, string>;
   eta?: string | null;
   customNotes?: string | null;
   expiresAt?: string | null;

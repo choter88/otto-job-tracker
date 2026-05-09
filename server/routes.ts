@@ -50,8 +50,11 @@ import {
   portalUpdateTrackingLink,
   portalRevokeTrackingLink,
   portalListTrackingLinks,
+  portalSyncTrackingJob,
   getLicenseBaseUrl,
+  type TrackingJobSnapshot,
 } from "./license-client";
+import { scanNotesForPhi } from "./tracking-link-phi-scan";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
@@ -396,23 +399,98 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // ── Patient tracking links (proxied to portal, host-token-authenticated) ──
-  // The desktop server holds the hostToken; the desktop UI calls these local
-  // routes which forward to /license/v1/tracking-links/* on the portal.
+  // The desktop is the source of truth for job data. We build a snapshot
+  // from local SQLite, run a PHI scan against the patient data those jobs
+  // hold, then forward to /license/v1/tracking-links/* on the portal —
+  // which never sees patient identifiers, only the snapshot we send.
+
+  /**
+   * Resolve local jobs by ID, scoped to the caller's office. Returns the
+   * jobs and any IDs that didn't match (callers fail-fast if any miss).
+   */
+  async function loadLocalJobsForOffice(jobIds: string[], officeId: string): Promise<{
+    jobs: typeof jobs.$inferSelect[];
+    missing: string[];
+  }> {
+    if (jobIds.length === 0) return { jobs: [], missing: [] };
+    const rows = await db.select().from(jobs).where(
+      and(
+        eq(jobs.officeId, officeId),
+        sql`${jobs.id} IN (${sql.join(jobIds.map((id) => sql`${id}`), sql`, `)})`,
+      ),
+    );
+    const found = new Set(rows.map((r) => r.id));
+    return { jobs: rows, missing: jobIds.filter((id) => !found.has(id)) };
+  }
+
+  /**
+   * Build the per-job snapshot the portal stores. Pulls each job's
+   * localized status history (if any) so the patient page can render a
+   * meaningful timeline at first lookup.
+   */
+  async function buildJobSnapshots(jobRows: typeof jobs.$inferSelect[]): Promise<TrackingJobSnapshot[]> {
+    if (jobRows.length === 0) return [];
+    const ids = jobRows.map((j) => j.id);
+    const histories = await db.select({
+      jobId: jobStatusHistory.jobId,
+      newStatus: jobStatusHistory.newStatus,
+      changedAt: jobStatusHistory.changedAt,
+    })
+      .from(jobStatusHistory)
+      .where(sql`${jobStatusHistory.jobId} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`)
+      .orderBy(jobStatusHistory.changedAt);
+    const byJob = new Map<string, Array<{ status: string; at: string }>>();
+    for (const h of histories) {
+      const arr = byJob.get(h.jobId) ?? [];
+      arr.push({ status: h.newStatus, at: new Date(h.changedAt).toISOString() });
+      byJob.set(h.jobId, arr);
+    }
+    return jobRows.map((j) => ({
+      id: j.id,
+      jobType: j.jobType,
+      currentStatus: j.status,
+      statusChangedAt: new Date(j.statusChangedAt).toISOString(),
+      history: byJob.get(j.id) ?? [],
+    }));
+  }
+
   app.post("/api/tracking-links", requireAuth, requireNotViewOnly, async (req, res) => {
     const hostToken = getHostToken();
     if (!hostToken) {
       return res.status(503).json({ error: "Host is not activated" });
     }
-    const { jobIds, visibleStatuses, statusLabelOverrides, eta, customNotes, expiresAt } = req.body || {};
+    const user = getOfficeUser(req);
+    const { jobIds, visibleStatuses, eta, customNotes, expiresAt } = req.body || {};
     if (!Array.isArray(jobIds) || jobIds.length === 0) {
       return res.status(400).json({ error: "jobIds must be a non-empty array" });
     }
+    if (jobIds.length > 10) {
+      return res.status(400).json({ error: "Tracking links can cover at most 10 jobs." });
+    }
     try {
+      const { jobs: localJobs, missing } = await loadLocalJobsForOffice(jobIds, user.officeId);
+      if (missing.length > 0) {
+        return res.status(404).json({ error: "Some of the selected jobs are no longer available." });
+      }
+
+      const phi = scanNotesForPhi({
+        notes: typeof customNotes === "string" ? customNotes : null,
+        jobs: localJobs.map((j) => ({
+          patientFirstName: j.patientFirstName,
+          patientLastName: j.patientLastName,
+          phone: j.phone,
+        })),
+      });
+      if (!phi.ok) {
+        return res.status(400).json({ error: phi.reason, code: "PHI_DETECTED" });
+      }
+
+      const snapshots = await buildJobSnapshots(localJobs);
+
       const result = await portalCreateTrackingLink({
         hostToken,
-        jobIds,
+        jobs: snapshots,
         visibleStatuses,
-        statusLabelOverrides,
         eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
         customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
         expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
@@ -420,7 +498,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (!result.ok) {
         return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
       }
-      const user = getOfficeUser(req);
       trackEvent({ userId: user.id, officeId: user.officeId, eventType: "tracking_link_created", metadata: { jobCount: jobIds.length } });
       res.status(201).json({ link: result.link });
     } catch (error: any) {
@@ -433,15 +510,41 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     if (!hostToken) {
       return res.status(503).json({ error: "Host is not activated" });
     }
+    const user = getOfficeUser(req);
     const { id } = req.params;
-    const { jobIds, visibleStatuses, statusLabelOverrides, eta, customNotes, expiresAt } = req.body || {};
+    const { jobIds, visibleStatuses, eta, customNotes, expiresAt } = req.body || {};
     try {
+      let snapshots: TrackingJobSnapshot[] | undefined;
+      if (Array.isArray(jobIds)) {
+        if (jobIds.length === 0 || jobIds.length > 10) {
+          return res.status(400).json({ error: "jobIds must be 1–10 entries." });
+        }
+        const { jobs: localJobs, missing } = await loadLocalJobsForOffice(jobIds, user.officeId);
+        if (missing.length > 0) {
+          return res.status(404).json({ error: "Some of the selected jobs are no longer available." });
+        }
+        snapshots = await buildJobSnapshots(localJobs);
+
+        if (typeof customNotes === "string") {
+          const phi = scanNotesForPhi({
+            notes: customNotes,
+            jobs: localJobs.map((j) => ({
+              patientFirstName: j.patientFirstName,
+              patientLastName: j.patientLastName,
+              phone: j.phone,
+            })),
+          });
+          if (!phi.ok) {
+            return res.status(400).json({ error: phi.reason, code: "PHI_DETECTED" });
+          }
+        }
+      }
+
       const result = await portalUpdateTrackingLink({
         hostToken,
         id,
-        jobIds,
+        jobs: snapshots,
         visibleStatuses,
-        statusLabelOverrides,
         eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
         customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
         expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
@@ -452,6 +555,78 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.json({ link: result.link });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to update tracking link" });
+    }
+  });
+
+  // ETA estimate from local archived-job history. Returns the median cycle
+  // time (createdAt → archivedAt) for matching jobType + orderDestination
+  // combinations among completed archived jobs, then projects forward from
+  // the youngest still-active job in the selection.
+  app.post("/api/tracking-links/estimate-eta", requireAuth, async (req, res) => {
+    const user = getOfficeUser(req);
+    const { jobIds } = req.body || {};
+    if (!Array.isArray(jobIds) || jobIds.length === 0) {
+      return res.status(400).json({ error: "jobIds must be a non-empty array" });
+    }
+    try {
+      const { jobs: localJobs } = await loadLocalJobsForOffice(jobIds, user.officeId);
+      if (localJobs.length === 0) {
+        return res.json({ suggestedDate: null, sampleSize: 0, basis: null });
+      }
+
+      // For each (jobType, orderDestination) seen in the selection, pull
+      // archived jobs that completed (finalStatus === completed). Use the
+      // delta from originalCreatedAt → archivedAt as the cycle time.
+      const targetCombos = new Set(
+        localJobs.map((j) => `${j.jobType}::${j.orderDestination}`),
+      );
+      const archived = await db.select().from(archivedJobs).where(
+        and(
+          eq(archivedJobs.officeId, user.officeId),
+          eq(archivedJobs.finalStatus, "completed"),
+        ),
+      );
+      const cycleDays: number[] = [];
+      let typeOnlyCycleDays: number[] = [];
+      const targetTypes = new Set(localJobs.map((j) => j.jobType));
+      for (const a of archived) {
+        const created = new Date(a.originalCreatedAt).getTime();
+        const archivedAt = new Date(a.archivedAt).getTime();
+        if (!Number.isFinite(created) || !Number.isFinite(archivedAt) || archivedAt <= created) continue;
+        const days = (archivedAt - created) / (24 * 60 * 60 * 1000);
+        const combo = `${a.jobType}::${a.orderDestination}`;
+        if (targetCombos.has(combo)) cycleDays.push(days);
+        else if (targetTypes.has(a.jobType)) typeOnlyCycleDays.push(days);
+      }
+
+      // Prefer same-type-and-lab samples; fall back to same-type-any-lab
+      // if the precise combo is too sparse.
+      const sample = cycleDays.length >= 3 ? cycleDays : cycleDays.concat(typeOnlyCycleDays);
+      if (sample.length === 0) {
+        return res.json({ suggestedDate: null, sampleSize: 0, basis: null });
+      }
+      const sorted = sample.slice().sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+
+      // Anchor the projection to the *oldest* selected job's createdAt so
+      // the staff sees a date that incorporates how long it's already been
+      // in flight.
+      const oldestCreated = Math.min(...localJobs.map((j) => new Date(j.createdAt).getTime()));
+      const projectedReadyMs = oldestCreated + median * 24 * 60 * 60 * 1000;
+      const suggestedDate = new Date(Math.max(projectedReadyMs, Date.now() + 24 * 60 * 60 * 1000)); // never suggest "today"
+
+      const basis = cycleDays.length >= 3
+        ? `Median of ${cycleDays.length} similar past orders`
+        : `Median of ${sample.length} past ${[...targetTypes].join(" / ")} orders`;
+
+      res.json({
+        suggestedDate: suggestedDate.toISOString(),
+        sampleSize: sample.length,
+        basis,
+        medianDays: Math.round(median),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to estimate ETA" });
     }
   });
 
@@ -1242,12 +1417,28 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (oldJob && updates.status && oldJob.status !== updates.status) {
         // Send notifications while job still exists in database (fixes FK violation)
         await notifyJobStatusChange(job, oldJob.status, getAuthUser(req), storage);
-        
+
+        // Push the new status to any active patient tracking link covering
+        // this job. Fire-and-forget — a portal hiccup must not block the
+        // local status change.
+        const localHostToken = getHostToken();
+        if (localHostToken) {
+          const changedAt = new Date(job.statusChangedAt).toISOString();
+          portalSyncTrackingJob({
+            hostToken: localHostToken,
+            jobId: job.id,
+            jobType: job.jobType,
+            currentStatus: job.status,
+            statusChangedAt: changedAt,
+            appendHistory: { status: job.status, at: changedAt },
+          }).catch((err) => console.error("[tracking-links] sync failed:", err?.message || err));
+        }
+
         if (isAiSummaryEnabled()) {
           // Regenerate AI summary BEFORE archiving (while job still exists)
           await checkAndRegenerateSummary(req.params.id);
         }
-        
+
         // Archive and delete AFTER notifications if status is terminal
         if (updates.status === 'completed' || updates.status === 'cancelled') {
           await storage.archiveJob(job);
@@ -1301,13 +1492,31 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       let updated = 0;
       let archived = 0;
 
+      const bulkHostToken = getHostToken();
       for (const jobId of jobIds) {
         if (typeof jobId !== "string") continue;
         const job = await storage.getJob(jobId);
         if (!job || job.officeId !== officeId) continue;
 
+        const oldStatus = job.status;
         await storage.updateJob(jobId, updates, userId);
         updated++;
+
+        // Push status change to any active tracking link (fire-and-forget).
+        if (bulkHostToken && updates.status && updates.status !== oldStatus) {
+          const refreshed = await storage.getJob(jobId);
+          if (refreshed) {
+            const at = new Date(refreshed.statusChangedAt).toISOString();
+            portalSyncTrackingJob({
+              hostToken: bulkHostToken,
+              jobId: refreshed.id,
+              jobType: refreshed.jobType,
+              currentStatus: refreshed.status,
+              statusChangedAt: at,
+              appendHistory: { status: refreshed.status, at },
+            }).catch((err) => console.error("[tracking-links] bulk sync failed:", err?.message || err));
+          }
+        }
 
         // Auto-archive if status changed to completed/cancelled
         if (updates.status === "completed" || updates.status === "cancelled") {
