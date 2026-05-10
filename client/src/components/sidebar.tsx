@@ -24,7 +24,9 @@ import {
   MoreVertical,
   MessageCircleQuestion,
   HelpCircle,
+  Sparkles,
 } from "lucide-react";
+import { openSpotlightArchive } from "@/components/spotlight/feature-spotlight-host";
 import logoSymbol from "@/assets/logo-symbol.png";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -352,6 +354,10 @@ export default function Sidebar({
             <DropdownMenuItem onSelect={() => onFeedbackClick?.()} data-testid="menu-user-feedback">
               <MessageCircleQuestion className="h-4 w-4" />
               Help &amp; Feedback
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openSpotlightArchive()} data-testid="menu-user-whats-new">
+              <Sparkles className="h-4 w-4" />
+              What&apos;s new
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

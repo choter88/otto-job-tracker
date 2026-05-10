@@ -590,6 +590,26 @@ export async function portalCreateTrackingLink(payload: {
   return { ok: true, link };
 }
 
+// --- Spotlight feature flags (host-token authenticated) ---
+
+export type FeatureFlagsResult =
+  | { ok: true; enabledFeatureIds: string[] }
+  | { ok: false; error: LicenseRequestError };
+
+export async function portalGetFeatureFlags(payload: {
+  hostToken: string;
+}): Promise<FeatureFlagsResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/feature-flags", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  const ids = Array.isArray(json?.enabledFeatureIds)
+    ? json.enabledFeatureIds.filter((s: any) => typeof s === "string")
+    : [];
+  return { ok: true, enabledFeatureIds: ids };
+}
+
 export async function portalRefreshTrackingCatalog(payload: {
   hostToken: string;
   statusCatalog: TrackingStatusCatalogEntry[];

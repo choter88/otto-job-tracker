@@ -76,7 +76,21 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   "job_detail_tab_overview",
   "job_detail_tab_comments",
   "job_detail_tab_related",
+  "job_detail_tab_tracking",
   "custom_column_edited",
+  // Spotlight system — telemetry for feature-adoption analysis. The
+  // event metadata carries `featureId` and (for tour events) `stepId`.
+  "spotlight_modal_seen",
+  "spotlight_modal_dismissed",
+  "spotlight_modal_show_me",
+  "spotlight_tour_started",
+  "spotlight_tour_step_seen",
+  "spotlight_tour_completed",
+  "spotlight_tour_skipped",
+  "spotlight_pulse_dismissed",
+  "spotlight_target_clicked",
+  "spotlight_archive_opened",
+  "spotlight_archive_replay",
 ]);
 
 /** Allowlist for tablet-side event types (POST /tablet/api/track). Kept

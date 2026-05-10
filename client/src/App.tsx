@@ -10,6 +10,7 @@ import SyncManager from "@/components/sync-manager";
 import { ProtectedRoute } from "@/lib/protected-route";
 import { OwnerOrManagerRoute } from "@/lib/owner-or-manager-route";
 import { WizardAutoRedirect } from "@/components/wizard-auto-redirect";
+import { FeatureSpotlightHost } from "@/components/spotlight/feature-spotlight-host";
 import Dashboard from "@/pages/dashboard";
 import AuthPage from "@/pages/auth-page";
 import NotFound from "@/pages/not-found";
@@ -46,6 +47,7 @@ function App() {
               <Toaster />
               <SyncManager />
               <Router />
+              <FeatureSpotlightHost />
             </TooltipProvider>
           </SessionTimeoutProvider>
         </AuthProvider>

@@ -52,6 +52,7 @@ import {
   portalListTrackingLinks,
   portalSyncTrackingJob,
   portalRefreshTrackingCatalog,
+  portalGetFeatureFlags,
   getLicenseBaseUrl,
   type TrackingJobSnapshot,
   type TrackingStatusCatalogEntry,
@@ -702,6 +703,33 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.json({ links: result.links });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to list tracking links" });
+    }
+  });
+
+  // ── Feature flags for the spotlight system (proxied to portal) ──
+  // Returns the enabled-feature ids for this office. The desktop's
+  // useFeatureSpotlights hook intersects with the local registry to
+  // decide what to surface. Falls back to "everything in the local
+  // registry" on the client side if the portal is unreachable, so
+  // spotlights still render in offline windows.
+  app.get("/api/feature-flags", requireAuth, async (_req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      // Same-shape response so the client doesn't need to special-case
+      // unactivated hosts — desktop dev / install setups will simply
+      // see every locally-registered spotlight.
+      return res.json({ enabledFeatureIds: null });
+    }
+    try {
+      const result = await portalGetFeatureFlags({ hostToken });
+      if (!result.ok) {
+        // Silent fall-back: don't surface portal errors to the
+        // spotlight UI; client treats null as "use local registry".
+        return res.json({ enabledFeatureIds: null });
+      }
+      res.json({ enabledFeatureIds: result.enabledFeatureIds });
+    } catch {
+      res.json({ enabledFeatureIds: null });
     }
   });
 
