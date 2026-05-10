@@ -1,6 +1,6 @@
 {
   "name": "rest-express",
-  "version": "1.6.7",
+  "version": "1.7.0",
   "type": "module",
   "main": "desktop/main.js",
   "license": "MIT",
