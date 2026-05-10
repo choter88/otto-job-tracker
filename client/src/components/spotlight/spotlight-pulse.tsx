@@ -68,25 +68,32 @@ export function SpotlightPulse({
         }}
         className={cn(
           "relative grid place-items-center rounded-full",
-          "h-3.5 w-3.5",
+          "h-[18px] w-[18px]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-otto-accent focus-visible:ring-offset-1",
         )}
         style={{ pointerEvents: "auto" }}
       >
-        {/* Core dot */}
+        {/* Outer ambient glow — always on, gives the dot weight against
+            busy backgrounds without competing with the ping ring. */}
         <span
-          className="absolute inset-1 rounded-full bg-otto-accent shadow-[0_0_0_2px_white]"
+          className="absolute -inset-1 rounded-full bg-otto-accent/15 blur-[3px]"
           aria-hidden
         />
         {/* Ping ring */}
         <span
-          className="absolute inset-0 rounded-full bg-otto-accent/40 animate-ping"
+          className="absolute inset-0 rounded-full bg-otto-accent/45 animate-ping"
+          aria-hidden
+        />
+        {/* Core dot — bigger, with a stronger white halo so it reads
+            against any surface. */}
+        <span
+          className="absolute inset-[3px] rounded-full bg-otto-accent shadow-[0_0_0_2.5px_white]"
           aria-hidden
         />
         {/* Hover ring for affordance */}
         {hovered && (
           <span
-            className="absolute -inset-1.5 rounded-full ring-2 ring-otto-accent/30"
+            className="absolute -inset-2 rounded-full ring-2 ring-otto-accent/40"
             aria-hidden
           />
         )}

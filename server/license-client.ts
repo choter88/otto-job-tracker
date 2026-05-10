@@ -591,9 +591,14 @@ export async function portalCreateTrackingLink(payload: {
 }
 
 // --- Spotlight feature flags (host-token authenticated) ---
+//
+// The portal is opt-out: it returns the ids of spotlights to SUPPRESS
+// (kill-switch). The desktop's local registry is the source of truth
+// for what spotlights exist; we just subtract anything the portal flags
+// as disabled. Empty list = nothing suppressed.
 
 export type FeatureFlagsResult =
-  | { ok: true; enabledFeatureIds: string[] }
+  | { ok: true; disabledFeatureIds: string[] }
   | { ok: false; error: LicenseRequestError };
 
 export async function portalGetFeatureFlags(payload: {
@@ -604,10 +609,10 @@ export async function portalGetFeatureFlags(payload: {
   const { status, json, networkError } = await fetchJson(url, payload);
   if (networkError) return { ok: false, error: networkError };
   if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
-  const ids = Array.isArray(json?.enabledFeatureIds)
-    ? json.enabledFeatureIds.filter((s: any) => typeof s === "string")
+  const ids = Array.isArray(json?.disabledFeatureIds)
+    ? json.disabledFeatureIds.filter((s: any) => typeof s === "string")
     : [];
-  return { ok: true, enabledFeatureIds: ids };
+  return { ok: true, disabledFeatureIds: ids };
 }
 
 export async function portalRefreshTrackingCatalog(payload: {

@@ -33,23 +33,33 @@ export function WhatsNewModal({ open, feature, onShowMe, onDismiss }: WhatsNewMo
           <X className="h-4 w-4" />
         </button>
 
-        {modal.media && (
+        {modal.media ? (
           <div className="aspect-[16/9] bg-otto-accent-soft border-b border-line overflow-hidden grid place-items-center">
             <img
               src={modal.media.src}
               alt={modal.media.alt ?? ""}
               className="w-full h-full object-cover"
               onError={(e) => {
-                // Hide broken image, fall back to the icon header below
+                // Hide broken image — the icon-tile below remains
                 (e.currentTarget.parentElement as HTMLElement).style.display = "none";
               }}
             />
           </div>
-        )}
+        ) : null}
 
         <div className="px-6 pt-6 pb-5">
-          <div className="flex items-center gap-1.5 mb-2">
-            <Sparkles className="h-3.5 w-3.5 text-otto-accent" aria-hidden />
+          {!modal.media && (
+            // No media supplied — render a 64px indigo tile so the
+            // modal still has a visual focal point. Same treatment the
+            // patient tracking page uses for its hero icon.
+            <div
+              className="h-14 w-14 rounded-2xl bg-otto-accent text-white grid place-items-center mb-4"
+              aria-hidden
+            >
+              <Sparkles className="h-6 w-6" />
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 mb-1.5">
             <span className="text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-otto-accent">
               New
             </span>

@@ -707,29 +707,23 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // ── Feature flags for the spotlight system (proxied to portal) ──
-  // Returns the enabled-feature ids for this office. The desktop's
-  // useFeatureSpotlights hook intersects with the local registry to
-  // decide what to surface. Falls back to "everything in the local
-  // registry" on the client side if the portal is unreachable, so
-  // spotlights still render in offline windows.
+  // Portal is opt-out: returns disabled-feature ids only. The desktop
+  // surfaces every spotlight in the local registry MINUS this list.
+  // Unactivated hosts / portal errors return an empty disabled list so
+  // spotlights still render in dev / offline windows.
   app.get("/api/feature-flags", requireAuth, async (_req, res) => {
     const hostToken = getHostToken();
     if (!hostToken) {
-      // Same-shape response so the client doesn't need to special-case
-      // unactivated hosts — desktop dev / install setups will simply
-      // see every locally-registered spotlight.
-      return res.json({ enabledFeatureIds: null });
+      return res.json({ disabledFeatureIds: [] });
     }
     try {
       const result = await portalGetFeatureFlags({ hostToken });
       if (!result.ok) {
-        // Silent fall-back: don't surface portal errors to the
-        // spotlight UI; client treats null as "use local registry".
-        return res.json({ enabledFeatureIds: null });
+        return res.json({ disabledFeatureIds: [] });
       }
-      res.json({ enabledFeatureIds: result.enabledFeatureIds });
+      res.json({ disabledFeatureIds: result.disabledFeatureIds });
     } catch {
-      res.json({ enabledFeatureIds: null });
+      res.json({ disabledFeatureIds: [] });
     }
   });
 

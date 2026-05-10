@@ -35,7 +35,9 @@ interface RawPrefs {
 }
 
 interface FeatureFlagsResponse {
-  enabledFeatureIds: string[];
+  // Portal is opt-out: ids listed here are SUPPRESSED. The desktop
+  // surfaces every spotlight in the local registry MINUS these.
+  disabledFeatureIds: string[];
 }
 
 const SESSION_ID_KEY = "otto.spotlight.sessionId";
@@ -83,14 +85,13 @@ export function useFeatureSpotlights() {
     queryFn: async () => {
       try {
         const res = await fetch("/api/feature-flags", { credentials: "include" });
-        if (!res.ok) return { enabledFeatureIds: FEATURE_SPOTLIGHTS.map((f) => f.id) };
+        if (!res.ok) return { disabledFeatureIds: [] };
         return res.json();
       } catch {
-        // Network failure: optimistically enable everything in the
-        // local registry so dev / offline windows still surface
-        // spotlights. The server kill-switch only matters when the
-        // call succeeds.
-        return { enabledFeatureIds: FEATURE_SPOTLIGHTS.map((f) => f.id) };
+        // Network failure: empty disabled list so spotlights still
+        // render in offline windows. The kill-switch only matters
+        // when the call succeeds.
+        return { disabledFeatureIds: [] };
       }
     },
     staleTime: 30 * 60 * 1000,
@@ -172,10 +173,13 @@ export function useFeatureSpotlights() {
   }, [prefs, featureSpotlightsPrefs, update]);
 
   // ── Derived: which spotlights to surface ────────────────────────────
-  const enabledIds = useMemo(
-    () => new Set(flags?.enabledFeatureIds ?? FEATURE_SPOTLIGHTS.map((f) => f.id)),
-    [flags?.enabledFeatureIds],
-  );
+  // Local registry minus portal's disabled list. Defaulting to "no
+  // disabled" means a fresh / dev install surfaces every locally-
+  // registered spotlight without a portal round-trip.
+  const enabledIds = useMemo(() => {
+    const disabled = new Set(flags?.disabledFeatureIds ?? []);
+    return new Set(FEATURE_SPOTLIGHTS.map((f) => f.id).filter((id) => !disabled.has(id)));
+  }, [flags?.disabledFeatureIds]);
 
   const sessionCount = featureSpotlightsPrefs?.__sessions__?.count ?? 0;
 

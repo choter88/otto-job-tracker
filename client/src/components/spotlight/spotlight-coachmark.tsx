@@ -49,6 +49,7 @@ export function SpotlightCoachmark({
   testId,
 }: SpotlightCoachmarkProps) {
   const rect = useElementRect(target);
+  const nextBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Scroll the target into view once when the coachmark opens.
   const scrolledRef = useRef(false);
@@ -58,6 +59,15 @@ export function SpotlightCoachmark({
       scrolledRef.current = true;
     }
   }, [target]);
+
+  // Autofocus the Next button on each step so screen-reader / keyboard
+  // users land on the primary action immediately. Tab still cycles
+  // through Skip / Close.
+  useEffect(() => {
+    if (!target || !rect) return;
+    const t = setTimeout(() => nextBtnRef.current?.focus({ preventScroll: true }), 0);
+    return () => clearTimeout(t);
+  }, [target, rect, step?.index]);
 
   if (!target || !rect) return null;
 
@@ -122,20 +132,24 @@ export function SpotlightCoachmark({
           <div className="mt-3.5 flex items-center justify-between gap-2 border-t border-line-2 pt-2.5">
             {step && step.total > 1 ? (
               <div
-                className="flex items-center gap-1"
+                className="flex items-center gap-2"
                 role="status"
-                aria-label={`Step ${step.index + 1} of ${step.total}`}
+                aria-live="polite"
               >
-                {Array.from({ length: step.total }).map((_, i) => (
-                  <span
-                    key={i}
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full transition-colors",
-                      i === step.index ? "bg-otto-accent" : "bg-line-strong/50",
-                    )}
-                    aria-hidden
-                  />
-                ))}
+                <span className="text-[calc(11px*var(--ui-scale))] font-medium text-ink-mute tabular-nums">
+                  Step {step.index + 1} of {step.total}
+                </span>
+                <span className="flex items-center gap-1" aria-hidden>
+                  {Array.from({ length: step.total }).map((_, i) => (
+                    <span
+                      key={i}
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full transition-colors",
+                        i === step.index ? "bg-otto-accent" : "bg-line-strong/50",
+                      )}
+                    />
+                  ))}
+                </span>
               </div>
             ) : (
               <span aria-hidden />
@@ -156,6 +170,7 @@ export function SpotlightCoachmark({
               )}
               {onNext && (
                 <Button
+                  ref={nextBtnRef}
                   type="button"
                   size="sm"
                   className="h-7 text-[calc(11.5px*var(--ui-scale))]"
