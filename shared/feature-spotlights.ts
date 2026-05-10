@@ -88,10 +88,16 @@ export interface FeatureSpotlight {
 
 export const FEATURE_SPOTLIGHTS: FeatureSpotlight[] = [
   {
+    // releasedAt bumped past current users' migrationDeadlines so this
+    // surfaces to *everyone* on next login — not only accounts created
+    // after this deploy. Picked a date a few days out from the deploy
+    // so even a slow rollout still falls before this date for existing
+    // users (their migrationDeadline is "first session after the
+    // spotlight system shipped").
     id: "patient-tracking-2026-05",
     name: "Patient tracking",
     shortDescription: "Share order status with patients via a public link — no PHI, no office identity.",
-    releasedAt: "2026-05-10",
+    releasedAt: "2026-05-15",
     dismissAfterLogins: 3,
     pulseUntilClicked: true,
     skipFirstSession: true,

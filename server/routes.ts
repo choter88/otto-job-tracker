@@ -464,26 +464,75 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
   /**
    * Build the status catalog (status ID → patient-facing label) the
-   * portal stores alongside the link. Pulled from office.settings.
-   * customStatuses. We pluck only `id` and `label` (capping label
-   * length to match the portal's z.string().max(60)) — no `color`,
-   * `order`, or other fields ride along.
+   * portal stores alongside the link.
+   *
+   * Two label sources, in priority order:
+   *   1. office.settings.trackingLinkDefaults.patientStatusLabels[id]
+   *      — the office's per-status patient-facing override
+   *   2. office.settings.customStatuses[i].label — the office's
+   *      internal label (only used as a catalog entry for office-
+   *      custom IDs that aren't in Otto's static patient map; the
+   *      portal's `patientLabelFor` falls back to the static map
+   *      when an entry is missing, so we don't need to ship every
+   *      standard ID's internal label)
+   *
+   * We pluck only `id` and `label` (capping label length to match
+   * the portal's z.string().max(60)) — no `color`, `order`, or
+   * other fields ride along. No PHI: status IDs and human-typed
+   * status labels only.
    */
   async function buildStatusCatalog(officeId: string): Promise<TrackingStatusCatalogEntry[]> {
     const office = await storage.getOffice(officeId);
-    const settings = (office?.settings || {}) as { customStatuses?: Array<{ id?: unknown; label?: unknown }> };
+    const settings = (office?.settings || {}) as {
+      customStatuses?: Array<{ id?: unknown; label?: unknown }>;
+      trackingLinkDefaults?: { patientStatusLabels?: Record<string, unknown> };
+    };
     const list = Array.isArray(settings.customStatuses) ? settings.customStatuses : [];
+    const overrides = (settings.trackingLinkDefaults?.patientStatusLabels ?? {}) as Record<string, unknown>;
+
     const out: TrackingStatusCatalogEntry[] = [];
     for (const s of list) {
       if (!s) continue;
       const id = typeof s.id === "string" ? s.id.trim() : "";
-      const label = typeof s.label === "string" ? s.label.trim() : "";
       if (id.length === 0 || id.length > 50) continue;
-      if (label.length === 0) continue;
-      out.push({ id, label: label.slice(0, 60) });
+
+      const overrideRaw = overrides[id];
+      const override = typeof overrideRaw === "string" ? overrideRaw.trim() : "";
+      if (override.length > 0) {
+        // Office set an explicit patient-facing label — use it.
+        out.push({ id, label: override.slice(0, 60) });
+        continue;
+      }
+
+      // No override. We could still send the internal label as a
+      // fallback, but that risks leaking office terminology onto
+      // the patient page (e.g. office named "ready_for_pickup" as
+      // "Bob's Front Desk"). Send only when the id is clearly an
+      // office-custom one — the portal's static patient-label map
+      // covers every standard id.
+      if (!STANDARD_PATIENT_STATUS_IDS.has(id)) {
+        const label = typeof s.label === "string" ? s.label.trim() : "";
+        if (label.length > 0) {
+          out.push({ id, label: label.slice(0, 60) });
+        }
+      }
     }
     return out.slice(0, 30);
   }
+
+  // Mirror of the standard ids that otto-web's tracking-status-map
+  // knows how to render with curated patient-facing labels. Kept in
+  // sync by hand — the list is short and rarely changes.
+  const STANDARD_PATIENT_STATUS_IDS = new Set<string>([
+    "job_created",
+    "ordered",
+    "in_progress",
+    "delayed",
+    "quality_check",
+    "ready_for_pickup",
+    "completed",
+    "cancelled",
+  ]);
 
   app.post("/api/tracking-links", requireAuth, requireNotViewOnly, async (req, res) => {
     const hostToken = getHostToken();

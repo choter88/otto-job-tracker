@@ -18,6 +18,7 @@ export type OnboardingStepId =
   | "destinations"
   | "custom_columns"
   | "notification_rules"
+  | "tracking_links"
   | "ehr_import"
   | "done";
 
@@ -41,6 +42,7 @@ export const ONBOARDING_STEP_ORDER: OnboardingStepId[] = [
   "destinations",
   "custom_columns",
   "notification_rules",
+  "tracking_links",
   "ehr_import",
   "done",
 ];

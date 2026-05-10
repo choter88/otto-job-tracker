@@ -33,8 +33,10 @@ import StepJobTypes from "./steps/step-job-types";
 import StepDestinations from "./steps/step-destinations";
 import StepCustomColumns from "./steps/step-custom-columns";
 import StepNotificationRules from "./steps/step-notification-rules";
+import StepTrackingLinks from "./steps/step-tracking-links";
 import StepEhrImport from "./steps/step-ehr-import";
 import StepDone from "./steps/step-done";
+import type { TrackingLinkDefaults } from "@/components/customization/tracking-link-defaults-editor";
 import type { OnboardingStepId } from "@shared/onboarding";
 
 function defaultStatuses(): CustomListItem[] {
@@ -100,6 +102,7 @@ export default function SetupWizardPage() {
   const [destinations, setDestinations] = useState<CustomListItem[]>(defaultDestinations);
   const [columns, setColumns] = useState<CustomColumn[]>([]);
   const [identifierMode, setIdentifierMode] = useState<JobIdentifierMode>("patientName");
+  const [trackingLinkDefaults, setTrackingLinkDefaults] = useState<TrackingLinkDefaults>({});
 
   // Initialize draft state once when office loads
   useEffect(() => {
@@ -119,6 +122,11 @@ export default function SetupWizardPage() {
     );
     setColumns(existingColumns as CustomColumn[]);
     setIdentifierMode(settings.jobIdentifierMode === "trayNumber" ? "trayNumber" : "patientName");
+
+    const tld = (settings.trackingLinkDefaults && typeof settings.trackingLinkDefaults === "object")
+      ? settings.trackingLinkDefaults as TrackingLinkDefaults
+      : {};
+    setTrackingLinkDefaults(tld);
 
     // Step entry rule:
     // - Fresh office (state: pending) → always start at Welcome (step 0). The
@@ -185,6 +193,11 @@ export default function SetupWizardPage() {
       }
       case "notification_rules":
         // Notification rules write to their own table via NotificationRules component.
+        return true;
+      case "tracking_links":
+        // Optional. Save whatever the user customized; an empty object
+        // is fine (defaults at render time).
+        await saveSettingsMutation.mutateAsync({ trackingLinkDefaults });
         return true;
       case "ehr_import":
         // Import is optional and writes to jobs, not settings.
@@ -270,12 +283,21 @@ export default function SetupWizardPage() {
         return <StepCustomColumns columns={columns} onChange={setColumns} />;
       case "notification_rules":
         return <StepNotificationRules />;
+      case "tracking_links":
+        return (
+          <StepTrackingLinks
+            customStatuses={statuses}
+            customJobTypes={jobTypes}
+            value={trackingLinkDefaults}
+            onChange={setTrackingLinkDefaults}
+          />
+        );
       case "ehr_import":
         return <StepEhrImport />;
       case "done":
         return <StepDone />;
     }
-  }, [currentStep.id, identifierMode, statuses, jobTypes, destinations, columns]);
+  }, [currentStep.id, identifierMode, statuses, jobTypes, destinations, columns, trackingLinkDefaults]);
 
   if (officeLoading || !office) {
     return (

@@ -7,6 +7,7 @@
 // matter which office they use.
 
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -44,6 +45,11 @@ export interface TrackingLinkDefaults {
   // Per-job-type overrides for visible statuses. Falls back to the global
   // `visibleStatuses` for any type not present here.
   byJobType?: Record<string, { visibleStatuses?: string[] }>;
+  // Per-status patient-facing label overrides. When set, the patient
+  // page renders the office's chosen label instead of Otto's static
+  // default. Office responsible for keeping these generic / non-PHI;
+  // length-capped to 60 chars at send time.
+  patientStatusLabels?: Record<string, string>;
 }
 
 export const DEFAULT_MESSAGE_TEMPLATE = "Hi! Here's a link to follow your order: {url}";
@@ -96,12 +102,12 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
         <div className="rounded-lg border border-line bg-panel divide-y divide-line-2" data-testid="tracking-defaults-statuses">
           {customStatuses.map((s) => {
             const checked = visibleSet.has(s.id);
-            const patientLabel = PATIENT_FACING_STATUS_LABELS[s.id] ?? s.label;
+            const defaultPatientLabel = PATIENT_FACING_STATUS_LABELS[s.id] ?? s.label;
+            const overrideValue = (value.patientStatusLabels ?? {})[s.id] ?? "";
             return (
-              <label
+              <div
                 key={s.id}
-                htmlFor={`def-vis-${s.id}`}
-                className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-paper-2/50"
+                className="flex items-start gap-3 px-3 py-2.5 hover:bg-paper-2/50"
               >
                 <Checkbox
                   id={`def-vis-${s.id}`}
@@ -112,19 +118,41 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
                       : visible.filter((x) => x !== s.id);
                     onChange({ ...value, visibleStatuses: next });
                   }}
+                  className="mt-1.5"
                 />
                 <span
-                  className="h-2 w-2 rounded-full shrink-0"
+                  className="h-2 w-2 rounded-full shrink-0 mt-2.5"
                   style={{ backgroundColor: s.color }}
                   aria-hidden
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="text-[calc(13px*var(--ui-scale))] font-medium text-ink">{s.label}</div>
-                  <div className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
-                    Patient sees: <span className="text-ink-2">"{patientLabel}"</span>
+                  <Label
+                    htmlFor={`def-vis-${s.id}`}
+                    className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer"
+                  >
+                    {s.label}
+                  </Label>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-faint shrink-0">
+                      Patient sees
+                    </span>
+                    <Input
+                      value={overrideValue}
+                      onChange={(e) => {
+                        const labels = { ...(value.patientStatusLabels ?? {}) };
+                        const v = e.target.value;
+                        if (v.trim().length === 0) delete labels[s.id];
+                        else labels[s.id] = v;
+                        onChange({ ...value, patientStatusLabels: labels });
+                      }}
+                      placeholder={defaultPatientLabel}
+                      maxLength={60}
+                      className="h-7 text-[calc(12px*var(--ui-scale))] bg-white"
+                      data-testid={`patient-label-input-${s.id}`}
+                    />
                   </div>
                 </div>
-              </label>
+              </div>
             );
           })}
         </div>

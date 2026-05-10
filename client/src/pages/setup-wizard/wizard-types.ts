@@ -21,6 +21,12 @@ export const WIZARD_STEPS: WizardStepDefinition[] = [
     optional: true,
   },
   { id: "notification_rules", title: "Overdue rules", shortTitle: "Overdue Rules" },
+  {
+    id: "tracking_links",
+    title: "Patient tracking links (optional)",
+    shortTitle: "Tracking Links",
+    optional: true,
+  },
   { id: "ehr_import", title: "Import from EHR", shortTitle: "EHR Import", optional: true },
   { id: "done", title: "All set", shortTitle: "Done" },
 ];
