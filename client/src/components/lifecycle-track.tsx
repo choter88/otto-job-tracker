@@ -182,9 +182,16 @@ function SegmentsTrack({
   cancelled: boolean;
   size: "compact" | "default";
 }) {
+  // Fixed pill width (not flex-grow) so every pill is the same size in
+  // every row, regardless of how many are filled or how wide the column
+  // is. Earlier `flex-1 max-w-[18px]` distributed leftover cell space
+  // unevenly when some pills were filled (bg-ink-3, opaque) and others
+  // were `bg-line-strong/30` (semi-transparent), creating the appearance
+  // that pills grew as the job progressed.
   const segHeight = size === "compact" ? 6 : 8;
+  const segWidth = size === "compact" ? 16 : 20;
   return (
-    <div className="flex gap-1 items-center" aria-hidden>
+    <div className="flex gap-1 items-center min-w-0" aria-hidden>
       {track.map((s, i) => {
         const state = cancelled
           ? "cancelled"
@@ -197,13 +204,13 @@ function SegmentsTrack({
           <span
             key={s.id}
             className={cn(
-              "rounded flex-1 max-w-[18px] min-w-[8px] transition-colors",
+              "rounded shrink-0 transition-colors",
               state === "done" && "bg-ink-3",
               state === "now" && "bg-otto-accent",
               state === "future" && "bg-line-strong/30",
               state === "cancelled" && "bg-line-strong/20",
             )}
-            style={{ height: `${segHeight}px` }}
+            style={{ height: `${segHeight}px`, width: `${segWidth}px` }}
             data-testid={`lifecycle-segment-${i}`}
             data-state={state}
           />

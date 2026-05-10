@@ -6,8 +6,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Send, Trash2, Pencil, Check, AlertTriangle } from "lucide-react";
+import { Send, Trash2, Pencil, Check, AlertTriangle, Share2 } from "lucide-react";
 import { format } from "date-fns";
+import { isTrackerNoteComment, stripTrackerNotePrefix } from "@/lib/tracker-note-comment";
 import { cn } from "@/lib/utils";
 import type { Job, JobComment } from "@shared/schema";
 
@@ -285,19 +286,46 @@ export default function JobCommentsPanel({
             <p className="text-xs text-muted-foreground mt-0.5">Be the first to add one.</p>
           </div>
         ) : (
-          comments.map((comment: JobComment & { author: any }) => (
+          comments.map((comment: JobComment & { author: any }) => {
+            const isTrackerNote = isTrackerNoteComment(comment.content);
+            const displayContent = isTrackerNote
+              ? stripTrackerNotePrefix(comment.content)
+              : comment.content;
+            // Tracker-note comments are office-generated audit entries.
+            // Edit/Delete don't apply (the canonical state lives on the
+            // tracking link itself, not the comment) — staff edit the
+            // current note from the Patient tracking tab. We hide those
+            // affordances for these rows.
+            return (
             <div key={comment.id} className="flex gap-3 group" data-testid={`comment-${comment.id}`}>
-              <div className="w-8 h-8 bg-primary/20 rounded-full flex items-center justify-center text-primary font-semibold text-sm flex-shrink-0">
-                {getInitials(comment.author?.firstName, comment.author?.lastName)}
+              <div
+                className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm flex-shrink-0",
+                  isTrackerNote
+                    ? "bg-otto-accent-soft text-otto-accent"
+                    : "bg-primary/20 text-primary",
+                )}
+              >
+                {isTrackerNote ? <Share2 className="h-4 w-4" /> : getInitials(comment.author?.firstName, comment.author?.lastName)}
               </div>
               <div className="flex-1">
                 <div className="flex items-baseline gap-2 mb-1 flex-wrap">
                   <span className="font-semibold text-sm">
-                    {comment.author?.firstName} {comment.author?.lastName}
+                    {isTrackerNote ? "Patient note" : `${comment.author?.firstName ?? ""} ${comment.author?.lastName ?? ""}`.trim()}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {format(new Date(comment.createdAt), "MMM d, h:mm a")}
                   </span>
+                  {isTrackerNote && (
+                    <Badge
+                      className="h-5 px-2 text-xs border border-otto-accent-line bg-otto-accent-soft text-otto-accent-ink font-medium"
+                      data-testid={`badge-tracker-note-${comment.id}`}
+                      title="Sent to the patient's tracking page"
+                    >
+                      <Share2 className="h-3 w-3 mr-1" />
+                      Sent to patient
+                    </Badge>
+                  )}
                   {(comment as any).isOverdueComment && (
                     <Badge
                       className="h-5 px-2 text-xs border border-warn/30 bg-warn-bg/60 text-warn font-medium"
@@ -308,7 +336,7 @@ export default function JobCommentsPanel({
                       Overdue
                     </Badge>
                   )}
-                  {comment.authorId === user?.id && editingCommentId !== comment.id && (
+                  {!isTrackerNote && comment.authorId === user?.id && editingCommentId !== comment.id && (
                     <>
                       <Button
                         variant="ghost"
@@ -362,11 +390,21 @@ export default function JobCommentsPanel({
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm text-foreground bg-muted p-3 rounded-lg">{comment.content}</p>
+                  <p
+                    className={cn(
+                      "text-sm whitespace-pre-wrap p-3 rounded-lg",
+                      isTrackerNote
+                        ? "bg-otto-accent-soft/50 border border-otto-accent-line text-ink-2 italic"
+                        : "text-foreground bg-muted",
+                    )}
+                  >
+                    {displayContent}
+                  </p>
                 )}
               </div>
             </div>
-          ))
+            );
+          })
         )}
       </div>
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
@@ -17,6 +17,8 @@ import {
   Save,
   Send,
   Share2,
+  ShieldCheck,
+  Sliders,
   Star,
   StickyNote,
   Trash2,
@@ -33,6 +35,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import JobCommentsPanel from "@/components/job-comments-panel";
 import TrackingLinkDialog, { type TrackingLinkRecord } from "@/components/tracking-link-dialog";
+import { TRACKER_NOTE_COMMENT_PREFIX } from "@/lib/tracker-note-comment";
 import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { sortByOrder } from "@/lib/custom-list-sort";
 import { buildTrackStatuses, getStepIndex } from "@/lib/lifecycle";
@@ -41,7 +44,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import type { Job, Office } from "@shared/schema";
 
-export type JobDetailsTab = "overview" | "comments" | "related";
+export type JobDetailsTab = "overview" | "comments" | "related" | "tracking";
 
 interface JobStatusHistoryEntry {
   id: string;
@@ -179,6 +182,60 @@ export default function JobDetailsModal({
     },
     onError: (error: Error) => {
       toast({ title: "Couldn't extend link", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // ── "Note for patient" composer state + save flow ──
+  // Two side effects per save:
+  //   1. PATCH the tracking link's customNotes — what the patient sees on
+  //      the public page.
+  //   2. POST a job comment prefixed with TRACKER_NOTE_COMMENT_PREFIX so
+  //      staff can see in the Comments tab (a) that a tracker note was
+  //      set/updated, (b) what was set, and (c) when. Acts as the audit
+  //      trail because the patient page only shows the *current* note.
+  const [patientNoteDraft, setPatientNoteDraft] = useState("");
+  const [patientNoteDirty, setPatientNoteDirty] = useState(false);
+  // Seed the draft when the active link changes (or first loads).
+  useEffect(() => {
+    if (!activeTrackingLink) {
+      setPatientNoteDraft("");
+      setPatientNoteDirty(false);
+      return;
+    }
+    setPatientNoteDraft(activeTrackingLink.customNotes ?? "");
+    setPatientNoteDirty(false);
+  }, [activeTrackingLink?.id, activeTrackingLink?.customNotes]);
+
+  const updatePatientNoteMutation = useMutation({
+    mutationFn: async ({ linkId, jobId, note }: { linkId: string; jobId: string; note: string }) => {
+      const trimmed = note.trim();
+      // 1. Update the tracking link's note (PHI scan happens server-side
+      //    on the desktop). Empty string clears the note.
+      const res = await apiRequest("PATCH", `/api/tracking-links/${linkId}`, {
+        customNotes: trimmed.length > 0 ? trimmed : null,
+      });
+      const json = await res.json();
+      // 2. Audit comment on the job. Use a marker prefix so the Comments
+      //    tab can render it distinctly; trim at create time so a note
+      //    that's just whitespace doesn't generate an empty comment.
+      if (trimmed.length > 0) {
+        await apiRequest("POST", `/api/jobs/${jobId}/comments`, {
+          content: TRACKER_NOTE_COMMENT_PREFIX + trimmed,
+        }).catch((err) => {
+          // Comment failure shouldn't block the patient-facing update.
+          console.error("[tracking note] comment audit failed:", err);
+        });
+      }
+      return json.link as TrackingLinkRecord;
+    },
+    onSuccess: () => {
+      setPatientNoteDirty(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "comments"] });
+      toast({ title: "Note updated", description: "The patient will see your update on their tracking page." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't save note", description: error.message, variant: "destructive" });
     },
   });
 
@@ -441,7 +498,9 @@ export default function JobDetailsModal({
               ? "job_detail_tab_comments"
               : value === "related"
                 ? "job_detail_tab_related"
-                : "job_detail_tab_overview";
+                : value === "tracking"
+                  ? "job_detail_tab_tracking"
+                  : "job_detail_tab_overview";
             fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ eventType: tabEvent }) }).catch(() => {});
           }}
           className="flex-1 flex flex-col min-h-0"
@@ -465,6 +524,22 @@ export default function JobDetailsModal({
             >
               <MessageSquare className="h-[14px] w-[14px]" />
               Comments
+            </TabsTrigger>
+            <TabsTrigger
+              value="tracking"
+              className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-ink data-[state=active]:border-b-2 data-[state=active]:border-ink rounded-none px-3.5 py-2.5 -mb-px text-[calc(13px*var(--ui-scale))] font-medium text-ink-mute hover:text-ink-2 gap-1.5"
+              data-testid="tab-job-details-tracking"
+            >
+              <Share2 className="h-[14px] w-[14px]" />
+              Patient tracking
+              {activeTrackingLink && (
+                <span
+                  className="ml-0.5 inline-flex items-center justify-center h-4 px-1.5 rounded-full text-[calc(10px*var(--ui-scale))] font-semibold bg-otto-accent text-white"
+                  aria-label="Active tracking link"
+                >
+                  Live
+                </span>
+              )}
             </TabsTrigger>
             {relatedJobs.length > 0 && (
               <TabsTrigger
@@ -604,106 +679,6 @@ export default function JobDetailsModal({
                   )}
                 </div>
 
-                <div className="border-t border-line my-5" />
-                <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
-                  <Share2 className="h-3 w-3" aria-hidden />
-                  Patient tracking
-                </h4>
-                {activeTrackingLink ? (
-                  <div className="rounded-lg border border-otto-accent-line bg-otto-accent-soft/40 px-3.5 py-3 space-y-2.5" data-testid="tracking-link-summary">
-                    <div className="flex items-center gap-2">
-                      <code className="flex-1 text-[calc(11.5px*var(--ui-scale))] font-mono text-ink truncate">
-                        {activeTrackingLink.url}
-                      </code>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 px-2 shrink-0"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(activeTrackingLink.url);
-                            setTrackingUrlCopied(true);
-                            setTimeout(() => setTrackingUrlCopied(false), 2000);
-                          } catch {
-                            toast({ title: "Copy failed", variant: "destructive" });
-                          }
-                        }}
-                      >
-                        {trackingUrlCopied ? <span className="text-brand-emerald">Copied</span> : <><Copy className="h-3 w-3 mr-1" />Copy</>}
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
-                      <span className="inline-flex items-center gap-1">
-                        <Eye className="h-3 w-3" />
-                        {activeTrackingLink.viewCount} view{activeTrackingLink.viewCount === 1 ? "" : "s"}
-                      </span>
-                      {activeTrackingLink.lastViewedAt && (
-                        <span>· last {format(new Date(activeTrackingLink.lastViewedAt), "MMM d · HH:mm")}</span>
-                      )}
-                      {activeTrackingLink.expiresAt && (
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1",
-                            trackingExpiringSoon ? "text-warn font-medium" : "",
-                          )}
-                          data-testid="tracking-link-expiry"
-                        >
-                          {trackingExpiringSoon && <AlertTriangle className="h-3 w-3" aria-hidden />}
-                          {trackingDaysUntilExpiry !== null && trackingDaysUntilExpiry > 0
-                            ? `Expires ${trackingDaysUntilExpiry === 1 ? "tomorrow" : `in ${trackingDaysUntilExpiry} days`}`
-                            : trackingDaysUntilExpiry === 0
-                              ? "Expires today"
-                              : `Expired ${format(new Date(activeTrackingLink.expiresAt), "MMM d")}`}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 pt-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-[calc(11.5px*var(--ui-scale))]"
-                        onClick={() => {
-                          setTrackingDialogEditing(activeTrackingLink);
-                          setTrackingDialogOpen(true);
-                        }}
-                        data-testid="button-edit-tracking-link"
-                      >
-                        Edit settings
-                      </Button>
-                      {trackingExpiringSoon && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-[calc(11.5px*var(--ui-scale))] border-warn/40 text-warn hover:bg-warn-bg/50"
-                          onClick={() => extendTrackingMutation.mutate(activeTrackingLink.id)}
-                          disabled={extendTrackingMutation.isPending}
-                          data-testid="button-extend-tracking-link-summary"
-                        >
-                          <CalendarPlus className="h-3.5 w-3.5 mr-1" />
-                          {extendTrackingMutation.isPending ? "Extending…" : "Extend 30 days"}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-line bg-panel px-3.5 py-3">
-                    <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute m-0">
-                      No tracking link yet. Generate one to share order status with the patient — no PHI, no office identity, just the statuses you choose.
-                    </p>
-                    <Button
-                      size="sm"
-                      className="mt-2.5"
-                      onClick={() => {
-                        setTrackingDialogEditing(undefined);
-                        setTrackingDialogOpen(true);
-                      }}
-                      data-testid="button-generate-tracking-link"
-                    >
-                      <Share2 className="h-3.5 w-3.5 mr-1.5" />
-                      Generate tracking link
-                    </Button>
-                  </div>
-                )}
               </div>
 
               {/* Right column: Timeline (lifecycle history with actor + timestamp). */}
@@ -786,6 +761,199 @@ export default function JobDetailsModal({
             <div className="h-full overflow-hidden bg-panel">
               <JobCommentsPanel job={job} />
             </div>
+          </TabsContent>
+
+          {/* Patient tracking tab — generate / view / edit / revoke the
+              public link, plus the "Note for patient" composer that lets
+              staff push a generic non-PHI update to the tracker. */}
+          <TabsContent
+            value="tracking"
+            className="mt-0 flex-1 min-h-0 overflow-y-scroll px-6 py-5"
+          >
+            {activeTrackingLink ? (
+              <div className="space-y-5" data-testid="tracking-tab-active">
+                {/* Active link summary card. */}
+                <section className="rounded-lg border border-otto-accent-line bg-otto-accent-soft/40 px-4 py-3.5">
+                  <div className="flex items-center gap-1.5 mb-2 text-[calc(10.5px*var(--ui-scale))] uppercase tracking-[0.10em] text-otto-accent-ink font-semibold">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    Active patient link
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <code
+                      className="flex-1 px-3 py-2 rounded-md bg-white/60 text-[calc(12.5px*var(--ui-scale))] font-mono text-ink truncate"
+                      data-testid="tracking-link-summary"
+                    >
+                      {activeTrackingLink.url}
+                    </code>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 shrink-0"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(activeTrackingLink.url);
+                          setTrackingUrlCopied(true);
+                          setTimeout(() => setTrackingUrlCopied(false), 2000);
+                        } catch {
+                          toast({ title: "Copy failed", variant: "destructive" });
+                        }
+                      }}
+                    >
+                      {trackingUrlCopied ? <span className="text-brand-emerald">Copied</span> : <><Copy className="h-3.5 w-3.5 mr-1.5" />Copy</>}
+                    </Button>
+                  </div>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
+                    <span className="inline-flex items-center gap-1">
+                      <Eye className="h-3 w-3" />
+                      {activeTrackingLink.viewCount} view{activeTrackingLink.viewCount === 1 ? "" : "s"}
+                    </span>
+                    {activeTrackingLink.lastViewedAt && (
+                      <span>· last {format(new Date(activeTrackingLink.lastViewedAt), "MMM d · HH:mm")}</span>
+                    )}
+                    {activeTrackingLink.expiresAt && (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1",
+                          trackingExpiringSoon ? "text-warn font-medium" : "",
+                        )}
+                        data-testid="tracking-link-expiry"
+                      >
+                        {trackingExpiringSoon && <AlertTriangle className="h-3 w-3" aria-hidden />}
+                        {trackingDaysUntilExpiry !== null && trackingDaysUntilExpiry > 0
+                          ? `Expires ${trackingDaysUntilExpiry === 1 ? "tomorrow" : `in ${trackingDaysUntilExpiry} days`}`
+                          : trackingDaysUntilExpiry === 0
+                            ? "Expires today"
+                            : `Expired ${format(new Date(activeTrackingLink.expiresAt), "MMM d")}`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-[calc(12px*var(--ui-scale))]"
+                      onClick={() => {
+                        setTrackingDialogEditing(activeTrackingLink);
+                        setTrackingDialogOpen(true);
+                      }}
+                      data-testid="button-edit-tracking-link"
+                    >
+                      <Sliders className="h-3.5 w-3.5 mr-1.5" />
+                      Edit settings
+                    </Button>
+                    {trackingExpiringSoon && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-[calc(12px*var(--ui-scale))] border-warn/40 text-warn hover:bg-warn-bg/50"
+                        onClick={() => extendTrackingMutation.mutate(activeTrackingLink.id)}
+                        disabled={extendTrackingMutation.isPending}
+                        data-testid="button-extend-tracking-link-summary"
+                      >
+                        <CalendarPlus className="h-3.5 w-3.5 mr-1.5" />
+                        {extendTrackingMutation.isPending ? "Extending…" : "Extend 30 days"}
+                      </Button>
+                    )}
+                  </div>
+                </section>
+
+                {/* Note for patient composer. The current note (if any) is
+                    what's on the patient page right now; the textarea is
+                    the next note that will be saved. Saving updates the
+                    tracker AND posts a tracker-note comment to the job. */}
+                <section data-testid="tracking-tab-note">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <h4 className="text-[calc(11px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute m-0 flex items-center gap-1.5">
+                      <StickyNote className="h-3.5 w-3.5" />
+                      Note for patient
+                    </h4>
+                    {patientNoteDirty && (
+                      <span className="text-[calc(11px*var(--ui-scale))] text-ink-mute italic">
+                        Unsaved
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute leading-snug mb-2">
+                    A short message the patient will see on their tracking page. Use this for generic updates the patient should know about — e.g. <em>"Lens was delayed. We expect it to arrive on 6/1."</em> Don't include patient names, phone numbers, or anything clinical.
+                  </p>
+                  <Textarea
+                    value={patientNoteDraft}
+                    onChange={(e) => {
+                      setPatientNoteDraft(e.target.value);
+                      setPatientNoteDirty(e.target.value !== (activeTrackingLink.customNotes ?? ""));
+                    }}
+                    placeholder="e.g. Lens was delayed — we expect it to arrive on June 1."
+                    maxLength={500}
+                    className="min-h-[88px] bg-white text-[calc(13px*var(--ui-scale))]"
+                    data-testid="tracking-note-textarea"
+                  />
+                  <div className="mt-1 flex items-center justify-between text-[calc(11px*var(--ui-scale))] text-ink-faint">
+                    <span className="inline-flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 text-warn" aria-hidden />
+                      Saved notes are also added to <em>Comments</em> as an audit trail.
+                    </span>
+                    <span className="tabular-nums">{patientNoteDraft.length}/500</span>
+                  </div>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => updatePatientNoteMutation.mutate({
+                        linkId: activeTrackingLink.id,
+                        jobId: job.id,
+                        note: patientNoteDraft,
+                      })}
+                      disabled={!patientNoteDirty || updatePatientNoteMutation.isPending}
+                      data-testid="button-save-patient-note"
+                    >
+                      <Save className="h-3.5 w-3.5 mr-1.5" />
+                      {updatePatientNoteMutation.isPending ? "Saving…" : "Save note"}
+                    </Button>
+                    {patientNoteDirty && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-ink-mute hover:text-ink"
+                        onClick={() => {
+                          setPatientNoteDraft(activeTrackingLink.customNotes ?? "");
+                          setPatientNoteDirty(false);
+                        }}
+                      >
+                        Discard
+                      </Button>
+                    )}
+                  </div>
+                </section>
+              </div>
+            ) : (
+              // No active link — invite to generate one. Same affordance
+              // as the worklist bulk action and the New Job dialog.
+              <div
+                className="rounded-lg border border-line bg-panel px-5 py-6 max-w-lg mx-auto text-center"
+                data-testid="tracking-tab-empty"
+              >
+                <div className="h-12 w-12 rounded-full bg-otto-accent-soft text-otto-accent mx-auto grid place-items-center mb-3">
+                  <Share2 className="h-5 w-5" />
+                </div>
+                <h4 className="font-display text-[calc(16px*var(--ui-scale))] font-medium text-ink m-0">
+                  No tracking link yet
+                </h4>
+                <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1.5 max-w-sm mx-auto">
+                  Generate one to share order status with the patient. No PHI, no office identity — just the statuses you choose.
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => {
+                    setTrackingDialogEditing(undefined);
+                    setTrackingDialogOpen(true);
+                  }}
+                  data-testid="button-generate-tracking-link"
+                >
+                  <Share2 className="h-3.5 w-3.5 mr-1.5" />
+                  Generate tracking link
+                </Button>
+              </div>
+            )}
           </TabsContent>
 
           {/* Related Jobs tab — auto-detected by patient name match + manually linked */}
