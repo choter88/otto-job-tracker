@@ -13,6 +13,13 @@ import { WhatsNewArchive } from "./whats-new-archive";
 
 export const SPOTLIGHT_OPEN_ARCHIVE_EVENT = "otto:spotlight-open-archive";
 export const SPOTLIGHT_REPLAY_EVENT = "otto:spotlight-replay";
+/**
+ * Event fired by the spotlight system to ask the dashboard to open
+ * the office Settings modal pre-selected to a particular tab. Decoupled
+ * via a window event so the spotlight components don't need a handle
+ * to the dashboard's settings state.
+ */
+export const OPEN_OFFICE_SETTINGS_EVENT = "otto:open-office-settings";
 
 export function openSpotlightArchive() {
   window.dispatchEvent(new CustomEvent(SPOTLIGHT_OPEN_ARCHIVE_EVENT));
@@ -21,6 +28,12 @@ export function openSpotlightArchive() {
 export function replaySpotlight(featureId: string) {
   window.dispatchEvent(
     new CustomEvent(SPOTLIGHT_REPLAY_EVENT, { detail: { featureId } }),
+  );
+}
+
+export function openOfficeSettings(tab?: string) {
+  window.dispatchEvent(
+    new CustomEvent(OPEN_OFFICE_SETTINGS_EVENT, { detail: { tab } }),
   );
 }
 

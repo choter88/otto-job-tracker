@@ -22,6 +22,7 @@ import { trackSpotlightEvent } from "@/lib/spotlight-telemetry";
 import { SpotlightPulse } from "./spotlight-pulse";
 import { SpotlightCoachmark } from "./spotlight-coachmark";
 import { WhatsNewModal } from "./whats-new-modal";
+import { openOfficeSettings } from "./feature-spotlight-host";
 import type { FeatureSpotlight, SpotlightTarget } from "@shared/feature-spotlights";
 
 interface OrchestratorProps {
@@ -81,12 +82,26 @@ export function FeatureSpotlightOrchestrator({
     return () => obs.disconnect();
   }, []);
 
-  // ── Forced tour (from the What's New archive) ───────────────────────
+  // ── Forced replay (from the What's New archive) ─────────────────────
+  // Re-runs the spotlight's show-me action regardless of dismissal
+  // state. Branches the same way `handleModalShowMe` does so a feature
+  // with `onShowMe: open-settings` deep-links into settings instead of
+  // attempting an empty tour.
   useEffect(() => {
     if (!forcedTourFeatureId) return;
-    setTour({ featureId: forcedTourFeatureId, stepIndex: 0 });
+    const feature = activeSpotlights.find((s) => s.feature.id === forcedTourFeatureId)?.feature;
     onForcedTourConsumed?.();
-  }, [forcedTourFeatureId, onForcedTourConsumed]);
+    if (!feature) return;
+
+    const action = feature.onShowMe ?? { kind: "tour" as const };
+    if (action.kind === "open-settings") {
+      openOfficeSettings(action.tab);
+      return;
+    }
+    if (action.kind === "none") return;
+    if (feature.steps.length === 0) return;
+    setTour({ featureId: forcedTourFeatureId, stepIndex: 0 });
+  }, [forcedTourFeatureId, onForcedTourConsumed, activeSpotlights]);
 
   // ── Pick the spotlight that should "own" this session ───────────────
   //
@@ -120,11 +135,36 @@ export function FeatureSpotlightOrchestrator({
   const handleModalShowMe = useCallback(() => {
     if (!modalFeature) return;
     trackSpotlightEvent("spotlight_modal_show_me", { featureId: modalFeature.id });
-    trackSpotlightEvent("spotlight_tour_started", { featureId: modalFeature.id });
-    startTour(modalFeature.id);
+    // Default to the tour kind so legacy entries without an explicit
+    // `onShowMe` continue to behave the same way.
+    const action = modalFeature.onShowMe ?? { kind: "tour" as const };
     setModalFor(null);
-    setTour({ featureId: modalFeature.id, stepIndex: 0 });
-  }, [modalFeature, startTour]);
+
+    switch (action.kind) {
+      case "open-settings":
+        // Mark as completed (not skipped) — the user followed our
+        // recommended next-action; counts as engagement.
+        completeTour(modalFeature.id);
+        openOfficeSettings(action.tab);
+        return;
+      case "none":
+        // Just dismiss. Modal copy alone was the point.
+        completeTour(modalFeature.id);
+        return;
+      case "tour":
+      default:
+        // Multi-step coachmark tour. Bails to "completed" with no steps
+        // rather than getting stuck in an empty cursor state.
+        if (modalFeature.steps.length === 0) {
+          completeTour(modalFeature.id);
+          return;
+        }
+        trackSpotlightEvent("spotlight_tour_started", { featureId: modalFeature.id });
+        startTour(modalFeature.id);
+        setTour({ featureId: modalFeature.id, stepIndex: 0 });
+        return;
+    }
+  }, [modalFeature, startTour, completeTour]);
 
   const handleModalDismiss = useCallback(() => {
     if (!modalFeature) return;

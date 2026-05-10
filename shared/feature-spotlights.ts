@@ -55,6 +55,24 @@ export interface SpotlightModal {
   secondaryCtaLabel?: string;
 }
 
+/**
+ * What happens when the user clicks the modal's primary CTA.
+ *
+ *  - `tour` (default): runs the spotlight's `steps[]` as coachmarks.
+ *  - `open-settings`: opens the office Settings modal pre-selected to
+ *    a tab id. Useful when the feature lives entirely inside Settings
+ *    (e.g. configuration-only features).
+ *  - `none`: just dismiss the modal — no follow-up action. Use when
+ *    the modal copy alone is the whole pitch.
+ *
+ * Default is `tour` for back-compat, but new entries should be
+ * explicit so future-readers know what to expect.
+ */
+export type SpotlightShowMeAction =
+  | { kind: "tour" }
+  | { kind: "open-settings"; tab: string }
+  | { kind: "none" };
+
 export interface FeatureSpotlight {
   /** Stable, unique, never-reused. e.g. "patient-tracking-2026-05". */
   id: string;
@@ -70,8 +88,14 @@ export interface FeatureSpotlight {
   /** Optional What's New modal. Omit when the feature only deserves
    *  pulse + coachmarks (no announcement). */
   modal?: SpotlightModal;
-  /** Coachmark sequence triggered by the modal's primary CTA OR by
-   *  hover/click on a pulse dot. */
+  /** What the modal's primary CTA does. Defaults to running the tour
+   *  (i.e. rendering `steps[]` as coachmarks). When set to
+   *  `open-settings`, `steps` is ignored on the show-me path. */
+  onShowMe?: SpotlightShowMeAction;
+  /** Coachmark sequence triggered by `onShowMe.kind === "tour"` OR by
+   *  hover/click on a pulse dot. May be empty if the feature uses
+   *  `open-settings` / `none` as its show-me action and has
+   *  `pulseUntilClicked: false`. */
   steps: SpotlightStep[];
   /** Stop showing pulses after this many sessions, even if not clicked.
    *  Default 5. Set to 0 to never auto-archive. */
@@ -99,40 +123,25 @@ export const FEATURE_SPOTLIGHTS: FeatureSpotlight[] = [
     shortDescription: "Share order status with patients via a public link — no PHI, no office identity.",
     releasedAt: "2026-05-15",
     dismissAfterLogins: 3,
-    pulseUntilClicked: true,
+    // Modal-only experience for now: the multi-step coachmark tour was
+    // brittle (timing/positioning bugs around dialog mounts and
+    // off-screen tabs), so the announcement is the modal copy and the
+    // primary CTA jumps straight into the configuration surface. No
+    // pulse dots either — same fragility. We can re-enable the tour
+    // once the orchestrator's target-resolution edge cases are
+    // ironed out.
+    pulseUntilClicked: false,
     skipFirstSession: true,
     modal: {
       title: "Share order status with patients",
       body:
-        "Generate a public link from any job. Patients see live order updates without logging in, without seeing PHI, and without knowing which office they came from. Customize what they see in Settings → Tracking Links.",
-      primaryCtaLabel: "Show me",
+        "Generate a public link from any job. Patients see live order updates without logging in, without seeing PHI, and without knowing which office they came from. Open Settings to choose what statuses they see, write a default note, and customize your share-message template.",
+      primaryCtaLabel: "Open Tracking Links settings",
       secondaryCtaLabel: "Maybe later",
     },
-    steps: [
-      {
-        id: "tab",
-        target: { kind: "testid", testId: "tab-job-details-tracking" },
-        title: "New tab: Patient tracking",
-        body: "Open any job and use this tab to generate, view, or edit a tracking link.",
-        placement: "bottom",
-      },
-      {
-        id: "save-and-track",
-        target: { kind: "testid", testId: "button-save-job-and-track" },
-        title: "Generate while you create",
-        body: "On New Job, save the job and generate a tracking link in one click.",
-        placement: "top",
-        waitFor: { kind: "testid", testId: "dialog-job" },
-      },
-      {
-        id: "settings-tab",
-        target: { kind: "testid", testId: "tab-tracking-links" },
-        title: "Set defaults once",
-        body: "Open Settings → Tracking Links to choose which statuses patients see by default and customize the message you copy when sharing.",
-        placement: "right",
-        waitFor: { kind: "testid", testId: "tab-tracking-links" },
-      },
-    ],
+    onShowMe: { kind: "open-settings", tab: "tracking" },
+    // No steps — the show-me action is `open-settings`, not `tour`.
+    steps: [],
   },
 ];
 

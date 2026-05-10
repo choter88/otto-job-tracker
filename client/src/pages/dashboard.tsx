@@ -15,6 +15,7 @@ import HealthModal from "@/components/health-modal";
 import UserSettingsModal, { applyUserPreferences } from "@/components/user-settings-modal";
 import { FeedbackDialog } from "@/components/feedback-dialog";
 import BackupRestoreBanner from "@/components/backup-restore-banner";
+import { OPEN_OFFICE_SETTINGS_EVENT } from "@/components/spotlight/feature-spotlight-host";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
@@ -24,9 +25,25 @@ export default function Dashboard() {
   const { user, logoutMutation } = useAuth();
   const [location, setLocation] = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>(undefined);
   const [healthOpen, setHealthOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
+
+  // Listen for the global "open office settings" event fired by the
+  // spotlight system (and potentially other deep-link sources later).
+  // Translates an event with `{ tab }` into opening the SettingsModal
+  // pre-selected to that tab.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const tab = typeof detail?.tab === "string" ? detail.tab : undefined;
+      setSettingsInitialTab(tab);
+      setSettingsOpen(true);
+    };
+    window.addEventListener(OPEN_OFFICE_SETTINGS_EVENT, handler);
+    return () => window.removeEventListener(OPEN_OFFICE_SETTINGS_EVENT, handler);
+  }, []);
 
   // Derive tab from URL - check if we're on a specific tab route
   const [, importantParams] = useRoute("/important");
@@ -163,7 +180,16 @@ export default function Dashboard() {
       </main>
 
       {/* Settings Modal */}
-      <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsModal
+        open={settingsOpen}
+        onOpenChange={(o) => {
+          setSettingsOpen(o);
+          // Clear the initialTab when the modal closes so the next
+          // "Settings" click from the user menu lands on General again.
+          if (!o) setSettingsInitialTab(undefined);
+        }}
+        initialTab={settingsInitialTab}
+      />
       <HealthModal open={healthOpen} onOpenChange={setHealthOpen} />
       <UserSettingsModal open={userSettingsOpen} onOpenChange={setUserSettingsOpen} />
       <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />

@@ -13,16 +13,28 @@ read both if you're touching the system end-to-end.
 
 When you (the user) say this, do the following, in order:
 
-1. **Make sure every UI element you'll point at has a `data-testid`.**
-   The codebase already uses these heavily; if your new buttons/tabs
-   don't have them, add them in the same edit.
-2. **Add ONE entry to `FEATURE_SPOTLIGHTS`** in
+1. **Pick the `onShowMe` action.** Three options:
+   - `{ kind: "open-settings", tab: "<tab-id>" }` — opens the office
+     Settings modal pre-selected to a tab. **Default for any feature
+     whose configuration lives in Settings.** Robust, no DOM-targeting
+     required.
+   - `{ kind: "none" }` — modal copy is the whole pitch; no follow-up.
+   - `{ kind: "tour" }` — multi-step coachmarks. **Currently brittle
+     around dialog mounts and async DOM** — only use when the targets
+     are stable, top-level UI elements present at app start.
+2. **If using `tour`**: make sure every UI element you'll point at
+   has a stable `data-testid`. The codebase uses these heavily for
+   tests; add one in the same edit if missing.
+3. **Add ONE entry to `FEATURE_SPOTLIGHTS`** in
    [`shared/feature-spotlights.ts`](../shared/feature-spotlights.ts).
-   Pick a stable id, set `releasedAt`, write the modal copy + steps.
-3. **That's it.** No portal change required unless you need to
+   Pick a stable id, set `releasedAt` to a date a few days in the
+   future (so existing users see it), write the modal copy, set
+   `onShowMe`, set `pulseUntilClicked: false` unless you really want
+   pulse dots (also currently brittle).
+4. **That's it.** No portal change required unless you need to
    kill-switch it (see below). The desktop registry is the source of
    truth; the portal is opt-out only.
-4. Type-check, build, ship the desktop. The portal needs no redeploy.
+5. Type-check, build, ship the desktop. The portal needs no redeploy.
 
 The rest of this doc is the reference for getting the entry right.
 
@@ -92,31 +104,51 @@ The user can replay any tour at any time from **User menu → What's new
     // Optional bundled image, otherwise a default 64px indigo Sparkles
     // tile renders. Put images in client/public/spotlights/.
     media: { kind: "image", src: "/spotlights/my-feature.png", alt: "..." },
-    primaryCtaLabel: "Show me",     // default
-    secondaryCtaLabel: "Maybe later", // default
+    primaryCtaLabel: "Open Settings",  // default "Show me"
+    secondaryCtaLabel: "Maybe later",  // default
   },
 
-  // 1–4 coachmarks. More than 4 is too long; consider splitting.
-  steps: [
-    {
-      id: "step-1",                              // unique within the feature
-      target: { kind: "testid", testId: "your-button-testid" },
-      title: "Step heading (~5–8 words)",
-      body: "One or two sentences max.",
-      placement: "bottom",                       // top | bottom | left | right
-      // OPTIONAL: only render this step when the host element is in
-      // the DOM. Useful when the target lives inside a dialog/panel
-      // that's only open in certain workflows.
-      waitFor: { kind: "testid", testId: "the-host-modal-testid" },
-    },
-  ],
+  // What the modal's primary CTA does. THREE OPTIONS:
+  //
+  //   { kind: "open-settings", tab: "tracking" }
+  //     → Opens office Settings deep-linked to the named tab. The
+  //       robust default — no DOM targeting, no timing bugs. Use
+  //       for any feature whose config lives in Settings.
+  //
+  //   { kind: "none" }
+  //     → Just dismiss. Modal copy is the whole pitch. Use for
+  //       features that need awareness but no follow-up.
+  //
+  //   { kind: "tour" }
+  //     → Run the steps[] below as coachmarks. CURRENTLY BRITTLE.
+  //       Only use when targets are top-level, stable, present at
+  //       app start. Avoid pointing at targets inside dialogs or
+  //       async-mounted panels.
+  //
+  // Defaults to { kind: "tour" } for back-compat, but new entries
+  // SHOULD be explicit so future-readers know what to expect.
+  onShowMe: { kind: "open-settings", tab: "tracking" },
+
+  // 1–4 coachmarks. ONLY used when onShowMe.kind === "tour" (or
+  // pulseUntilClicked: true). Leave empty when using open-settings
+  // or none.
+  steps: [],
 
   // Knobs (sane defaults shown).
-  dismissAfterLogins: 3,    // hide after N sessions even if not clicked. default 5.
-  pulseUntilClicked: true,  // persistent pulse dot. default true.
-  skipFirstSession: true,   // hide on session 1 (post-onboarding). default true.
+  dismissAfterLogins: 3,     // hide after N sessions even if not clicked. default 5.
+  pulseUntilClicked: false,  // persistent pulse dot. default true — but set FALSE
+                             // unless the tour mechanism is stable for your targets.
+  skipFirstSession: true,    // hide on session 1 (post-onboarding). default true.
 }
 ```
+
+### Available `tab` ids for `open-settings`
+
+These are the tab ids accepted by `SettingsModal`'s `initialTab` prop
+(see `client/src/components/settings-modal.tsx`):
+
+- `general`, `statuses`, `types`, `destinations`, `customColumns`,
+  `tracking`, `notifications`, `tablet`
 
 ### Picking ids
 

@@ -33,6 +33,10 @@ import type { Office } from "@shared/schema";
 interface SettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Tab id to focus when the modal opens. Re-applied any time `open`
+   *  flips from false → true, so callers can deep-link via this prop
+   *  without managing the modal's internal tab state. */
+  initialTab?: string;
 }
 
 function InviteCodeSection() {
@@ -251,11 +255,20 @@ function TabletSettingsContent() {
   );
 }
 
-export default function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
+export default function SettingsModal({ open, onOpenChange, initialTab }: SettingsModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState("general");
+  const [activeTab, setActiveTab] = useState(initialTab ?? "general");
+
+  // Re-apply `initialTab` every time the modal opens. Caller-driven
+  // deep-linking: parent flips `open` true with a new `initialTab` and
+  // the modal lands on it regardless of where the user left off.
+  useEffect(() => {
+    if (open && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [open, initialTab]);
 
   const { data: office, isLoading } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
