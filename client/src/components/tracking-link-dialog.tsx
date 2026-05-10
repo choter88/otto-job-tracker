@@ -70,6 +70,7 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { renderMessageTemplate } from "@/components/customization/tracking-link-defaults-editor";
+import { formatPatientDisplayName } from "@shared/name-format";
 import type { Job, Office } from "@shared/schema";
 
 const DEFAULT_VISIBLE_STATUSES = ["ordered", "in_progress", "ready_for_pickup"];
@@ -646,10 +647,41 @@ function ScopeSummary({ jobs }: { jobs: Job[] }) {
         ? `${labels[0]} and ${labels[1]}`
         : `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
 
+  // Surface the patient name for office staff context — they're picking
+  // settings for a specific patient's link. PHI stays desktop-side; the
+  // portal never receives this name (only jobType + status flow through).
+  // Single-patient case: show the name. Multi-patient case (rare; bulk
+  // selection across patients): show the count without names.
+  const uniqueNames = Array.from(
+    new Set(
+      jobs
+        .map((j) => formatPatientDisplayName(j.patientFirstName, j.patientLastName))
+        .filter((n) => n.length > 0),
+    ),
+  );
+  const patientLabel = uniqueNames.length === 1 ? uniqueNames[0] : null;
+
   return (
     <div className="text-[calc(12px*var(--ui-scale))] text-ink-mute" data-testid="track-scope">
-      Tracking <span className="text-ink font-medium">{jobs.length === 1 ? "this job" : `${jobs.length} jobs`}</span>
-      {labels.length > 0 && <> — patient sees "<span className="text-ink-2">{list}</span>".</>}
+      Tracking{" "}
+      {patientLabel ? (
+        <>
+          <span className="text-ink font-medium">{patientLabel}</span>'s{" "}
+          <span className="text-ink font-medium">
+            {labels.length > 0 ? list : (jobs.length === 1 ? "job" : `${jobs.length} jobs`)}
+          </span>
+        </>
+      ) : (
+        <span className="text-ink font-medium">
+          {jobs.length === 1 ? "this job" : `${jobs.length} jobs`}
+        </span>
+      )}
+      {!patientLabel && labels.length > 0 && (
+        <> — patient sees "<span className="text-ink-2">{list}</span>".</>
+      )}
+      {patientLabel && (
+        <> — patient page just shows "<span className="text-ink-2">{list}</span>" (never the name).</>
+      )}
     </div>
   );
 }

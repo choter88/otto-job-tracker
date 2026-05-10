@@ -552,12 +552,28 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         const bDate = new Date(b.statusChangedAt || b.createdAt).getTime();
         return sortOrder === 'asc' ? aDate - bDate : bDate - aDate;
       }
-      
+
+      // Status sort follows the office's workflow order (the same order
+      // shown in the lifecycle pill), not alphabetical. Ascending =
+      // earliest-stage first ("Created" → "Dispensed"); descending
+      // reverses. Statuses not in the customStatuses list (e.g. legacy
+      // ids no longer in the office config) sort to the end.
+      if (sortBy === 'status') {
+        const orderById = new Map<string, number>();
+        customStatuses.forEach((s: any, i: number) => {
+          if (s?.id) orderById.set(String(s.id), i);
+        });
+        const aIdx = orderById.get(a.status) ?? Number.MAX_SAFE_INTEGER;
+        const bIdx = orderById.get(b.status) ?? Number.MAX_SAFE_INTEGER;
+        if (aIdx === bIdx) return 0;
+        return sortOrder === 'asc' ? aIdx - bIdx : bIdx - aIdx;
+      }
+
       // Handle string sorting with case-insensitive comparison
-      if (sortBy === 'patientLastName' || sortBy === 'trayNumber' || sortBy === 'jobType' || sortBy === 'status' || sortBy === 'orderDestination') {
+      if (sortBy === 'patientLastName' || sortBy === 'trayNumber' || sortBy === 'jobType' || sortBy === 'orderDestination') {
         const aValue = ((a[sortBy as keyof Job] as string) || "").toLowerCase();
         const bValue = ((b[sortBy as keyof Job] as string) || "").toLowerCase();
-        return sortOrder === 'asc' 
+        return sortOrder === 'asc'
           ? aValue.localeCompare(bValue)
           : bValue.localeCompare(aValue);
       }
@@ -571,7 +587,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         return aValue < bValue ? 1 : -1;
       }
     });
-  }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, tabFilter, customColumnFilters, sortBy, sortOrder, customColumns]);
+  }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, tabFilter, customColumnFilters, sortBy, sortOrder, customColumns, customStatuses]);
 
   // Count jobs per patient for the "related" indicator
   const patientJobCounts = useMemo(() => {
