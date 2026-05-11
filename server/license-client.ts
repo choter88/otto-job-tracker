@@ -500,6 +500,12 @@ export interface TrackingStatusCatalogEntry {
   label: string;
 }
 
+export interface TrackingNoteEntry {
+  id: string;
+  content: string;
+  createdAt: string;
+}
+
 export interface TrackingLinkRecord {
   id: string;
   token: string;
@@ -508,7 +514,12 @@ export interface TrackingLinkRecord {
   jobs: TrackingJobSnapshot[];
   visibleStatuses: string[];
   eta: string | null;
+  /** Legacy single-string note. New writes go to `notes[]`; left in
+   *  place so existing links don't lose their note on deploy. */
   customNotes: string | null;
+  /** Append-only timestamped patient-facing notes log. Each entry
+   *  surfaces as a row on the patient tracking page's update list. */
+  notes: TrackingNoteEntry[];
   expiresAt: string | null;
   revokedAt: string | null;
   viewCount: number;
@@ -548,6 +559,17 @@ function parseTrackingJobs(raw: any): TrackingJobSnapshot[] {
   return out;
 }
 
+function parseTrackingNotes(raw: any): TrackingNoteEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TrackingNoteEntry[] = [];
+  for (const n of raw) {
+    if (!n || typeof n !== "object") continue;
+    if (typeof n.id !== "string" || typeof n.content !== "string" || typeof n.createdAt !== "string") continue;
+    out.push({ id: n.id, content: n.content, createdAt: n.createdAt });
+  }
+  return out;
+}
+
 function parseTrackingLink(json: any): TrackingLinkRecord | null {
   if (!json || typeof json !== "object") return null;
   if (typeof json.id !== "string" || typeof json.token !== "string") return null;
@@ -560,6 +582,7 @@ function parseTrackingLink(json: any): TrackingLinkRecord | null {
     visibleStatuses: Array.isArray(json.visibleStatuses) ? json.visibleStatuses.map((s: any) => String(s)) : [],
     eta: typeof json.eta === "string" ? json.eta : null,
     customNotes: typeof json.customNotes === "string" ? json.customNotes : null,
+    notes: parseTrackingNotes(json.notes),
     expiresAt: typeof json.expiresAt === "string" ? json.expiresAt : null,
     revokedAt: typeof json.revokedAt === "string" ? json.revokedAt : null,
     viewCount: typeof json.viewCount === "number" ? json.viewCount : 0,
@@ -688,6 +711,26 @@ export async function portalUpdateTrackingLink(payload: {
   const url = new URL(`/license/v1/tracking-links/${encodeURIComponent(payload.id)}`, base);
   const { id, ...body } = payload;
   const { status, json, networkError } = await patchJson(url, body);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  const link = parseTrackingLink(json);
+  if (!link) {
+    return { ok: false, error: { statusCode: 502, code: "BAD_PORTAL_RESPONSE", message: "Tracking link response was malformed." } };
+  }
+  return { ok: true, link };
+}
+
+export async function portalAddTrackingLinkNote(payload: {
+  hostToken: string;
+  id: string;
+  note: TrackingNoteEntry;
+}): Promise<TrackingLinkResult> {
+  const base = getLicenseBaseUrl();
+  const url = new URL(`/license/v1/tracking-links/${encodeURIComponent(payload.id)}/notes`, base);
+  const { status, json, networkError } = await fetchJson(url, {
+    hostToken: payload.hostToken,
+    note: payload.note,
+  });
   if (networkError) return { ok: false, error: networkError };
   if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
   const link = parseTrackingLink(json);

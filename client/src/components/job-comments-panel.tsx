@@ -311,21 +311,13 @@ export default function JobCommentsPanel({
               <div className="flex-1">
                 <div className="flex items-baseline gap-2 mb-1 flex-wrap">
                   <span className="font-semibold text-sm">
-                    {isTrackerNote ? "Patient note" : `${comment.author?.firstName ?? ""} ${comment.author?.lastName ?? ""}`.trim()}
+                    {isTrackerNote
+                      ? "Added to patient tracking page"
+                      : `${comment.author?.firstName ?? ""} ${comment.author?.lastName ?? ""}`.trim()}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {format(new Date(comment.createdAt), "MMM d, h:mm a")}
                   </span>
-                  {isTrackerNote && (
-                    <Badge
-                      className="h-5 px-2 text-xs border border-otto-accent-line bg-otto-accent-soft text-otto-accent-ink font-medium"
-                      data-testid={`badge-tracker-note-${comment.id}`}
-                      title="Sent to the patient's tracking page"
-                    >
-                      <Share2 className="h-3 w-3 mr-1" />
-                      Sent to patient
-                    </Badge>
-                  )}
                   {(comment as any).isOverdueComment && (
                     <Badge
                       className="h-5 px-2 text-xs border border-warn/30 bg-warn-bg/60 text-warn font-medium"

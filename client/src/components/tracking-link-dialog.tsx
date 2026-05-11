@@ -102,6 +102,12 @@ export interface TrackingJobSnapshot {
   history?: Array<{ status: string; at: string }>;
 }
 
+export interface TrackingNoteEntry {
+  id: string;
+  content: string;
+  createdAt: string;
+}
+
 export interface TrackingLinkRecord {
   id: string;
   token: string;
@@ -110,7 +116,13 @@ export interface TrackingLinkRecord {
   jobs: TrackingJobSnapshot[];
   visibleStatuses: string[];
   eta: string | null;
+  /** Legacy single-string note; superseded by `notes[]`. Kept so
+   *  pre-migration links continue to render. */
   customNotes: string | null;
+  /** Append-only timestamped notes log shown to the patient as a
+   *  chronological update list. New "Save note" clicks append; the
+   *  desktop and patient page both render entries oldest-first. */
+  notes: TrackingNoteEntry[];
   expiresAt: string | null;
   revokedAt: string | null;
   viewCount: number;

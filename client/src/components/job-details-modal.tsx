@@ -179,14 +179,48 @@ export default function JobDetailsModal({
     : null;
   const trackingExpiringSoon = typeof trackingDaysUntilExpiry === "number" && trackingDaysUntilExpiry <= 7;
 
+  // Helper — write a freshly-mutated link into every cached
+  // `/api/tracking-links/list` query so the Tracking tab paints the
+  // new state immediately. Required because queryClient is configured
+  // with `staleTime: Infinity` globally: bare `invalidateQueries`
+  // marks queries stale but refetches happen asynchronously, leaving
+  // a perceptible delay before the panel updates. Combining
+  // setQueriesData (instant) with invalidate (eventual consistency)
+  // gives instant UI feedback without giving up source-of-truth from
+  // the server.
+  const writeUpdatedLinkToCache = (updated: TrackingLinkRecord) => {
+    queryClient.setQueriesData<{ links: TrackingLinkRecord[] }>(
+      { queryKey: ["/api/tracking-links/list"] },
+      (old) => {
+        if (!old?.links) return old;
+        const hit = old.links.some((l) => l.id === updated.id);
+        return {
+          links: hit
+            ? old.links.map((l) => (l.id === updated.id ? updated : l))
+            : [...old.links, updated],
+        };
+      },
+    );
+  };
+  const dropLinkFromCache = (linkId: string) => {
+    queryClient.setQueriesData<{ links: TrackingLinkRecord[] }>(
+      { queryKey: ["/api/tracking-links/list"] },
+      (old) => {
+        if (!old?.links) return old;
+        return { links: old.links.filter((l) => l.id !== linkId) };
+      },
+    );
+  };
+
   const extendTrackingMutation = useMutation({
     mutationFn: async (linkId: string) => {
       const newExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       const res = await apiRequest("PATCH", `/api/tracking-links/${linkId}`, { expiresAt: newExpiresAt });
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+    onSuccess: async (data) => {
+      if (data?.link) writeUpdatedLinkToCache(data.link as TrackingLinkRecord);
+      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
       toast({ title: "Link extended", description: "Now valid for another 30 days." });
     },
     onError: (error: Error) => {
@@ -212,8 +246,9 @@ export default function JobDetailsModal({
       });
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+    onSuccess: async (data) => {
+      if (data?.link) writeUpdatedLinkToCache(data.link as TrackingLinkRecord);
+      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
       toast({ title: "Tracking link generated", description: "Copy the message to share with your patient." });
     },
     onError: (error: Error) => {
@@ -233,8 +268,9 @@ export default function JobDetailsModal({
       });
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+    onSuccess: async (data) => {
+      if (data?.link) writeUpdatedLinkToCache(data.link as TrackingLinkRecord);
+      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
       toast({ title: "Tracking link updated" });
     },
     onError: (error: Error) => {
@@ -247,8 +283,9 @@ export default function JobDetailsModal({
       const res = await apiRequest("POST", `/api/tracking-links/${linkId}/revoke`);
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+    onSuccess: async (_data, linkId) => {
+      dropLinkFromCache(linkId);
+      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
       setConfirmRevokeOpen(false);
       toast({ title: "Tracking link revoked", description: "The link is no longer active." });
     },
@@ -262,36 +299,46 @@ export default function JobDetailsModal({
   // revoke+regenerate naturally remounts the panel and clears its
   // internal state.
 
-  // "Note for patient" mutation has two side effects per save:
-  //   1. PATCH the tracking link's customNotes — what the patient sees
-  //      on the public page.
-  //   2. POST a job comment prefixed with TRACKER_NOTE_COMMENT_PREFIX
-  //      so staff can see in the Comments tab (a) that a tracker note
-  //      was set/updated, (b) what was set, and (c) when. Acts as the
-  //      audit trail because the patient page only shows the *current*
-  //      note.
-  // Draft state lives inside `<ActiveTrackingLinkPanel>`; this
-  // mutation just consumes the values it sends up.
-  const updatePatientNoteMutation = useMutation({
-    mutationFn: async ({ linkId, jobId, note }: { linkId: string; jobId: string; note: string }) => {
-      const trimmed = note.trim();
-      const res = await apiRequest("PATCH", `/api/tracking-links/${linkId}`, {
-        customNotes: trimmed.length > 0 ? trimmed : null,
+  // Append a new timestamped note to the tracking link's notes log,
+  // then post an audit comment on the job (the comments panel renders
+  // these distinctly as "Added to patient tracking page" entries).
+  // The portal stores the note in an append-only array so previous
+  // notes stay visible to the patient — no overwrites.
+  const addTrackingNoteMutation = useMutation({
+    mutationFn: async ({ linkId, jobIds, content }: { linkId: string; jobIds: string[]; content: string }) => {
+      const res = await apiRequest("POST", `/api/tracking-links/${linkId}/notes`, {
+        content,
+        jobIds,
       });
       const json = await res.json();
-      if (trimmed.length > 0) {
-        await apiRequest("POST", `/api/jobs/${jobId}/comments`, {
-          content: TRACKER_NOTE_COMMENT_PREFIX + trimmed,
+      // Audit comment on the focus job. Use a marker prefix so the
+      // Comments tab can render it distinctly.
+      if (job?.id) {
+        await apiRequest("POST", `/api/jobs/${job.id}/comments`, {
+          content: TRACKER_NOTE_COMMENT_PREFIX + content,
         }).catch((err) => {
           console.error("[tracking note] comment audit failed:", err);
         });
       }
       return json.link as TrackingLinkRecord;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "comments"] });
-      toast({ title: "Note updated", description: "The patient will see your update on their tracking page." });
+    onSuccess: async (updatedLink) => {
+      // Instant cache update — the global staleTime: Infinity means
+      // invalidate alone is async + perceptibly delayed. Inject the
+      // updated link into the cached list so the panel re-renders
+      // immediately, then invalidate to keep the cache consistent.
+      queryClient.setQueriesData<{ links: TrackingLinkRecord[] }>(
+        { queryKey: ["/api/tracking-links/list"] },
+        (old) => {
+          if (!old?.links) return old;
+          return {
+            links: old.links.map((l) => (l.id === updatedLink.id ? updatedLink : l)),
+          };
+        },
+      );
+      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "comments"] });
+      toast({ title: "Note added", description: "The patient will see your update on their tracking page." });
     },
     onError: (error: Error) => {
       toast({ title: "Couldn't save note", description: error.message, variant: "destructive" });
@@ -839,8 +886,8 @@ export default function JobDetailsModal({
                 messageTemplate={(office?.settings as any)?.trackingLinkDefaults?.messageTemplate}
                 trackingExpiringSoon={trackingExpiringSoon}
                 trackingDaysUntilExpiry={trackingDaysUntilExpiry}
-                onUpdateNote={(args) => updatePatientNoteMutation.mutate(args)}
-                isUpdatingNote={updatePatientNoteMutation.isPending}
+                onAddNote={(args) => addTrackingNoteMutation.mutate(args)}
+                isAddingNote={addTrackingNoteMutation.isPending}
                 onExtend={(linkId) => extendTrackingMutation.mutate(linkId)}
                 isExtending={extendTrackingMutation.isPending}
                 onSaveInlineSettings={(args) => updateInlineSettingsMutation.mutate(args)}

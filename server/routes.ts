@@ -50,6 +50,7 @@ import {
   portalUpdateTrackingLink,
   portalRevokeTrackingLink,
   portalListTrackingLinks,
+  portalAddTrackingLinkNote,
   portalSyncTrackingJob,
   portalRefreshTrackingCatalog,
   portalGetFeatureFlags,
@@ -897,6 +898,66 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to revoke tracking link" });
+    }
+  });
+
+  // Append a timestamped note to a tracking link's notes log.
+  // The note becomes a new entry in the patient-facing timeline —
+  // staff doesn't overwrite previous updates, they accumulate.
+  // Caller passes `jobIds` (the link's covered jobs, cached client-
+  // side) so the PHI scan can compare the note text against the right
+  // patient names + phones without an extra portal round-trip.
+  app.post("/api/tracking-links/:id/notes", requireAuth, requireNotViewOnly, async (req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) {
+      return res.status(503).json({ error: "Host is not activated" });
+    }
+    const user = getOfficeUser(req);
+    const { content, jobIds } = req.body || {};
+    if (typeof content !== "string" || content.trim().length === 0) {
+      return res.status(400).json({ error: "Note content is required" });
+    }
+    const trimmed = content.trim();
+    if (trimmed.length > 500) {
+      return res.status(400).json({ error: "Note is too long (max 500 chars)" });
+    }
+    if (!Array.isArray(jobIds) || jobIds.length === 0) {
+      return res.status(400).json({ error: "jobIds must be a non-empty array" });
+    }
+    try {
+      const { jobs: localJobs, missing } = await loadLocalJobsForOffice(jobIds, user.officeId);
+      if (missing.length > 0) {
+        return res.status(404).json({ error: "Some of the linked jobs are no longer available." });
+      }
+      const phi = scanNotesForPhi({
+        notes: trimmed,
+        jobs: localJobs.map((j) => ({
+          patientFirstName: j.patientFirstName,
+          patientLastName: j.patientLastName,
+          phone: j.phone,
+        })),
+      });
+      if (!phi.ok) {
+        return res.status(400).json({ error: phi.reason, code: "PHI_DETECTED" });
+      }
+
+      const note = {
+        id: randomUUID(),
+        content: trimmed,
+        createdAt: new Date().toISOString(),
+      };
+      const result = await portalAddTrackingLinkNote({ hostToken, id: req.params.id, note });
+      if (!result.ok) {
+        return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
+      }
+      trackEvent({
+        userId: user.id,
+        officeId: user.officeId,
+        eventType: "tracking_link_note_added",
+      });
+      res.status(201).json({ link: result.link, note });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to add note" });
     }
   });
 

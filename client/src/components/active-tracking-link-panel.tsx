@@ -65,8 +65,9 @@ interface Props {
   trackingExpiringSoon: boolean;
   trackingDaysUntilExpiry: number | null;
 
-  onUpdateNote: (args: { linkId: string; jobId: string; note: string }) => void;
-  isUpdatingNote: boolean;
+  /** Append a new timestamped note to the patient-facing log. */
+  onAddNote: (args: { linkId: string; jobIds: string[]; content: string }) => void;
+  isAddingNote: boolean;
 
   onExtend: (linkId: string) => void;
   isExtending: boolean;
@@ -84,8 +85,8 @@ export function ActiveTrackingLinkPanel({
   messageTemplate,
   trackingExpiringSoon,
   trackingDaysUntilExpiry,
-  onUpdateNote,
-  isUpdatingNote,
+  onAddNote,
+  isAddingNote,
   onExtend,
   isExtending,
   onSaveInlineSettings,
@@ -116,14 +117,29 @@ export function ActiveTrackingLinkPanel({
     setEditEta(link.eta ? link.eta.slice(0, 10) : "");
   }, [inlineEditOpen, link.id, link.visibleStatuses, link.eta]);
 
-  // Note composer — seeded from link.customNotes; dirty when the user
-  // has typed something that differs from the saved value.
-  const [noteDraft, setNoteDraft] = useState(link.customNotes ?? "");
-  const [noteDirty, setNoteDirty] = useState(false);
-  useEffect(() => {
-    setNoteDraft(link.customNotes ?? "");
-    setNoteDirty(false);
-  }, [link.id, link.customNotes]);
+  // Note composer — fresh blank draft for each new entry. Saved
+  // entries accumulate in `link.notes`; legacy single-string
+  // `customNotes` (from links created before timestamped notes
+  // shipped) surfaces as a synthesized first entry below so the
+  // desktop view mirrors what the patient sees.
+  const [noteDraft, setNoteDraft] = useState("");
+
+  // Unified, chronologically-sorted view of notes for display. Pulls
+  // the new `link.notes` array (preferred) OR falls back to the
+  // legacy `link.customNotes` single-string. Once a link has anything
+  // in `notes`, the legacy field is ignored — matches the patient-
+  // page rule so both sides agree on what's visible.
+  const displayedNotes = useMemo<TrackingLinkRecord["notes"]>(() => {
+    if (link.notes.length > 0) {
+      return link.notes.slice().sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      );
+    }
+    if (link.customNotes && link.customNotes.trim().length > 0) {
+      return [{ id: "legacy", content: link.customNotes, createdAt: link.updatedAt }];
+    }
+    return [];
+  }, [link.notes, link.customNotes, link.updatedAt]);
 
   // Lazy QR SVG — only generated when the panel is shown to avoid
   // doing crypto-style canvas work on every modal open.
@@ -506,64 +522,98 @@ export function ActiveTrackingLinkPanel({
         </section>
       )}
 
-      <section data-testid="tracking-tab-note">
-        <div className="flex items-center justify-between mb-1.5">
-          <h4 className="text-[calc(11px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute m-0 flex items-center gap-1.5">
-            <StickyNote className="h-3.5 w-3.5" />
-            Note for patient
+      {/* Notes for patient — chronological timeline + composer for a
+          new entry. Each saved note becomes its own timestamped row
+          on the patient's tracking page (no overwrites) so the
+          patient sees a series of updates instead of just the most
+          recent one. */}
+      <section data-testid="tracking-tab-note" className="space-y-2.5">
+        <div className="flex items-center gap-1.5">
+          <StickyNote className="h-3.5 w-3.5 text-ink-mute" />
+          <h4 className="text-[calc(11px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute m-0">
+            Notes for patient
           </h4>
-          {noteDirty && (
-            <span className="text-[calc(11px*var(--ui-scale))] text-ink-mute italic">
-              Unsaved
-            </span>
-          )}
         </div>
-        <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute leading-snug mb-2">
-          A short message the patient will see on their tracking page. Use this for generic updates the patient should know about — e.g. <em>"Lens was delayed. We expect it to arrive on 6/1."</em> Don't include patient names, phone numbers, or anything clinical.
-        </p>
-        <Textarea
-          value={noteDraft}
-          onChange={(e) => {
-            setNoteDraft(e.target.value);
-            setNoteDirty(e.target.value !== (link.customNotes ?? ""));
-          }}
-          placeholder="e.g. Lens was delayed — we expect it to arrive on June 1."
-          maxLength={500}
-          className="min-h-[88px] bg-white text-[calc(13px*var(--ui-scale))]"
-          data-testid="tracking-note-textarea"
-        />
-        <div className="mt-1 flex items-center justify-between text-[calc(11px*var(--ui-scale))] text-ink-faint">
-          <span className="inline-flex items-center gap-1">
-            <AlertTriangle className="h-3 w-3 text-warn" aria-hidden />
-            Saved notes are also added to <em>Comments</em> as an audit trail.
-          </span>
-          <span className="tabular-nums">{noteDraft.length}/500</span>
-        </div>
-        <div className="mt-2.5 flex items-center gap-2">
-          <Button
-            size="sm"
-            onClick={() => onUpdateNote({ linkId: link.id, jobId: job.id, note: noteDraft })}
-            disabled={!noteDirty || isUpdatingNote}
-            data-testid="button-save-patient-note"
+
+        {displayedNotes.length > 0 && (
+          <ol
+            className="rounded-lg border border-line bg-panel divide-y divide-line-2"
+            data-testid="tracking-notes-list"
           >
-            <Save className="h-3.5 w-3.5 mr-1.5" />
-            {isUpdatingNote ? "Saving…" : "Save"}
-          </Button>
-          {noteDirty && (
+            {displayedNotes
+              .slice()
+              .reverse()
+              .map((entry) => (
+                <li
+                  key={entry.id}
+                  className="px-3.5 py-2.5"
+                  data-testid={`tracking-note-${entry.id}`}
+                >
+                  <div className="text-[calc(11px*var(--ui-scale))] text-ink-faint font-medium tabular-nums">
+                    {formatNoteTimestamp(new Date(entry.createdAt))}
+                  </div>
+                  <p className="mt-0.5 text-[calc(13px*var(--ui-scale))] text-ink-2 leading-relaxed whitespace-pre-wrap break-words m-0">
+                    {entry.content}
+                  </p>
+                </li>
+              ))}
+          </ol>
+        )}
+
+        <div className="rounded-lg border border-line bg-panel p-3 space-y-2">
+          <div className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute leading-snug">
+            Add a new timestamped update to the patient's tracking page — e.g. <em>"Lens was delayed. We expect it to arrive on 6/1."</em> Don't include patient names, phone numbers, or anything clinical.
+          </div>
+          <Textarea
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            placeholder="e.g. Lens was delayed — we expect it to arrive on June 1."
+            maxLength={500}
+            className="min-h-[64px] bg-white text-[calc(13px*var(--ui-scale))]"
+            data-testid="tracking-note-textarea"
+          />
+          <div className="flex items-center justify-between text-[calc(11px*var(--ui-scale))] text-ink-faint">
+            <span className="inline-flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3 text-warn" aria-hidden />
+              Each saved note is also added to <em>Comments</em> as an audit trail.
+            </span>
+            <span className="tabular-nums">{noteDraft.length}/500</span>
+          </div>
+          <div className="flex items-center gap-2">
             <Button
-              variant="ghost"
               size="sm"
-              className="text-ink-mute hover:text-ink"
               onClick={() => {
-                setNoteDraft(link.customNotes ?? "");
-                setNoteDirty(false);
+                onAddNote({
+                  linkId: link.id,
+                  jobIds: link.jobIds,
+                  content: noteDraft.trim(),
+                });
+                setNoteDraft("");
               }}
+              disabled={noteDraft.trim().length === 0 || isAddingNote}
+              data-testid="button-save-patient-note"
             >
-              Discard
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+              {isAddingNote ? "Saving…" : "Save note"}
             </Button>
-          )}
+          </div>
         </div>
       </section>
     </div>
   );
+}
+
+function formatNoteTimestamp(d: Date): string {
+  // Human-friendly relative for today/yesterday, absolute beyond.
+  // Matches the patient-page formatting so staff sees the same
+  // labels their patient will see.
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return `Today · ${time}`;
+  if (isYesterday) return `Yesterday · ${time}`;
+  return format(d, "MMM d · h:mm a");
 }
