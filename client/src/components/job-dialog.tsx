@@ -15,10 +15,12 @@ import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, User, Briefcase, Save, Check, ChevronsUpDown, AlertTriangle, Share2 } from "lucide-react";
+import { Loader2, User, Briefcase, Save, Check, ChevronsUpDown, AlertTriangle, Share2, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Job, Office, ArchivedJob } from "@shared/schema";
 import { formatPatientDisplayName, normalizePatientNamePart } from "@shared/name-format";
+import { ToastAction } from "@/components/ui/toast";
+import { openJobDetails } from "@/components/spotlight/feature-spotlight-host";
 
 const jobSchema = z.object({
   patientFirstName: z.string().optional().or(z.literal("")),
@@ -251,19 +253,56 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
     onSuccess: (data) => {
       // Server-side auto-gen path: the create call returns `trackingLinkUrl`
       // on the response when a link was generated (or an existing
-      // sibling-link was extended via the merge path). The toast UX
-      // gets richer in commit 2 (copy / open actions) — for now we
-      // surface the URL in the description so staff at least know it
-      // exists.
+      // sibling-link was extended via the merge path).
       const trackingLinkUrl =
         data && typeof data === "object" && typeof (data as any).trackingLinkUrl === "string"
           ? ((data as any).trackingLinkUrl as string)
           : null;
+      const createdJobId =
+        data && typeof data === "object" && typeof (data as any).id === "string"
+          ? ((data as any).id as string)
+          : null;
 
       if (!job && trackingLinkUrl) {
+        // Two-action toast: Copy puts the URL on the clipboard (the 90%
+        // workflow — staff paste into Weave / SMS / email), Open jumps
+        // to the Tracking tab of Job Details for the full share view
+        // (QR code, message template, edit, revoke).
         toast({
           title: "Job Created",
-          description: `Tracking link ready: ${trackingLinkUrl}`,
+          description: "Tracking link ready",
+          action: (
+            <div className="flex items-center gap-1.5">
+              <ToastAction
+                altText="Copy tracking link"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(trackingLinkUrl);
+                    toast({ title: "Link copied", description: "Paste into Weave, SMS, or email." });
+                    fetch("/api/track", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "include",
+                      body: JSON.stringify({ eventType: "tracking_link_copy_link", metadata: { source: "create_toast" } }),
+                    }).catch(() => {});
+                  } catch {
+                    toast({ title: "Copy failed", variant: "destructive" });
+                  }
+                }}
+              >
+                <Copy className="h-3 w-3 mr-1" />
+                Copy link
+              </ToastAction>
+              {createdJobId && (
+                <ToastAction
+                  altText="Open job details"
+                  onClick={() => openJobDetails(createdJobId, "tracking")}
+                >
+                  Open
+                </ToastAction>
+              )}
+            </div>
+          ),
         });
       } else {
         toast({

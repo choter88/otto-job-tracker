@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
 import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
+import { OPEN_JOB_DETAILS_EVENT } from "./spotlight/feature-spotlight-host";
 import ImportWizard from "./import-wizard";
 import PageHead, { SubAccent, SubDanger, SubDot } from "./page-head";
 import LifecycleTrack from "./lifecycle-track";
@@ -645,6 +646,38 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
 
     window.addEventListener("otto:openJob", handler as any);
     return () => window.removeEventListener("otto:openJob", handler as any);
+  }, [jobs, handleOpenJobDetails, toast]);
+
+  // New-style event from openJobDetails() in feature-spotlight-host.
+  // Accepts all four JobDetailsTab values (the older otto:openJob
+  // handler above only honored comments/overview for back-compat with
+  // notification-bell). Toasts and inline CTAs use this one to deep-link
+  // into Tracking or Related directly.
+  useEffect(() => {
+    const handler = (event: CustomEvent<{ jobId?: string; tab?: JobDetailsTab }>) => {
+      const jobId = event?.detail?.jobId;
+      if (typeof jobId !== "string" || !jobId) return;
+      const match = jobs.find((j) => j.id === jobId);
+      if (!match) {
+        toast({
+          title: "Job not found",
+          description: "That job may have been completed or removed.",
+        });
+        return;
+      }
+      const requestedTab = event?.detail?.tab;
+      const tab: JobDetailsTab =
+        requestedTab === "overview" ||
+        requestedTab === "comments" ||
+        requestedTab === "tracking" ||
+        requestedTab === "related"
+          ? requestedTab
+          : "overview";
+      handleOpenJobDetails(match, tab);
+    };
+
+    window.addEventListener(OPEN_JOB_DETAILS_EVENT, handler as any);
+    return () => window.removeEventListener(OPEN_JOB_DETAILS_EVENT, handler as any);
   }, [jobs, handleOpenJobDetails, toast]);
 
   const handleOpenComments = useCallback((job: Job) => {

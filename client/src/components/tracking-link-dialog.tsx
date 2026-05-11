@@ -122,11 +122,15 @@ interface TrackingLinkDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   jobs: Job[];
-  existingLink?: TrackingLinkRecord;
   onCreated?: (link: TrackingLinkRecord) => void;
-  onUpdated?: (link: TrackingLinkRecord) => void;
   onRevoked?: () => void;
 }
+
+// Dialog used to be both the create AND edit surface. Active-link edits
+// now live inline in Job Details → Patient tracking, so this is a
+// create-only flow: configure → share → done. The post-create share
+// view keeps revoke/extend as convenience CTAs, but there's no longer
+// a "save edits to an existing link" path.
 
 interface EtaSuggestion {
   suggestedDate: string | null;
@@ -167,9 +171,7 @@ export default function TrackingLinkDialog({
   open,
   onOpenChange,
   jobs,
-  existingLink,
   onCreated,
-  onUpdated,
   onRevoked,
 }: TrackingLinkDialogProps) {
   const { user } = useAuth();
@@ -203,7 +205,7 @@ export default function TrackingLinkDialog({
   // Sibling detection (bulk-action path only).
   const { data: linkGroupsMap } = useQuery<Record<string, string[]>>({
     queryKey: ["/api/jobs/linked-ids"],
-    enabled: open && !existingLink && jobs.length > 0,
+    enabled: open && jobs.length > 0,
   });
   const allJobs = useMemo<Job[]>(() => {
     const cached = queryClient.getQueryData<Job[]>(["/api/jobs"]) || [];
@@ -243,31 +245,20 @@ export default function TrackingLinkDialog({
 
   useEffect(() => {
     if (!open) return;
-    if (existingLink) {
-      setVisible(existingLink.visibleStatuses.length > 0 ? existingLink.visibleStatuses : officeDefaults.visibleStatuses);
-      setEta(existingLink.eta ? existingLink.eta.slice(0, 10) : "");
-      setEtaTouched(true);
-      setNotes(existingLink.customNotes ?? "");
-      setGeneratedLink(existingLink);
-      setPhase("share");
-    } else {
-      // Seed the visible-statuses from per-jobType defaults if the office
-      // has them; falls back to the global default.
-      const seedTypes = effectiveJobs.map((j) => j.jobType);
-      setVisible(computeDefaultVisibleStatuses(seedTypes, officeDefaults.visibleStatuses, officeDefaults.byJobType));
-      setEta("");
-      setEtaTouched(false);
-      setNotes(officeDefaults.defaultNotes || "");
-      setGeneratedLink(null);
-      setPhase("configure");
-    }
+    // Always start in configure mode — the dialog is the empty-state
+    // "Customize and generate" surface, never an edit surface.
+    // Seed the visible-statuses from per-jobType defaults if the office
+    // has them; falls back to the global default.
+    const seedTypes = effectiveJobs.map((j) => j.jobType);
+    setVisible(computeDefaultVisibleStatuses(seedTypes, officeDefaults.visibleStatuses, officeDefaults.byJobType));
+    setEta("");
+    setEtaTouched(false);
+    setNotes(officeDefaults.defaultNotes || "");
+    setGeneratedLink(null);
+    setPhase("configure");
     setCustomizeOpen(false);
     setCopied("none");
-    // We *want* this effect to re-fire when the effective job set changes
-    // (sibling include/exclude flips the per-jobType seed). The
-    // `effectiveJobs` reference identity stays stable enough for the
-    // initial seed; we don't reset the user's customizations on toggle.
-  }, [open, existingLink, officeDefaults, effectiveJobs.length]);
+  }, [open, officeDefaults, effectiveJobs.length]);
 
   const effectiveJobIds = useMemo(() => effectiveJobs.map((j) => j.id), [effectiveJobs]);
 
@@ -278,7 +269,7 @@ export default function TrackingLinkDialog({
       const res = await apiRequest("POST", "/api/tracking-links/estimate-eta", { jobIds: effectiveJobIds });
       return res.json();
     },
-    enabled: open && phase === "configure" && !existingLink && effectiveJobIds.length > 0,
+    enabled: open && phase === "configure" && effectiveJobIds.length > 0,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -310,28 +301,6 @@ export default function TrackingLinkDialog({
     },
   });
 
-  const updateMutation = useMutation({
-    mutationFn: async () => {
-      if (!existingLink) throw new Error("No link to update");
-      const res = await apiRequest("PATCH", `/api/tracking-links/${existingLink.id}`, {
-        visibleStatuses: visible,
-        eta: eta ? new Date(eta + "T00:00:00").toISOString() : null,
-        customNotes: notes.trim() || null,
-      });
-      const json = await res.json();
-      return json.link as TrackingLinkRecord;
-    },
-    onSuccess: (link) => {
-      setGeneratedLink(link);
-      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
-      onUpdated?.(link);
-      toast({ title: "Tracking link updated" });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Couldn't update link", description: error.message, variant: "destructive" });
-    },
-  });
-
   const revokeMutation = useMutation({
     mutationFn: async () => {
       if (!generatedLink) throw new Error("No link to revoke");
@@ -360,7 +329,6 @@ export default function TrackingLinkDialog({
     onSuccess: (link) => {
       setGeneratedLink(link);
       queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
-      onUpdated?.(link);
       toast({ title: "Link extended", description: `Now expires ${format(new Date(link.expiresAt!), "MMM d, yyyy")}.` });
     },
     onError: (error: Error) => {
@@ -405,13 +373,6 @@ export default function TrackingLinkDialog({
     }
   };
 
-  const isEdit = !!existingLink;
-  const dirty = isEdit && (
-    JSON.stringify([...visible].sort()) !== JSON.stringify([...(existingLink!.visibleStatuses || [])].sort())
-    || (eta || "") !== (existingLink!.eta?.slice(0, 10) || "")
-    || (notes || "") !== (existingLink!.customNotes || "")
-  );
-
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -432,7 +393,7 @@ export default function TrackingLinkDialog({
               <>
                 <ScopeSummary jobs={effectiveJobs} />
 
-                {!isEdit && siblingJobs.length > 0 && (
+                {siblingJobs.length > 0 && (
                   <SiblingPrompt
                     siblingJobs={siblingJobs}
                     included={includeSiblings}
@@ -557,14 +518,9 @@ export default function TrackingLinkDialog({
                 onCopyUrl={handleCopyUrl}
                 onCopyMessage={handleCopyMessage}
                 hasMessageTemplate={officeDefaults.messageTemplate.trim().length > 0}
-                onEdit={() => setPhase("configure")}
                 onRevoke={() => setConfirmRevokeOpen(true)}
                 onExtend={() => extendMutation.mutate()}
                 isExtending={extendMutation.isPending}
-                isEdit={isEdit}
-                dirty={dirty}
-                onSaveEdits={() => updateMutation.mutate()}
-                isSaving={updateMutation.isPending}
               />
             )}
           </div>
@@ -875,14 +831,9 @@ function ShareView({
   onCopyUrl,
   onCopyMessage,
   hasMessageTemplate,
-  onEdit,
   onRevoke,
   onExtend,
   isExtending,
-  isEdit,
-  dirty,
-  onSaveEdits,
-  isSaving,
 }: {
   link: TrackingLinkRecord;
   qrSvg: string | null;
@@ -890,14 +841,9 @@ function ShareView({
   onCopyUrl: () => void;
   onCopyMessage: () => void;
   hasMessageTemplate: boolean;
-  onEdit: () => void;
   onRevoke: () => void;
   onExtend: () => void;
   isExtending: boolean;
-  isEdit: boolean;
-  dirty: boolean;
-  onSaveEdits: () => void;
-  isSaving: boolean;
 }) {
   const expiresAt = link.expiresAt ? new Date(link.expiresAt) : null;
   const expiresAtLabel = expiresAt ? format(expiresAt, "MMM d, yyyy") : null;
@@ -991,21 +937,7 @@ function ShareView({
         <Stat icon={<Link2 className="h-3.5 w-3.5" />} label="Jobs covered" value={String(link.jobIds.length)} />
       </div>
 
-      {isEdit && dirty && (
-        <div className="rounded-md border border-otto-accent-line bg-otto-accent-soft px-3.5 py-2.5 flex items-center gap-3">
-          <p className="text-[calc(12.5px*var(--ui-scale))] text-otto-accent-ink flex-1 m-0">
-            You've changed link settings. Save to update what the patient sees.
-          </p>
-          <Button size="sm" onClick={onSaveEdits} disabled={isSaving}>
-            {isSaving ? "Saving…" : "Save changes"}
-          </Button>
-        </div>
-      )}
-
       <div className="flex items-center gap-2 pt-1">
-        <Button variant="outline" size="sm" onClick={onEdit}>
-          Edit settings
-        </Button>
         <Button
           variant="ghost"
           size="sm"

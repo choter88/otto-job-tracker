@@ -78,6 +78,10 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   "job_detail_tab_related",
   "job_detail_tab_tracking",
   "custom_column_edited",
+  // Patient tracking links — copy-link clicks fire from the post-create
+  // toast action so we can measure how often staff actually share the
+  // generated link vs. let the toast time out unused.
+  "tracking_link_copy_link",
   // Spotlight system — telemetry for feature-adoption analysis. The
   // event metadata carries `featureId` and (for tour events) `stepId`.
   "spotlight_modal_seen",

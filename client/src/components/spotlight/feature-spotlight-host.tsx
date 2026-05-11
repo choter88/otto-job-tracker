@@ -20,6 +20,15 @@ export const SPOTLIGHT_REPLAY_EVENT = "otto:spotlight-replay";
  * to the dashboard's settings state.
  */
 export const OPEN_OFFICE_SETTINGS_EVENT = "otto:open-office-settings";
+/**
+ * Ask the dashboard to open the Job Details modal for a given job id,
+ * optionally deep-linked to a particular tab. Mirrors the
+ * OPEN_OFFICE_SETTINGS_EVENT pattern so callers (toasts, notification
+ * bell, spotlights) don't need a handle to the table's state. The
+ * jobs-table listener resolves the id to a Job row from its query
+ * cache when the event fires.
+ */
+export const OPEN_JOB_DETAILS_EVENT = "otto:open-job-details";
 
 export function openSpotlightArchive() {
   window.dispatchEvent(new CustomEvent(SPOTLIGHT_OPEN_ARCHIVE_EVENT));
@@ -34,6 +43,15 @@ export function replaySpotlight(featureId: string) {
 export function openOfficeSettings(tab?: string) {
   window.dispatchEvent(
     new CustomEvent(OPEN_OFFICE_SETTINGS_EVENT, { detail: { tab } }),
+  );
+}
+
+export function openJobDetails(
+  jobId: string,
+  tab?: "overview" | "comments" | "tracking" | "related",
+) {
+  window.dispatchEvent(
+    new CustomEvent(OPEN_JOB_DETAILS_EVENT, { detail: { jobId, tab } }),
   );
 }
 

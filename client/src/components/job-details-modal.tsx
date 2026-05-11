@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CalendarPlus,
+  Check,
   Clock3,
   Copy,
   Eye,
@@ -13,7 +14,9 @@ import {
   Info,
   Link2,
   MessageSquare,
+  MoreVertical,
   Phone,
+  QrCode,
   Save,
   Send,
   Share2,
@@ -26,6 +29,27 @@ import {
   User,
   X,
 } from "lucide-react";
+import QRCode from "qrcode";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +59,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import JobCommentsPanel from "@/components/job-comments-panel";
 import TrackingLinkDialog, { type TrackingLinkRecord } from "@/components/tracking-link-dialog";
+import { renderMessageTemplate as renderTrackingMessageTemplate } from "@/components/customization/tracking-link-defaults-editor";
+import { DEFAULT_VISIBLE_STATUSES } from "@shared/tracking-link-defaults";
 import { TRACKER_NOTE_COMMENT_PREFIX } from "@/lib/tracker-note-comment";
 import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { sortByOrder } from "@/lib/custom-list-sort";
@@ -159,9 +185,23 @@ export default function JobDetailsModal({
     return active.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
   }, [trackingLinks?.links]);
 
+  // Empty-state "Customize and generate" path opens the dialog; the
+  // primary "Generate tracking link" CTA uses `directGenerateMutation`
+  // below and skips the dialog entirely. Dialog is create-only now —
+  // active-link edits live inline (see `inlineEditOpen`).
   const [trackingDialogOpen, setTrackingDialogOpen] = useState(false);
-  const [trackingDialogEditing, setTrackingDialogEditing] = useState<TrackingLinkRecord | undefined>(undefined);
   const [trackingUrlCopied, setTrackingUrlCopied] = useState(false);
+  const [trackingMessageCopied, setTrackingMessageCopied] = useState(false);
+  const [qrVisible, setQrVisible] = useState(false);
+  const [qrSvg, setQrSvg] = useState<string | null>(null);
+  const [confirmRevokeOpen, setConfirmRevokeOpen] = useState(false);
+
+  // Inline edit state — replaces the dialog-hop "Edit settings" flow.
+  // Seeded from the active link on open; reset on close. Save calls
+  // PATCH /api/tracking-links/:id, then collapses.
+  const [inlineEditOpen, setInlineEditOpen] = useState(false);
+  const [editVisible, setEditVisible] = useState<string[]>([]);
+  const [editEta, setEditEta] = useState<string>("");
 
   // Days until the active link expires — drives the warn state and the
   // Extend CTA below. Recomputed on render; we don't bother memoizing.
@@ -184,6 +224,129 @@ export default function JobDetailsModal({
       toast({ title: "Couldn't extend link", description: error.message, variant: "destructive" });
     },
   });
+
+  // One-click generate for the empty-state path. Posts with the
+  // office's default visibleStatuses + defaultNotes; the dialog's
+  // "Customize and generate" link stays for the rare per-job tweak.
+  const directGenerateMutation = useMutation({
+    mutationFn: async () => {
+      if (!job?.id) throw new Error("No job");
+      const settings = (office?.settings || {}) as any;
+      const tld = (settings?.trackingLinkDefaults || {}) as {
+        visibleStatuses?: string[];
+        defaultNotes?: string;
+      };
+      const visibleStatuses =
+        Array.isArray(tld.visibleStatuses) && tld.visibleStatuses.length > 0
+          ? tld.visibleStatuses
+          : DEFAULT_VISIBLE_STATUSES;
+      const customNotes =
+        typeof tld.defaultNotes === "string" && tld.defaultNotes.trim().length > 0
+          ? tld.defaultNotes
+          : null;
+      const res = await apiRequest("POST", "/api/tracking-links", {
+        jobIds: [job.id],
+        visibleStatuses,
+        customNotes,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      toast({ title: "Tracking link generated", description: "Copy the message to share with your patient." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't generate link", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Inline-edit save (visible-statuses + ETA). PATCH on the active
+  // link; the broader "edit notes/template/etc" surface lives in the
+  // bigger TrackingLinkDialog still — though only via the empty-state
+  // customize path now, never as an active-link edit.
+  const updateInlineSettingsMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeTrackingLink) throw new Error("No link");
+      const res = await apiRequest("PATCH", `/api/tracking-links/${activeTrackingLink.id}`, {
+        visibleStatuses: editVisible,
+        eta: editEta ? new Date(editEta + "T00:00:00").toISOString() : null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      setInlineEditOpen(false);
+      toast({ title: "Tracking link updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't update", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const revokeTrackingMutation = useMutation({
+    mutationFn: async (linkId: string) => {
+      const res = await apiRequest("POST", `/api/tracking-links/${linkId}/revoke`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      setConfirmRevokeOpen(false);
+      toast({ title: "Tracking link revoked", description: "The link is no longer active." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't revoke", description: error.message, variant: "destructive" });
+    },
+  });
+
+  // Seed the inline-edit form whenever it's opened. Reset whenever the
+  // active link changes (e.g. revoke + regenerate) so stale values
+  // don't leak between sessions.
+  useEffect(() => {
+    if (!inlineEditOpen) return;
+    if (!activeTrackingLink) return;
+    setEditVisible(
+      activeTrackingLink.visibleStatuses.length > 0
+        ? [...activeTrackingLink.visibleStatuses]
+        : [...DEFAULT_VISIBLE_STATUSES],
+    );
+    setEditEta(activeTrackingLink.eta ? activeTrackingLink.eta.slice(0, 10) : "");
+  }, [inlineEditOpen, activeTrackingLink?.id]);
+
+  // Reset the inline editor + QR panel when the active link goes away
+  // or when the modal closes. Avoids the QR/edit panel "ghosting" into
+  // an empty-state view if the user revokes from the overflow menu.
+  useEffect(() => {
+    if (!activeTrackingLink || !open) {
+      setInlineEditOpen(false);
+      setQrVisible(false);
+    }
+  }, [activeTrackingLink?.id, open]);
+
+  // Lazy-load the QR SVG when the panel is toggled visible. Cleared
+  // when the URL changes or the panel hides so we don't paint a stale
+  // QR after a revoke + regenerate.
+  useEffect(() => {
+    if (!qrVisible || !activeTrackingLink?.url) {
+      setQrSvg(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const svg = await QRCode.toString(activeTrackingLink.url, {
+          type: "svg",
+          margin: 1,
+          width: 200,
+        });
+        if (!cancelled) setQrSvg(svg);
+      } catch {
+        if (!cancelled) setQrSvg(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [qrVisible, activeTrackingLink?.url]);
 
   // ── "Note for patient" composer state + save flow ──
   // Two side effects per save:
@@ -763,99 +926,316 @@ export default function JobDetailsModal({
             </div>
           </TabsContent>
 
-          {/* Patient tracking tab — generate / view / edit / revoke the
-              public link, plus the "Note for patient" composer that lets
-              staff push a generic non-PHI update to the tracker. */}
+          {/* Patient tracking tab — share-first redesign:
+              big "Copy message" CTA, URL as caption, overflow menu for
+              the rare actions (QR / edit / extend / revoke), inline
+              editor when staff want to tweak settings. */}
           <TabsContent
             value="tracking"
             className="mt-0 flex-1 min-h-0 overflow-y-scroll px-6 py-5"
           >
             {activeTrackingLink ? (
               <div className="space-y-5" data-testid="tracking-tab-active">
-                {/* Active link summary card. */}
-                <section className="rounded-lg border border-otto-accent-line bg-otto-accent-soft/40 px-4 py-3.5">
-                  <div className="flex items-center gap-1.5 mb-2 text-[calc(10.5px*var(--ui-scale))] uppercase tracking-[0.10em] text-otto-accent-ink font-semibold">
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                    Active patient link
+                {/* Share section — the 90% surface. Compact header with
+                    the job's current status + an overflow menu; below,
+                    the dominant "Copy message" button. */}
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    {(() => {
+                      const statusMeta = customStatuses.find((s: any) => s.id === job.status);
+                      const statusLabel = statusMeta?.label ?? toTitleCase(job.status || "");
+                      const statusColor = statusMeta?.color ?? "#94a3b8";
+                      return (
+                        <Badge
+                          variant="outline"
+                          className="h-6 gap-1.5 border-line bg-paper-2 text-ink-2 font-medium"
+                          style={{ borderColor: statusColor + "55" }}
+                          data-testid="tracking-tab-status-badge"
+                        >
+                          <span
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: statusColor }}
+                            aria-hidden
+                          />
+                          {statusLabel}
+                        </Badge>
+                      );
+                    })()}
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-ink-mute hover:text-ink"
+                          aria-label="Tracking link actions"
+                          data-testid="tracking-link-actions-menu"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-52">
+                        <DropdownMenuItem
+                          onSelect={async () => {
+                            try {
+                              await navigator.clipboard.writeText(activeTrackingLink.url);
+                              setTrackingUrlCopied(true);
+                              setTimeout(() => setTrackingUrlCopied(false), 2000);
+                              toast({ title: "URL copied" });
+                            } catch {
+                              toast({ title: "Copy failed", variant: "destructive" });
+                            }
+                          }}
+                          data-testid="menu-copy-url"
+                        >
+                          <Copy className="h-3.5 w-3.5 mr-2" />
+                          Copy URL only
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => setQrVisible((v) => !v)}
+                          data-testid="menu-toggle-qr"
+                        >
+                          <QrCode className="h-3.5 w-3.5 mr-2" />
+                          {qrVisible ? "Hide QR code" : "Show QR code"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => setInlineEditOpen((v) => !v)}
+                          data-testid="menu-edit-settings"
+                        >
+                          <Sliders className="h-3.5 w-3.5 mr-2" />
+                          {inlineEditOpen ? "Close editor" : "Edit settings"}
+                        </DropdownMenuItem>
+                        {trackingExpiringSoon && (
+                          <DropdownMenuItem
+                            onSelect={() => extendTrackingMutation.mutate(activeTrackingLink.id)}
+                            disabled={extendTrackingMutation.isPending}
+                            data-testid="menu-extend"
+                          >
+                            <CalendarPlus className="h-3.5 w-3.5 mr-2" />
+                            Extend 30 days
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onSelect={() => setConfirmRevokeOpen(true)}
+                          className="text-destructive focus:text-destructive"
+                          data-testid="menu-revoke"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 mr-2" />
+                          Revoke link
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <code
-                      className="flex-1 px-3 py-2 rounded-md bg-white/60 text-[calc(12.5px*var(--ui-scale))] font-mono text-ink truncate"
+
+                  {/* Primary CTA — copies the office's message template
+                      with {url} and {eta} substituted. This is the 90%
+                      workflow: staff paste into Weave / SMS / email. */}
+                  <Button
+                    size="lg"
+                    className="w-full h-12 text-[calc(14px*var(--ui-scale))] font-semibold gap-2"
+                    onClick={async () => {
+                      const settings = (office?.settings || {}) as any;
+                      const template = settings?.trackingLinkDefaults?.messageTemplate;
+                      const etaFormatted = activeTrackingLink.eta
+                        ? format(new Date(activeTrackingLink.eta), "EEEE, MMMM d")
+                        : null;
+                      const message = renderTrackingMessageTemplate(template, {
+                        url: activeTrackingLink.url,
+                        eta: etaFormatted,
+                      });
+                      try {
+                        await navigator.clipboard.writeText(message);
+                        setTrackingMessageCopied(true);
+                        setTimeout(() => setTrackingMessageCopied(false), 2000);
+                        toast({
+                          title: "Message copied",
+                          description: "Paste into Weave, SMS, or email.",
+                        });
+                        fetch("/api/track", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          credentials: "include",
+                          body: JSON.stringify({
+                            eventType: "tracking_link_copy_link",
+                            metadata: { source: "tracking_tab_message" },
+                          }),
+                        }).catch(() => {});
+                      } catch {
+                        toast({ title: "Copy failed", variant: "destructive" });
+                      }
+                    }}
+                    data-testid="button-copy-tracking-message"
+                  >
+                    {trackingMessageCopied ? (
+                      <>
+                        <Check className="h-4 w-4" />
+                        Message copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-4 w-4" />
+                        Copy message
+                      </>
+                    )}
+                  </Button>
+
+                  {/* URL caption + meta footer. */}
+                  <div className="space-y-1.5">
+                    <div
+                      className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute font-mono truncate"
+                      title={activeTrackingLink.url}
                       data-testid="tracking-link-summary"
                     >
                       {activeTrackingLink.url}
-                    </code>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 shrink-0"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(activeTrackingLink.url);
-                          setTrackingUrlCopied(true);
-                          setTimeout(() => setTrackingUrlCopied(false), 2000);
-                        } catch {
-                          toast({ title: "Copy failed", variant: "destructive" });
-                        }
-                      }}
-                    >
-                      {trackingUrlCopied ? <span className="text-brand-emerald">Copied</span> : <><Copy className="h-3.5 w-3.5 mr-1.5" />Copy</>}
-                    </Button>
-                  </div>
-                  <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[calc(11.5px*var(--ui-scale))] text-ink-mute">
-                    <span className="inline-flex items-center gap-1">
-                      <Eye className="h-3 w-3" />
-                      {activeTrackingLink.viewCount} view{activeTrackingLink.viewCount === 1 ? "" : "s"}
-                    </span>
-                    {activeTrackingLink.lastViewedAt && (
-                      <span>· last {format(new Date(activeTrackingLink.lastViewedAt), "MMM d · HH:mm")}</span>
-                    )}
-                    {activeTrackingLink.expiresAt && (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1",
-                          trackingExpiringSoon ? "text-warn font-medium" : "",
-                        )}
-                        data-testid="tracking-link-expiry"
-                      >
-                        {trackingExpiringSoon && <AlertTriangle className="h-3 w-3" aria-hidden />}
-                        {trackingDaysUntilExpiry !== null && trackingDaysUntilExpiry > 0
-                          ? `Expires ${trackingDaysUntilExpiry === 1 ? "tomorrow" : `in ${trackingDaysUntilExpiry} days`}`
-                          : trackingDaysUntilExpiry === 0
-                            ? "Expires today"
-                            : `Expired ${format(new Date(activeTrackingLink.expiresAt), "MMM d")}`}
+                      {trackingUrlCopied && (
+                        <span className="ml-2 text-brand-emerald not-italic font-sans">Copied</span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(11px*var(--ui-scale))] text-ink-faint">
+                      <span className="inline-flex items-center gap-1">
+                        <Eye className="h-3 w-3" />
+                        {activeTrackingLink.viewCount} view{activeTrackingLink.viewCount === 1 ? "" : "s"}
                       </span>
-                    )}
+                      {activeTrackingLink.lastViewedAt && (
+                        <span>· last {format(new Date(activeTrackingLink.lastViewedAt), "MMM d · HH:mm")}</span>
+                      )}
+                      {activeTrackingLink.expiresAt && (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            trackingExpiringSoon ? "text-warn font-medium" : "",
+                          )}
+                          data-testid="tracking-link-expiry"
+                        >
+                          {trackingExpiringSoon && <AlertTriangle className="h-3 w-3" aria-hidden />}
+                          {trackingDaysUntilExpiry !== null && trackingDaysUntilExpiry > 0
+                            ? `Expires ${trackingDaysUntilExpiry === 1 ? "tomorrow" : `in ${trackingDaysUntilExpiry} days`}`
+                            : trackingDaysUntilExpiry === 0
+                              ? "Expires today"
+                              : `Expired ${format(new Date(activeTrackingLink.expiresAt), "MMM d")}`}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-[calc(12px*var(--ui-scale))]"
-                      onClick={() => {
-                        setTrackingDialogEditing(activeTrackingLink);
-                        setTrackingDialogOpen(true);
-                      }}
-                      data-testid="button-edit-tracking-link"
+
+                  {/* QR panel — toggled from the overflow menu. */}
+                  {qrVisible && (
+                    <div
+                      className="rounded-lg border border-line bg-panel p-4 flex items-center justify-center"
+                      data-testid="tracking-tab-qr"
                     >
-                      <Sliders className="h-3.5 w-3.5 mr-1.5" />
-                      Edit settings
-                    </Button>
-                    {trackingExpiringSoon && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-[calc(12px*var(--ui-scale))] border-warn/40 text-warn hover:bg-warn-bg/50"
-                        onClick={() => extendTrackingMutation.mutate(activeTrackingLink.id)}
-                        disabled={extendTrackingMutation.isPending}
-                        data-testid="button-extend-tracking-link-summary"
-                      >
-                        <CalendarPlus className="h-3.5 w-3.5 mr-1.5" />
-                        {extendTrackingMutation.isPending ? "Extending…" : "Extend 30 days"}
-                      </Button>
-                    )}
-                  </div>
+                      {qrSvg ? (
+                        <div
+                          className="w-[200px] h-[200px]"
+                          dangerouslySetInnerHTML={{ __html: qrSvg }}
+                        />
+                      ) : (
+                        <span className="text-[calc(12px*var(--ui-scale))] text-ink-mute">Loading QR…</span>
+                      )}
+                    </div>
+                  )}
                 </section>
+
+                {/* Inline editor — replaces the dialog-hop. Visible
+                    statuses + ETA only; bigger edits (notes, template,
+                    etc.) go through Settings → Tracking Links. */}
+                {inlineEditOpen && (
+                  <section
+                    className="rounded-lg border border-line bg-panel p-4 space-y-3"
+                    data-testid="tracking-tab-inline-edit"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-[calc(11px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute m-0 flex items-center gap-1.5">
+                        <Sliders className="h-3.5 w-3.5" />
+                        Edit tracking settings
+                      </h4>
+                    </div>
+                    <div>
+                      <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
+                        Visible statuses
+                      </Label>
+                      <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1.5">
+                        {customStatuses
+                          .filter((s: any) => s.id !== "delayed")
+                          .map((s: any) => {
+                            const checked = editVisible.includes(s.id);
+                            const id = `inline-vis-${s.id}`;
+                            return (
+                              <label
+                                key={s.id}
+                                htmlFor={id}
+                                className="flex items-center gap-2 cursor-pointer text-[calc(12.5px*var(--ui-scale))] text-ink"
+                              >
+                                <Checkbox
+                                  id={id}
+                                  checked={checked}
+                                  onCheckedChange={(v) => {
+                                    setEditVisible((prev) =>
+                                      v
+                                        ? Array.from(new Set([...prev, s.id]))
+                                        : prev.filter((x) => x !== s.id),
+                                    );
+                                  }}
+                                />
+                                <span
+                                  className="h-1.5 w-1.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: s.color }}
+                                  aria-hidden
+                                />
+                                <span>{s.label}</span>
+                              </label>
+                            );
+                          })}
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
+                        Estimated ready
+                      </Label>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <Input
+                          type="date"
+                          value={editEta}
+                          onChange={(e) => setEditEta(e.target.value)}
+                          className="max-w-[220px] bg-white"
+                          data-testid="tracking-inline-eta"
+                        />
+                        {editEta && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-[calc(11.5px*var(--ui-scale))] text-ink-mute hover:text-ink"
+                            onClick={() => setEditEta("")}
+                          >
+                            Clear
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        onClick={() => updateInlineSettingsMutation.mutate()}
+                        disabled={updateInlineSettingsMutation.isPending}
+                        data-testid="button-save-inline-edit"
+                      >
+                        <Save className="h-3.5 w-3.5 mr-1.5" />
+                        {updateInlineSettingsMutation.isPending ? "Saving…" : "Save"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-ink-mute hover:text-ink"
+                        onClick={() => setInlineEditOpen(false)}
+                        data-testid="button-cancel-inline-edit"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </section>
+                )}
 
                 {/* Note for patient composer. The current note (if any) is
                     what's on the patient page right now; the textarea is
@@ -906,13 +1286,13 @@ export default function JobDetailsModal({
                       data-testid="button-save-patient-note"
                     >
                       <Save className="h-3.5 w-3.5 mr-1.5" />
-                      {updatePatientNoteMutation.isPending ? "Saving…" : "Save note"}
+                      {updatePatientNoteMutation.isPending ? "Saving…" : "Save"}
                     </Button>
                     {patientNoteDirty && (
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-ink-mute hover:text-ink"
+                        className="text-ink-mute hover:text-ink ml-auto"
                         onClick={() => {
                           setPatientNoteDraft(activeTrackingLink.customNotes ?? "");
                           setPatientNoteDirty(false);
@@ -925,12 +1305,10 @@ export default function JobDetailsModal({
                 </section>
               </div>
             ) : (
-              // No active link — fallback path. With auto-generate the
-              // primary surface, this happens when (a) office has the
-              // toggle off, or (b) the staff unchecked the per-job
-              // checkbox at creation, or (c) the link was revoked.
-              // The CTA still lets them generate one manually for this
-              // single job.
+              // No active link — empty state. Primary "Generate" CTA
+              // fires POST /api/tracking-links directly with the
+              // office's defaults; "Customize and generate" opens the
+              // dialog for per-job tweaks before generating.
               (() => {
                 const officeAutoGenerate = !!((office?.settings as any)?.trackingLinkDefaults?.autoGenerateTrackingLinks);
                 return (
@@ -952,20 +1330,54 @@ export default function JobDetailsModal({
                     <Button
                       size="sm"
                       className="mt-4"
-                      onClick={() => {
-                        setTrackingDialogEditing(undefined);
-                        setTrackingDialogOpen(true);
-                      }}
+                      onClick={() => directGenerateMutation.mutate()}
+                      disabled={directGenerateMutation.isPending || !job?.id}
                       data-testid="button-generate-tracking-link"
                     >
                       <Share2 className="h-3.5 w-3.5 mr-1.5" />
-                      Generate tracking link
+                      {directGenerateMutation.isPending ? "Generating…" : "Generate tracking link"}
                     </Button>
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        className="text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-otto-accent underline-offset-2 hover:underline"
+                        onClick={() => setTrackingDialogOpen(true)}
+                        data-testid="button-customize-and-generate"
+                      >
+                        Customize and generate
+                      </button>
+                    </div>
                   </div>
                 );
               })()
             )}
           </TabsContent>
+
+          {/* Revoke confirmation — reachable from the overflow menu's
+              destructive item. Kept outside the active-link block so
+              focus management works cleanly when the link disappears
+              after a successful revoke. */}
+          <AlertDialog open={confirmRevokeOpen} onOpenChange={setConfirmRevokeOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Revoke tracking link?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The patient will no longer be able to open this link. This can't be undone — you'll need to generate a new link if you want to share status again.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="button-cancel-revoke">Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => activeTrackingLink && revokeTrackingMutation.mutate(activeTrackingLink.id)}
+                  disabled={revokeTrackingMutation.isPending}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  data-testid="button-confirm-revoke"
+                >
+                  {revokeTrackingMutation.isPending ? "Revoking…" : "Revoke link"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {/* Related Jobs tab — auto-detected by patient name match + manually linked */}
           {relatedJobs.length > 0 && (
@@ -1275,34 +1687,15 @@ export default function JobDetailsModal({
         </DialogContent>
       </Dialog>
 
-      {/* Patient tracking link dialog — opened from the Patient tracking
-          section in the Overview tab. Covers the focus job + any sibling
-          jobs in the same link group so a single shared link can track an
-          entire patient's order. */}
+      {/* Patient tracking link dialog — opened only from the empty-
+          state "Customize and generate" link in the Tracking tab.
+          Always create-mode now (active-link edits live inline in the
+          tab, not in this dialog). */}
       <TrackingLinkDialog
         open={trackingDialogOpen}
         onOpenChange={setTrackingDialogOpen}
-        jobs={(() => {
-          if (!job) return [];
-          if (trackingDialogEditing) {
-            // When editing an existing link, scope to just that link's jobs —
-            // we don't want the dialog re-targeting more or fewer jobs than
-            // the user originally chose. The server enforces this too.
-            return relatedJobs.filter((rj: any) => trackingDialogEditing.jobIds.includes(rj.id))
-              .concat(trackingDialogEditing.jobIds.includes(job.id) ? [job] : []);
-          }
-          // Default scope when creating: focus job + any non-archived linked
-          // siblings.
-          return [job, ...relatedJobs.filter((rj: any) => !rj.archived)];
-        })()}
-        existingLink={trackingDialogEditing}
+        jobs={job ? [job, ...relatedJobs.filter((rj: any) => !rj.archived)] : []}
         onCreated={() => {
-          queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
-        }}
-        onUpdated={() => {
-          queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
-        }}
-        onRevoked={() => {
           queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
         }}
       />
