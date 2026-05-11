@@ -81,6 +81,42 @@ export function computeDefaultVisibleStatuses(
 }
 
 /**
+ * Sort a `visibleStatuses` array by the office's `customStatuses.order`
+ * so the patient-page timeline reads as a natural progression
+ * regardless of the order the staff clicked checkboxes in Settings.
+ *
+ * Without this normalization the stored array preserved click order
+ * — toggling "Ready for pickup" before "Order received" landed those
+ * IDs in the wrong order in the saved settings, and the patient page
+ * rendered them in that scrambled order. Sorting at read time fixes
+ * existing scrambled state on the fly; sorting at write time keeps
+ * the stored value canonical.
+ *
+ * Status IDs not present in `customStatuses` (legacy / orphaned) sort
+ * to the end so they remain visible but don't intrude on the
+ * recognizable progression.
+ */
+export function sortVisibleStatusesByOffice(
+  visible: string[],
+  customStatuses: ReadonlyArray<{ id: string; order?: number }> | null | undefined,
+): string[] {
+  if (!Array.isArray(customStatuses) || customStatuses.length === 0) {
+    return visible.slice();
+  }
+  const orderMap = new Map<string, number>();
+  for (const s of customStatuses) {
+    if (typeof s?.id === "string" && typeof s?.order === "number") {
+      orderMap.set(s.id, s.order);
+    }
+  }
+  return visible.slice().sort((a, b) => {
+    const aOrder = orderMap.get(a) ?? Number.MAX_SAFE_INTEGER;
+    const bOrder = orderMap.get(b) ?? Number.MAX_SAFE_INTEGER;
+    return aOrder - bOrder;
+  });
+}
+
+/**
  * Resolve the office's tracking-link defaults for the given job types.
  * Single source of truth for "what should a new tracking link look like
  * by default" — used by the server auto-gen path AND the client's
@@ -88,7 +124,10 @@ export function computeDefaultVisibleStatuses(
  * same shape of link.
  *
  * - `visibleStatuses` honors per-job-type overrides via
- *   `computeDefaultVisibleStatuses`.
+ *   `computeDefaultVisibleStatuses`, then sorts by
+ *   `settings.customStatuses[].order` so the patient sees a natural
+ *   progression rather than the order staff toggled checkboxes in
+ *   Settings.
  * - `customNotes` falls back to null when the office's defaultNotes
  *   is empty/missing (preferring null over "" downstream).
  *
@@ -113,7 +152,11 @@ export function resolveTrackingLinkDefaultsForJobTypes(
     tld.byJobType && typeof tld.byJobType === "object" && !Array.isArray(tld.byJobType)
       ? (tld.byJobType as Record<string, { visibleStatuses?: string[] }>)
       : undefined;
-  const visibleStatuses = computeDefaultVisibleStatuses(jobTypes, global, byJobType);
+  const customStatuses = Array.isArray((settings as any)?.customStatuses)
+    ? ((settings as any).customStatuses as Array<{ id: string; order?: number }>)
+    : undefined;
+  const rawVisible = computeDefaultVisibleStatuses(jobTypes, global, byJobType);
+  const visibleStatuses = sortVisibleStatusesByOffice(rawVisible, customStatuses);
   const customNotes =
     typeof tld.defaultNotes === "string" && tld.defaultNotes.trim().length > 0
       ? tld.defaultNotes

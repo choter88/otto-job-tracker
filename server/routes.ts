@@ -67,7 +67,10 @@ import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
 import { getDefaultOfficeSettings } from "@shared/office-defaults";
-import { resolveTrackingLinkDefaultsForJobTypes } from "@shared/tracking-link-defaults";
+import {
+  resolveTrackingLinkDefaultsForJobTypes,
+  sortVisibleStatusesByOffice,
+} from "@shared/tracking-link-defaults";
 import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
 import { trackEvent, CLIENT_TRACKABLE_EVENTS, getAggregatedDailyStats, getRawEventsSince } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
@@ -725,9 +728,19 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         office?.settings,
         localJobs.map((j) => j.jobType),
       );
-      const effectiveVisible = Array.isArray(visibleStatuses) && visibleStatuses.length > 0
+      const rawEffectiveVisible = Array.isArray(visibleStatuses) && visibleStatuses.length > 0
         ? visibleStatuses
         : fallback.visibleStatuses;
+      // Always sort by the office's customStatuses.order so the
+      // patient-page timeline reads as a natural progression,
+      // regardless of the order the caller assembled the array in.
+      // Without this, a caller (or staff toggling checkboxes in
+      // Settings) could land statuses in scrambled order and the
+      // patient sees Ready-for-pickup before Order-received.
+      const officeCustomStatuses = Array.isArray((office?.settings as any)?.customStatuses)
+        ? ((office?.settings as any).customStatuses as Array<{ id: string; order?: number }>)
+        : undefined;
+      const effectiveVisible = sortVisibleStatusesByOffice(rawEffectiveVisible, officeCustomStatuses);
       const effectiveNotes = typeof customNotes === "string"
         ? customNotes
         : customNotes === null
@@ -792,11 +805,23 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // settings flow to the patient page.
       const statusCatalog = await buildStatusCatalog(user.officeId);
 
+      // Sort visibleStatuses (if supplied) by customStatuses.order so
+      // the patient-page timeline renders in natural progression
+      // regardless of the order the caller built the array in.
+      let normalizedVisible: string[] | undefined;
+      if (Array.isArray(visibleStatuses)) {
+        const office = await storage.getOffice(user.officeId);
+        const cs = Array.isArray((office?.settings as any)?.customStatuses)
+          ? ((office?.settings as any).customStatuses as Array<{ id: string; order?: number }>)
+          : undefined;
+        normalizedVisible = sortVisibleStatusesByOffice(visibleStatuses, cs);
+      }
+
       const result = await portalUpdateTrackingLink({
         hostToken,
         id,
         jobs: snapshots,
-        visibleStatuses,
+        visibleStatuses: normalizedVisible,
         statusCatalog,
         eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
         customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
@@ -975,6 +1000,38 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (!result.ok) {
         return res.status(result.error.statusCode || 500).json({ error: result.error.message });
       }
+
+      // Self-heal pass for pre-fix links: any link whose
+      // `visibleStatuses` is in the wrong order (saved when staff
+      // toggled checkboxes in a non-progression sequence in Settings)
+      // gets normalized in the response AND PATCHed back to the
+      // portal so the patient page renders the natural progression.
+      // Fire-and-forget on the PATCH — we don't want a flaky portal
+      // round-trip blocking the list response.
+      const user = getOfficeUser(req);
+      const office = await storage.getOffice(user.officeId);
+      const cs = Array.isArray((office?.settings as any)?.customStatuses)
+        ? ((office?.settings as any).customStatuses as Array<{ id: string; order?: number }>)
+        : undefined;
+      if (cs && cs.length > 0) {
+        for (const link of result.links) {
+          if (link.revokedAt) continue;
+          const sorted = sortVisibleStatusesByOffice(link.visibleStatuses, cs);
+          const same =
+            sorted.length === link.visibleStatuses.length
+            && sorted.every((v, i) => v === link.visibleStatuses[i]);
+          if (!same) {
+            // Surface the corrected order to the caller right away.
+            link.visibleStatuses = sorted;
+            // Fix the portal-side copy in the background.
+            portalUpdateTrackingLink({ hostToken, id: link.id, visibleStatuses: sorted })
+              .catch((err) =>
+                console.error("[tracking-links] self-heal sort failed:", err?.message || err),
+              );
+          }
+        }
+      }
+
       res.json({ links: result.links });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to list tracking links" });
@@ -2761,6 +2818,46 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           return res.status(400).json({ error: "settings must be an object" });
         }
         updates.settings = withDefaultMessageTemplates(updates.settings);
+
+        // Normalize `trackingLinkDefaults.visibleStatuses` (and any
+        // per-jobType override arrays) to follow `customStatuses.order`
+        // so the patient page renders the natural progression
+        // regardless of the order staff toggled checkboxes here.
+        // Without this, clicking "Ready for pickup" before "Order
+        // received" landed those IDs in scrambled order in the saved
+        // settings and every newly-generated link inherited it.
+        const incomingSettings = updates.settings as Record<string, any>;
+        const tld = incomingSettings.trackingLinkDefaults;
+        if (tld && typeof tld === "object" && !Array.isArray(tld)) {
+          // The customStatuses to sort by: prefer the same-update
+          // value if the caller's also editing them; otherwise fall
+          // back to whatever the office already has stored (server-
+          // side merge happens in updateOffice via JSON merge).
+          let csForSort: Array<{ id: string; order?: number }> | undefined =
+            Array.isArray(incomingSettings.customStatuses)
+              ? (incomingSettings.customStatuses as Array<{ id: string; order?: number }>)
+              : undefined;
+          if (!csForSort) {
+            const existing = await storage.getOffice(req.params.id);
+            const stored = (existing?.settings as any)?.customStatuses;
+            if (Array.isArray(stored)) csForSort = stored as Array<{ id: string; order?: number }>;
+          }
+          if (csForSort && csForSort.length > 0) {
+            if (Array.isArray(tld.visibleStatuses)) {
+              tld.visibleStatuses = sortVisibleStatusesByOffice(tld.visibleStatuses, csForSort);
+            }
+            if (tld.byJobType && typeof tld.byJobType === "object" && !Array.isArray(tld.byJobType)) {
+              for (const [k, v] of Object.entries(tld.byJobType as Record<string, any>)) {
+                if (v && Array.isArray(v.visibleStatuses)) {
+                  (tld.byJobType as Record<string, any>)[k] = {
+                    ...v,
+                    visibleStatuses: sortVisibleStatusesByOffice(v.visibleStatuses, csForSort),
+                  };
+                }
+              }
+            }
+          }
+        }
       }
 
       const office = await storage.updateOffice(req.params.id, updates);
