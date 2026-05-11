@@ -56,6 +56,7 @@ import {
   getLicenseBaseUrl,
   type TrackingJobSnapshot,
   type TrackingStatusCatalogEntry,
+  type TrackingLinkRecord,
 } from "./license-client";
 import { scanNotesForPhi } from "./tracking-link-phi-scan";
 import { importSnapshotV1 } from "./migration-import";
@@ -541,11 +542,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
    * both `POST /api/jobs` and the CSV import route so EHR-imported jobs
    * get the same behavior as dialog-created ones.
    *
-   * Merge rule: if any other active job in the same office has the same
-   * patient first+last name (case + whitespace insensitive) AND that
-   * sibling already has an un-revoked tracking link, this job's snapshot
-   * is appended to that link instead of creating a second link. Patients
-   * with multiple items (glasses + sunglasses) get one URL, not many.
+   * Merge rule — CONSERVATIVE: a new job's snapshot is only appended to
+   * an existing link when the staff has EXPLICITLY manually linked
+   * this job with a sibling via `job_link_groups` (the worklist's
+   * Link feature). Name match alone is not sufficient — two unrelated
+   * "John Smith"s in the same office must never end up sharing one
+   * patient-facing link, even if both have active tracking links.
+   *
+   * For the "create glasses then create sunglasses for the same
+   * patient" workflow: each job gets its own link by default. Staff
+   * consolidates by manually linking the two jobs from the worklist
+   * (existing feature) — that flow now extends a single tracking link
+   * across the group (see the merge logic in `POST /api/jobs/link`).
    *
    * Returns the link URL on success; null on any failure. Never throws —
    * callers should treat a null URL as "auto-gen failed, job creation
@@ -570,61 +578,54 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           ? tld.defaultNotes
           : null;
 
-      // Tray-number-only offices have no patient names — every job
-      // lives on its own link (merging would collapse unrelated jobs).
-      const firstName = (newJob.patientFirstName || "").trim().toLowerCase();
-      const lastName = (newJob.patientLastName || "").trim().toLowerCase();
-      if (firstName && lastName) {
-        const siblings = await db
-          .select({ id: jobs.id })
-          .from(jobs)
-          .where(
-            and(
-              eq(jobs.officeId, newJob.officeId),
-              sql`lower(trim(${jobs.patientFirstName})) = ${firstName}`,
-              sql`lower(trim(${jobs.patientLastName})) = ${lastName}`,
-              sql`${jobs.id} != ${newJob.id}`,
-            ),
-          );
-        const siblingIds = siblings.map((s) => s.id);
-        if (siblingIds.length > 0) {
-          const listResult = await portalListTrackingLinks({ hostToken, jobIds: siblingIds });
-          if (listResult.ok) {
-            const candidates = listResult.links.filter((l) => l.revokedAt === null);
-            // Most recently created un-revoked link wins. ISO timestamps
-            // sort lexicographically, so localeCompare is sufficient.
-            candidates.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-            const target = candidates[0];
-            if (target) {
-              const mergedIds = Array.from(new Set([...target.jobIds, newJob.id]));
-              // Portal caps a link at 10 jobs — fall through to a new
-              // link if the merge would exceed that. Avoids a confusing
-              // "11th order vanished into the void" failure mode.
-              if (mergedIds.length <= 10) {
-                const { jobs: mergedJobs, missing } = await loadLocalJobsForOffice(
-                  mergedIds,
-                  newJob.officeId,
-                );
-                if (missing.length === 0) {
-                  const snapshots = await buildJobSnapshots(mergedJobs);
-                  const statusCatalog = await buildStatusCatalog(newJob.officeId);
-                  const result = await portalUpdateTrackingLink({
-                    hostToken,
-                    id: target.id,
-                    jobs: snapshots,
-                    statusCatalog,
-                  });
-                  if (result.ok) {
-                    return { url: result.link.url, merged: true };
-                  }
-                }
+      // Look for a manual link group involving this job. The auto-gen
+      // path runs in the same request that just inserted the job, so
+      // we're really only catching the case where staff is linking
+      // jobs together as a deliberate flow (rare on initial creation,
+      // common for the post-link consolidation triggered from
+      // `POST /api/jobs/link`, which calls this function indirectly).
+      const groupEntry = await db
+        .select({ groupId: jobLinkGroups.groupId })
+        .from(jobLinkGroups)
+        .where(eq(jobLinkGroups.jobId, newJob.id))
+        .limit(1);
+
+      if (groupEntry.length > 0) {
+        const target = await findMergeTargetForGroup(
+          groupEntry[0].groupId,
+          newJob.id,
+          hostToken,
+        );
+        if (target) {
+          const mergedIds = Array.from(new Set([...target.jobIds, newJob.id]));
+          // Portal caps a link at 10 jobs — fall through to a new
+          // link if the merge would exceed that.
+          if (mergedIds.length <= 10) {
+            const { jobs: mergedJobs, missing } = await loadLocalJobsForOffice(
+              mergedIds,
+              newJob.officeId,
+            );
+            if (missing.length === 0) {
+              const snapshots = await buildJobSnapshots(mergedJobs);
+              const statusCatalog = await buildStatusCatalog(newJob.officeId);
+              const result = await portalUpdateTrackingLink({
+                hostToken,
+                id: target.id,
+                jobs: snapshots,
+                statusCatalog,
+              });
+              if (result.ok) {
+                return { url: result.link.url, merged: true };
               }
             }
           }
         }
       }
 
-      // No mergeable sibling — create a fresh link seeded from office defaults.
+      // No manual-link-group merge candidate — create a fresh link
+      // seeded from office defaults. Patients with multiple unlinked
+      // orders get separate URLs by design; staff consolidates via the
+      // worklist's Link feature when appropriate.
       const snapshots = await buildJobSnapshots([newJob]);
       const statusCatalog = await buildStatusCatalog(newJob.officeId);
       const result = await portalCreateTrackingLink({
@@ -642,6 +643,38 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       console.error("[tracking-links] auto-generate failed:", err?.message || err);
       return { url: null, merged: false };
     }
+  }
+
+  /**
+   * Find the best existing tracking link to merge into, scoped to a
+   * single manual link group. Returns the most recently created
+   * un-revoked link covering any sibling in the group, or null if
+   * there isn't one.
+   */
+  async function findMergeTargetForGroup(
+    groupId: string,
+    excludeJobId: string,
+    hostToken: string,
+  ): Promise<TrackingLinkRecord | null> {
+    const siblings = await db
+      .select({ jobId: jobLinkGroups.jobId })
+      .from(jobLinkGroups)
+      .where(
+        and(
+          eq(jobLinkGroups.groupId, groupId),
+          sql`${jobLinkGroups.jobId} != ${excludeJobId}`,
+        ),
+      );
+    const siblingIds = siblings.map((s) => s.jobId);
+    if (siblingIds.length === 0) return null;
+
+    const listResult = await portalListTrackingLinks({ hostToken, jobIds: siblingIds });
+    if (!listResult.ok) return null;
+
+    const active = listResult.links.filter((l) => l.revokedAt === null);
+    if (active.length === 0) return null;
+    active.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    return active[0];
   }
 
   app.post("/api/tracking-links", requireAuth, requireNotViewOnly, async (req, res) => {
@@ -2144,6 +2177,68 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "job_link" });
       trackEvent({ userId: user.id, officeId: user.officeId, eventType: "job_linked", metadata: { count: linked } });
+
+      // Tracking-link consolidation. Now that staff has *explicitly*
+      // declared these jobs belong to the same patient, fold their
+      // tracking links into one so the patient gets one shareable URL
+      // instead of a per-job pile. Conservative rules:
+      //   - 0 active links across the group: do nothing (staff can
+      //     generate one from any of the jobs' Tracking tab)
+      //   - 1 active link: extend its coverage to include every linked
+      //     job (low-surprise — there's only one link to choose from)
+      //   - 2+ active links: leave them alone. Folding two existing
+      //     patient-facing URLs into one would either silently break
+      //     URLs we've already handed out or require us to pick which
+      //     to keep, both of which feel worse than "you have two
+      //     links, decide". Future: surface this in the Tracking tab.
+      const hostTokenForMerge = getHostToken();
+      if (hostTokenForMerge) {
+        try {
+          const allGroupIds = await db
+            .select({ jobId: jobLinkGroups.jobId })
+            .from(jobLinkGroups)
+            .where(eq(jobLinkGroups.groupId, groupId));
+          const groupJobIds = allGroupIds.map((e) => e.jobId);
+          if (groupJobIds.length >= 2 && groupJobIds.length <= 10) {
+            const listResult = await portalListTrackingLinks({
+              hostToken: hostTokenForMerge,
+              jobIds: groupJobIds,
+            });
+            if (listResult.ok) {
+              const activeLinks = listResult.links.filter((l) => l.revokedAt === null);
+              if (activeLinks.length === 1) {
+                const target = activeLinks[0];
+                const mergedIds = Array.from(new Set([...target.jobIds, ...groupJobIds]));
+                if (mergedIds.length <= 10 && mergedIds.length > target.jobIds.length) {
+                  const { jobs: mergedJobs, missing } = await loadLocalJobsForOffice(
+                    mergedIds,
+                    user.officeId,
+                  );
+                  if (missing.length === 0) {
+                    const snapshots = await buildJobSnapshots(mergedJobs);
+                    const statusCatalog = await buildStatusCatalog(user.officeId);
+                    await portalUpdateTrackingLink({
+                      hostToken: hostTokenForMerge,
+                      id: target.id,
+                      jobs: snapshots,
+                      statusCatalog,
+                    });
+                    trackEvent({
+                      userId: user.id,
+                      officeId: user.officeId,
+                      eventType: "tracking_link_merged_on_manual_link",
+                      metadata: { groupId, addedJobs: mergedIds.length - target.jobIds.length },
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (mergeErr: any) {
+          console.error("[tracking-links] post-link merge failed:", mergeErr?.message || mergeErr);
+        }
+      }
+
       res.json({ ok: true, groupId, linked });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

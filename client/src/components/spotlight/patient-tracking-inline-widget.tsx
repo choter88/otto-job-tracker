@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { Share2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
@@ -106,14 +107,16 @@ export function PatientTrackingInlineWidget({ onTurnedOn }: Props) {
             ? "Every new job will get a tracking link by default. You can still opt out per-job from the New Job dialog."
             : "Flip the switch to start generating tracking links for every new job."}
         </p>
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="sm"
           onClick={() => openOfficeSettings("tracking")}
-          className="mt-1.5 text-[calc(11.5px*var(--ui-scale))] text-otto-accent hover:underline underline-offset-2"
+          className="mt-1 h-auto p-0 text-[calc(11.5px*var(--ui-scale))] text-otto-accent"
           data-testid="spotlight-configure-other-defaults"
         >
           Configure other defaults →
-        </button>
+        </Button>
       </div>
     </div>
   );

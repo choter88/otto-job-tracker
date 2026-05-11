@@ -1048,10 +1048,10 @@ export default function JobDetailsModal({
                         await navigator.clipboard.writeText(message);
                         setTrackingMessageCopied(true);
                         setTimeout(() => setTrackingMessageCopied(false), 2000);
-                        toast({
-                          title: "Message copied",
-                          description: "Paste into Weave, SMS, or email.",
-                        });
+                        // No toast — the button text itself confirms
+                        // the copy ("Message copied" + check icon for 2s).
+                        // A toast would be redundant noise on top of an
+                        // already self-confirming control.
                         fetch("/api/track", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
@@ -1292,7 +1292,7 @@ export default function JobDetailsModal({
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-ink-mute hover:text-ink ml-auto"
+                        className="text-ink-mute hover:text-ink"
                         onClick={() => {
                           setPatientNoteDraft(activeTrackingLink.customNotes ?? "");
                           setPatientNoteDirty(false);
@@ -1337,15 +1337,17 @@ export default function JobDetailsModal({
                       <Share2 className="h-3.5 w-3.5 mr-1.5" />
                       {directGenerateMutation.isPending ? "Generating…" : "Generate tracking link"}
                     </Button>
-                    <div className="mt-3">
-                      <button
+                    <div className="mt-2">
+                      <Button
                         type="button"
-                        className="text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-otto-accent underline-offset-2 hover:underline"
+                        variant="link"
+                        size="sm"
+                        className="text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-otto-accent h-auto p-0"
                         onClick={() => setTrackingDialogOpen(true)}
                         data-testid="button-customize-and-generate"
                       >
                         Customize and generate
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
