@@ -66,7 +66,7 @@ import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
 import { getDefaultOfficeSettings } from "@shared/office-defaults";
-import { DEFAULT_VISIBLE_STATUSES } from "@shared/tracking-link-defaults";
+import { resolveTrackingLinkDefaultsForJobTypes } from "@shared/tracking-link-defaults";
 import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
 import { trackEvent, CLIENT_TRACKABLE_EVENTS, getAggregatedDailyStats, getRawEventsSince } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
@@ -565,18 +565,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   ): Promise<{ url: string | null; merged: boolean }> {
     try {
       const office = await storage.getOffice(newJob.officeId);
-      const tld = ((office?.settings as any)?.trackingLinkDefaults ?? {}) as {
-        visibleStatuses?: string[];
-        defaultNotes?: string;
-      };
-      const visibleStatuses =
-        Array.isArray(tld.visibleStatuses) && tld.visibleStatuses.length > 0
-          ? tld.visibleStatuses
-          : DEFAULT_VISIBLE_STATUSES;
-      const customNotes =
-        typeof tld.defaultNotes === "string" && tld.defaultNotes.trim().length > 0
-          ? tld.defaultNotes
-          : null;
+      // Single source of truth: `resolveTrackingLinkDefaultsForJobTypes`
+      // honors office's `byJobType` overrides (e.g. contacts skip a
+      // quality_check stage that glasses go through) plus the global
+      // visibleStatuses + defaultNotes. Previously this path only used
+      // the global defaults — per-type overrides were silently ignored
+      // for auto-generated links.
+      const { visibleStatuses, customNotes } = resolveTrackingLinkDefaultsForJobTypes(
+        office?.settings,
+        [newJob.jobType],
+      );
 
       // Look for a manual link group involving this job. The auto-gen
       // path runs in the same request that just inserted the job, so
@@ -711,13 +709,37 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const snapshots = await buildJobSnapshots(localJobs);
       const statusCatalog = await buildStatusCatalog(user.officeId);
 
+      // Defense in depth: callers SHOULD send visibleStatuses /
+      // customNotes scoped to the user's choice, but if they don't,
+      // fall back to the office's defaults (honoring per-job-type
+      // overrides) rather than letting the portal receive `undefined`
+      // and pick its own. Two callers today:
+      //   - TrackingLinkDialog: passes explicit values from its
+      //     configure phase (always defined)
+      //   - JobDetails one-click Generate: passes office defaults
+      //     resolved client-side — this fallback makes the wire
+      //     contract robust to either skipping that resolution.
+      const office = await storage.getOffice(user.officeId);
+      const fallback = resolveTrackingLinkDefaultsForJobTypes(
+        office?.settings,
+        localJobs.map((j) => j.jobType),
+      );
+      const effectiveVisible = Array.isArray(visibleStatuses) && visibleStatuses.length > 0
+        ? visibleStatuses
+        : fallback.visibleStatuses;
+      const effectiveNotes = typeof customNotes === "string"
+        ? customNotes
+        : customNotes === null
+          ? null
+          : fallback.customNotes;
+
       const result = await portalCreateTrackingLink({
         hostToken,
         jobs: snapshots,
-        visibleStatuses,
+        visibleStatuses: effectiveVisible,
         statusCatalog,
         eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
-        customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
+        customNotes: effectiveNotes,
         expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
       });
       if (!result.ok) {
@@ -2191,6 +2213,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       //     URLs we've already handed out or require us to pick which
       //     to keep, both of which feel worse than "you have two
       //     links, decide". Future: surface this in the Tracking tab.
+      // Consolidate tracking links across the linked group. See the
+      // commit-4 comment block for the 0/1/2+ active-link rules.
+      // Reports back via `trackingLinkConsolidated` so the worklist
+      // toast can tell the user their patient now has a single URL
+      // covering every linked job (instead of silently doing it).
+      let trackingLinkConsolidated = false;
+      let trackingLinkConflict = false;
       const hostTokenForMerge = getHostToken();
       if (hostTokenForMerge) {
         try {
@@ -2206,7 +2235,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
             });
             if (listResult.ok) {
               const activeLinks = listResult.links.filter((l) => l.revokedAt === null);
-              if (activeLinks.length === 1) {
+              if (activeLinks.length >= 2) {
+                trackingLinkConflict = true;
+              } else if (activeLinks.length === 1) {
                 const target = activeLinks[0];
                 const mergedIds = Array.from(new Set([...target.jobIds, ...groupJobIds]));
                 if (mergedIds.length <= 10 && mergedIds.length > target.jobIds.length) {
@@ -2223,6 +2254,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
                       jobs: snapshots,
                       statusCatalog,
                     });
+                    trackingLinkConsolidated = true;
                     trackEvent({
                       userId: user.id,
                       officeId: user.officeId,
@@ -2239,7 +2271,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
 
-      res.json({ ok: true, groupId, linked });
+      res.json({ ok: true, groupId, linked, trackingLinkConsolidated, trackingLinkConflict });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -2673,13 +2705,30 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const office = await storage.updateOffice(req.params.id, updates);
       trackEvent({ userId: getAuthUser(req)?.id, officeId: req.params.id, eventType: "settings_changed" });
 
-      // If customStatuses changed, push a single catalog refresh to all
-      // active tracking links in this office so label edits propagate to
-      // the patient page immediately. One DB write on the portal side.
-      const customStatusesChanged = Object.prototype.hasOwnProperty.call(updates, "settings")
-        && Array.isArray((updates.settings as any)?.customStatuses);
+      // Push a single catalog refresh to every active tracking link in
+      // this office whenever any of the *catalog-affecting* fields
+      // change, so label edits propagate to the patient page right
+      // away. Two sources feed the catalog:
+      //   - `customStatuses` — the office's internal status list
+      //   - `trackingLinkDefaults.patientStatusLabels` — per-status
+      //     patient-facing label overrides
+      // Previously only the first triggered a refresh; editing a
+      // patient-facing label alone left existing links showing the old
+      // label until the next per-link PATCH bumped them.
+      const settingsUpdate = (updates.settings as any) ?? {};
+      const catalogAffectingChange =
+        Object.prototype.hasOwnProperty.call(updates, "settings")
+        && (
+          Array.isArray(settingsUpdate.customStatuses)
+          || (settingsUpdate.trackingLinkDefaults
+              && typeof settingsUpdate.trackingLinkDefaults === "object"
+              && Object.prototype.hasOwnProperty.call(
+                settingsUpdate.trackingLinkDefaults,
+                "patientStatusLabels",
+              ))
+        );
       const settingsHostToken = getHostToken();
-      if (customStatusesChanged && settingsHostToken) {
+      if (catalogAffectingChange && settingsHostToken) {
         buildStatusCatalog(req.params.id)
           .then((statusCatalog) =>
             portalRefreshTrackingCatalog({ hostToken: settingsHostToken, statusCatalog }),

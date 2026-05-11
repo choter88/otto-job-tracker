@@ -71,6 +71,7 @@ import {
 import QRCode from "qrcode";
 import { renderMessageTemplate } from "@/components/customization/tracking-link-defaults-editor";
 import { formatPatientDisplayName } from "@shared/name-format";
+import { computeDefaultVisibleStatuses } from "@shared/tracking-link-defaults";
 import type { Job, Office } from "@shared/schema";
 
 const DEFAULT_VISIBLE_STATUSES = ["ordered", "in_progress", "ready_for_pickup"];
@@ -139,33 +140,10 @@ interface EtaSuggestion {
   medianDays?: number;
 }
 
-// Compute the union of default visible statuses for a set of jobs, taking
-// per-job-type overrides from office settings into account. If every job
-// shares a type and that type has an override, use it; otherwise union
-// across types so the patient sees every stage that any job will go
-// through. Caller can still narrow per-link via the customize panel.
-function computeDefaultVisibleStatuses(
-  selectedJobTypes: string[],
-  globalDefault: string[],
-  byJobType: Record<string, { visibleStatuses?: string[] } | undefined> | undefined,
-): string[] {
-  if (selectedJobTypes.length === 0) return globalDefault;
-  const typed = byJobType ?? {};
-  const out = new Set<string>();
-  const uniqueTypes: string[] = [];
-  const seen = new Set<string>();
-  for (const t of selectedJobTypes) {
-    if (seen.has(t)) continue;
-    seen.add(t);
-    uniqueTypes.push(t);
-  }
-  for (const t of uniqueTypes) {
-    const override = typed[t]?.visibleStatuses;
-    const list = Array.isArray(override) && override.length > 0 ? override : globalDefault;
-    for (const s of list) out.add(s);
-  }
-  return Array.from(out);
-}
+// `computeDefaultVisibleStatuses` lives in `shared/tracking-link-defaults.ts`
+// now so the server's auto-gen path and the client's empty-state
+// Generate button apply the same per-job-type-aware defaults this
+// dialog applies.
 
 export default function TrackingLinkDialog({
   open,

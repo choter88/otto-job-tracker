@@ -525,17 +525,39 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   });
 
   const linkJobsMutation = useMutation({
-    mutationFn: async (jobIds: string[]) => {
+    mutationFn: async (jobIds: string[]): Promise<{
+      ok: boolean;
+      trackingLinkConsolidated?: boolean;
+      trackingLinkConflict?: boolean;
+    }> => {
       const res = await apiRequest("POST", "/api/jobs/link", { jobIds });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       setSelectedJobs([]);
       setSelectionMode(false);
       setLinkMode(false);
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs/linked-ids"] });
-      toast({ title: "Jobs linked", description: "Selected jobs are now linked together." });
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      // Tracking-link side-effect: server consolidates active links
+      // across the group when exactly one exists, so the patient ends
+      // up with one URL covering every linked job. The toast surfaces
+      // this so staff knows they don't need to re-share — the link
+      // they already sent now covers the new jobs too.
+      if (data.trackingLinkConsolidated) {
+        toast({
+          title: "Jobs linked",
+          description: "Your patient's existing tracking link now covers every linked job.",
+        });
+      } else if (data.trackingLinkConflict) {
+        toast({
+          title: "Jobs linked",
+          description: "Heads up: multiple active tracking links cover this group. Pick one to share.",
+        });
+      } else {
+        toast({ title: "Jobs linked", description: "Selected jobs are now linked together." });
+      }
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

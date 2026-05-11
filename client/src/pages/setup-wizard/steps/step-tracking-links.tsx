@@ -14,9 +14,7 @@
 // "auto-generate ON" state intact.
 
 import { useState } from "react";
-import { ChevronRight, Share2 } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
+import { ChevronRight } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -25,6 +23,7 @@ import {
 import TrackingLinkDefaultsEditor, {
   type TrackingLinkDefaults,
 } from "@/components/customization/tracking-link-defaults-editor";
+import { AutoGenerateTrackingToggle } from "@/components/customization/auto-generate-tracking-toggle";
 import type { CustomListItem } from "@/components/customization/sortable-list-editor";
 import { cn } from "@/lib/utils";
 
@@ -57,34 +56,14 @@ export default function StepTrackingLinks({
         </p>
       </div>
 
-      {/* Above-the-fold: just the toggle. Same control that lives in
-          Settings → Tracking Links — saving from either surface flips
-          the same field. */}
-      <section
-        className="rounded-lg border border-line bg-panel px-4 py-3 flex items-start gap-3"
-        data-testid="wizard-tracking-auto-generate-toggle"
-      >
-        <Switch
-          id="wizard-auto-generate-tracking-links"
-          checked={!!value.autoGenerateTrackingLinks}
-          onCheckedChange={(v) => onChange({ ...value, autoGenerateTrackingLinks: v })}
-          className="mt-0.5"
-        />
-        <div className="flex-1 min-w-0">
-          <Label
-            htmlFor="wizard-auto-generate-tracking-links"
-            className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer flex items-center gap-1.5"
-          >
-            <Share2 className="h-3.5 w-3.5 text-otto-accent" />
-            Auto-generate tracking links for new jobs
-          </Label>
-          <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mt-0.5 leading-snug m-0">
-            {value.autoGenerateTrackingLinks
-              ? "Recommended. Staff can still opt out per-job from the New Job dialog."
-              : "New jobs won't have tracking links unless you generate one from Job Details → Patient tracking."}
-          </p>
-        </div>
-      </section>
+      {/* Above-the-fold: just the toggle. Same shared component as
+          Settings → Tracking Links and the spotlight inline widget. */}
+      <AutoGenerateTrackingToggle
+        testId="wizard-tracking-auto-generate-toggle"
+        checked={!!value.autoGenerateTrackingLinks}
+        onChange={(v) => onChange({ ...value, autoGenerateTrackingLinks: v })}
+        descriptionOn="Recommended. Staff can still opt out per-job from the New Job dialog."
+      />
 
       {/* Below-the-fold: power-user knobs. Collapsed by default so the
           wizard's tracking-links step reads as "one switch" rather

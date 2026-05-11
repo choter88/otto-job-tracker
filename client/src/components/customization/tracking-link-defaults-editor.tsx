@@ -19,6 +19,7 @@ import {
   DEFAULT_VISIBLE_STATUSES,
   type TrackingLinkDefaults,
 } from "@shared/tracking-link-defaults";
+import { AutoGenerateTrackingToggle } from "./auto-generate-tracking-toggle";
 
 // Re-export the shared constants/types so existing imports from this
 // module keep working — the canonical source moved to
@@ -66,33 +67,14 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
         </p>
       </div>
 
-      {/* Auto-generate toggle — the centerpiece of this tab. Off by
-          default for existing offices; the setup wizard recommends
-          turning it on for new offices. */}
-      <section
-        className="rounded-lg border border-line bg-panel px-4 py-3 flex items-start gap-3"
-        data-testid="tracking-auto-generate-toggle"
-      >
-        <Switch
-          id="auto-generate-tracking-links"
-          checked={!!value.autoGenerateTrackingLinks}
-          onCheckedChange={(v) => onChange({ ...value, autoGenerateTrackingLinks: v })}
-          className="mt-0.5"
-        />
-        <div className="flex-1 min-w-0">
-          <Label
-            htmlFor="auto-generate-tracking-links"
-            className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer"
-          >
-            Auto-generate tracking links for new jobs
-          </Label>
-          <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mt-0.5 leading-snug m-0">
-            {value.autoGenerateTrackingLinks
-              ? "Every new job gets a tracking link by default. Find it in Job Details → Patient tracking when you're ready to share."
-              : "New jobs won't have tracking links unless you generate one from Job Details → Patient tracking."}
-          </p>
-        </div>
-      </section>
+      {/* Auto-generate toggle — the centerpiece of this tab. Same
+          component used by the setup wizard step and the patient-
+          tracking spotlight widget so the affordance reads identically
+          everywhere staff encounters it. */}
+      <AutoGenerateTrackingToggle
+        checked={!!value.autoGenerateTrackingLinks}
+        onChange={(v) => onChange({ ...value, autoGenerateTrackingLinks: v })}
+      />
 
       <section
         className="rounded-md border border-line bg-paper-2 px-3.5 py-2.5 flex items-start gap-2"

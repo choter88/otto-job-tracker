@@ -11,14 +11,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Share2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { openOfficeSettings } from "./feature-spotlight-host";
+import { AutoGenerateTrackingToggle } from "@/components/customization/auto-generate-tracking-toggle";
 import type { Office } from "@shared/schema";
 
 interface Props {
@@ -80,33 +78,19 @@ export function PatientTrackingInlineWidget({ onTurnedOn }: Props) {
   });
 
   return (
-    <div
-      className="rounded-lg border border-otto-accent-line bg-otto-accent-soft/40 px-4 py-3 flex items-start gap-3"
-      data-testid="spotlight-patient-tracking-inline-widget"
-    >
-      <Switch
-        id="spotlight-auto-generate-tracking-links"
-        checked={checked}
-        disabled={mutation.isPending || !office}
-        onCheckedChange={(v) => {
-          setChecked(v);
-          mutation.mutate(v);
-        }}
-        className="mt-0.5"
-      />
-      <div className="flex-1 min-w-0">
-        <Label
-          htmlFor="spotlight-auto-generate-tracking-links"
-          className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer flex items-center gap-1.5"
-        >
-          <Share2 className="h-3.5 w-3.5 text-otto-accent" />
-          Turn on auto-generate now
-        </Label>
-        <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mt-0.5 leading-snug m-0">
-          {checked
-            ? "Every new job will get a tracking link by default. You can still opt out per-job from the New Job dialog."
-            : "Flip the switch to start generating tracking links for every new job."}
-        </p>
+    <AutoGenerateTrackingToggle
+      accent
+      testId="spotlight-patient-tracking-inline-widget"
+      checked={checked}
+      disabled={mutation.isPending || !office}
+      onChange={(v) => {
+        setChecked(v);
+        mutation.mutate(v);
+      }}
+      label="Turn on auto-generate now"
+      descriptionOn="Every new job will get a tracking link by default. You can still opt out per-job from the New Job dialog."
+      descriptionOff="Flip the switch to start generating tracking links for every new job."
+      footer={
         <Button
           type="button"
           variant="link"
@@ -117,7 +101,7 @@ export function PatientTrackingInlineWidget({ onTurnedOn }: Props) {
         >
           Configure other defaults →
         </Button>
-      </div>
-    </div>
+      }
+    />
   );
 }
