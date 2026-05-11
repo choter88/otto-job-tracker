@@ -454,15 +454,40 @@ export default function JobDetailsModal({
 
   const updateStatusMutation = useMutation({
     mutationFn: async (newStatus: string) => {
-      if (!job?.id) return;
+      if (!job?.id) return null;
       // Server endpoint is PUT /api/jobs/:id (not PATCH). Earlier code used
       // PATCH which silently 405'd, making the Advance / Mark CTA buttons
       // appear inert.
-      await apiRequest("PUT", `/api/jobs/${job.id}`, { status: newStatus });
+      const res = await apiRequest("PUT", `/api/jobs/${job.id}`, { status: newStatus });
+      return res.json() as Promise<Job>;
     },
-    onSuccess: (_data, newStatus) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "status-history"] });
+    onSuccess: async (updatedJob, newStatus) => {
+      // Synchronous cache updates first — global `staleTime: Infinity`
+      // means a bare `invalidateQueries` defers the refetch and the
+      // modal renders the old job + old history for a frame. Patch
+      // every cached `/api/jobs` query in place so the modal's `job`
+      // prop reflects the new status immediately, then invalidate so
+      // related surfaces (tracking-links, status-history) reload.
+      if (updatedJob) {
+        queryClient.setQueriesData<Job[]>(
+          { queryKey: ["/api/jobs"] },
+          (old) => {
+            if (!Array.isArray(old)) return old;
+            return old.map((j) => (j.id === updatedJob.id ? updatedJob : j));
+          },
+        );
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/jobs"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "status-history"] }),
+        // Status change triggers a portal sync-job on the server side
+        // (the desktop calls portalSyncTrackingJob inside the PUT
+        // handler), which updates every active link covering this
+        // job. Invalidate the list so the Patient tracking tab picks
+        // up the new history entry without waiting for a focus event.
+        queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "comments"] }),
+      ]);
       const label = customStatuses.find((s: any) => s.id === newStatus)?.label || newStatus;
       toast({ title: "Status updated", description: `Set to ${label}.` });
     },

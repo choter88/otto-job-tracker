@@ -11,7 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { ShieldCheck, Share2 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ChevronRight, ShieldCheck, Share2 } from "lucide-react";
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {
@@ -54,54 +59,54 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
     [value.visibleStatuses],
   );
   const visibleSet = new Set(visible);
+  const labelOverrides = value.patientStatusLabels ?? {};
+  const hasAnyOverride = Object.values(labelOverrides).some(
+    (s) => typeof s === "string" && s.trim().length > 0,
+  );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div>
-        <h3 className="font-display text-[calc(18px*var(--ui-scale))] font-medium tracking-[-0.02em] text-ink m-0 flex items-center gap-2">
-          <Share2 className="h-[18px] w-[18px] text-otto-accent" />
+        <h3 className="font-display text-[calc(16px*var(--ui-scale))] font-medium tracking-[-0.02em] text-ink m-0 flex items-center gap-2">
+          <Share2 className="h-4 w-4 text-otto-accent" />
           Patient tracking links
         </h3>
-        <p className="text-[calc(13px*var(--ui-scale))] text-ink-mute mt-1">
-          When patient tracking is on, every new job automatically gets a shareable status link. Customize what patients see below — staff can still opt out per-job from the New Job dialog.
+        <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mt-0.5 m-0 leading-snug">
+          Auto-generate is on by default for new offices — staff can opt out per-job from the New Job dialog. The switch below lets you turn it off office-wide.
         </p>
       </div>
 
-      {/* Auto-generate toggle — the centerpiece of this tab. Same
-          component used by the setup wizard step and the patient-
-          tracking spotlight widget so the affordance reads identically
-          everywhere staff encounters it. */}
+      {/* Auto-generate toggle — kept here as the office-wide kill
+          switch (offices that want to disable auto-gen entirely flip
+          it here). Same component as wizard + spotlight surfaces. */}
       <AutoGenerateTrackingToggle
         checked={!!value.autoGenerateTrackingLinks}
         onChange={(v) => onChange({ ...value, autoGenerateTrackingLinks: v })}
       />
 
-      <section
-        className="rounded-md border border-line bg-paper-2 px-3.5 py-2.5 flex items-start gap-2"
+      <p
+        className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute leading-snug flex items-start gap-1.5 m-0"
         data-testid="tracking-defaults-disclosure"
       >
         <ShieldCheck className="h-3.5 w-3.5 text-brand-emerald shrink-0 mt-0.5" />
-        <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute leading-snug">
-          Patient pages never show the patient's name, phone, or your office identity — just the statuses below, an optional ETA, and any per-link note.
-        </p>
-      </section>
+        Patient pages never show the patient's name, phone, or your office identity — just the statuses below, an optional ETA, and any per-link notes.
+      </p>
 
       <section>
         <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
           Default visible statuses
         </Label>
-        <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1 mb-2.5">
-          Toggle a status off to hide it from patients by default. If a job is set to <em>Delayed</em>, it appears as a banner on the page automatically — no need to enable it here.
+        <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mt-0.5 mb-1.5 m-0 leading-snug">
+          Toggle off to hide from patients by default. <em>Delayed</em> auto-renders as a banner on the page — no need to enable here.
         </p>
         <div className="rounded-lg border border-line bg-panel divide-y divide-line-2" data-testid="tracking-defaults-statuses">
           {customStatuses.map((s) => {
             const checked = visibleSet.has(s.id);
-            const defaultPatientLabel = PATIENT_FACING_STATUS_LABELS[s.id] ?? s.label;
-            const overrideValue = (value.patientStatusLabels ?? {})[s.id] ?? "";
             return (
-              <div
+              <label
                 key={s.id}
-                className="flex items-start gap-3 px-3 py-2.5 hover:bg-paper-2/50"
+                htmlFor={`def-vis-${s.id}`}
+                className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-paper-2/50 cursor-pointer"
               >
                 <Checkbox
                   id={`def-vis-${s.id}`}
@@ -112,28 +117,57 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
                       : visible.filter((x) => x !== s.id);
                     onChange({ ...value, visibleStatuses: next });
                   }}
-                  className="mt-1.5"
                 />
                 <span
-                  className="h-2 w-2 rounded-full shrink-0 mt-2.5"
+                  className="h-2 w-2 rounded-full shrink-0"
                   style={{ backgroundColor: s.color }}
                   aria-hidden
                 />
-                <div className="min-w-0 flex-1">
-                  <Label
-                    htmlFor={`def-vis-${s.id}`}
-                    className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer"
+                <span className="text-[calc(13px*var(--ui-scale))] font-medium text-ink">
+                  {s.label}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+
+        {/* Patient-facing label overrides — power user feature tucked
+            behind a disclosure so the common case (just toggle on/off)
+            stays compact. Expand only when an office wants to rename
+            a status for the patient-facing page. */}
+        <Collapsible defaultOpen={hasAnyOverride}>
+          <CollapsibleTrigger
+            className="w-full mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[calc(12px*var(--ui-scale))] text-ink-mute hover:bg-paper-2 group"
+            data-testid="tracking-customize-patient-labels-trigger"
+          >
+            <ChevronRight
+              className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90"
+              aria-hidden
+            />
+            <span>Customize patient-facing labels</span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-1.5">
+            <div className="rounded-lg border border-line bg-panel divide-y divide-line-2">
+              {customStatuses.map((s) => {
+                const defaultPatientLabel = PATIENT_FACING_STATUS_LABELS[s.id] ?? s.label;
+                const overrideValue = labelOverrides[s.id] ?? "";
+                return (
+                  <div
+                    key={s.id}
+                    className="flex items-center gap-2.5 px-3 py-1.5"
                   >
-                    {s.label}
-                  </Label>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-faint shrink-0">
-                      Patient sees
+                    <span
+                      className="h-1.5 w-1.5 rounded-full shrink-0"
+                      style={{ backgroundColor: s.color }}
+                      aria-hidden
+                    />
+                    <span className="text-[calc(12.5px*var(--ui-scale))] text-ink-2 min-w-[110px]">
+                      {s.label}
                     </span>
                     <Input
                       value={overrideValue}
                       onChange={(e) => {
-                        const labels = { ...(value.patientStatusLabels ?? {}) };
+                        const labels = { ...labelOverrides };
                         const v = e.target.value;
                         if (v.trim().length === 0) delete labels[s.id];
                         else labels[s.id] = v;
@@ -141,15 +175,15 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
                       }}
                       placeholder={defaultPatientLabel}
                       maxLength={60}
-                      className="h-7 text-[calc(12px*var(--ui-scale))] bg-white"
+                      className="h-7 text-[calc(12px*var(--ui-scale))] bg-white flex-1"
                       data-testid={`patient-label-input-${s.id}`}
                     />
                   </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
       </section>
 
       <PerJobTypeOverridesSection
@@ -162,19 +196,19 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
 
       <section>
         <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
-          Default note (optional)
+          Default note <span className="text-ink-faint normal-case tracking-normal font-normal">— optional</span>
         </Label>
-        <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1 mb-2">
-          Pre-fill the per-link note field with text that's safe for any patient (avoid names, phone numbers, or clinical details).
+        <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mt-0.5 mb-1 m-0 leading-snug">
+          Pre-fills the first note when staff opens a new link. Avoid names, phone numbers, or clinical details.
         </p>
         <Textarea
           value={value.defaultNotes ?? ""}
           onChange={(e) => onChange({ ...value, defaultNotes: e.target.value })}
           placeholder="e.g. We'll text you as soon as your order is ready for pickup."
-          className="min-h-[70px] bg-white text-[calc(13px*var(--ui-scale))]"
+          className="min-h-[52px] bg-white text-[calc(13px*var(--ui-scale))]"
           maxLength={500}
         />
-        <div className="mt-1 text-right text-[calc(11px*var(--ui-scale))] text-ink-faint">
+        <div className="mt-0.5 text-right text-[calc(11px*var(--ui-scale))] text-ink-faint tabular-nums">
           {(value.defaultNotes?.length ?? 0)}/500
         </div>
       </section>
@@ -183,23 +217,16 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
         <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
           Message template
         </Label>
-        <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1 mb-2">
-          When you click <em>Copy message</em> on a generated link, this text is copied to your clipboard with the link substituted in. Paste it into Weave, SMS, or email.
+        <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mt-0.5 mb-1 m-0 leading-snug">
+          Copied to your clipboard when staff clicks <em>Copy message</em>. Supports <code className="px-1 py-0.5 rounded bg-paper-2 text-ink-2 text-[calc(11px*var(--ui-scale))]">{"{url}"}</code> (required) and <code className="px-1 py-0.5 rounded bg-paper-2 text-ink-2 text-[calc(11px*var(--ui-scale))]">{"{eta}"}</code>.
         </p>
         <Textarea
           value={value.messageTemplate ?? ""}
           onChange={(e) => onChange({ ...value, messageTemplate: e.target.value })}
           placeholder={DEFAULT_MESSAGE_TEMPLATE}
-          className="min-h-[70px] bg-white text-[calc(13px*var(--ui-scale))] font-mono"
+          className="min-h-[52px] bg-white text-[calc(12.5px*var(--ui-scale))] font-mono"
           maxLength={500}
         />
-        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[calc(11px*var(--ui-scale))] text-ink-mute">
-          <span>Placeholders:</span>
-          <code className="px-1.5 py-0.5 rounded bg-paper-2 text-ink-2">{"{url}"}</code>
-          <span>(required)</span>
-          <code className="px-1.5 py-0.5 rounded bg-paper-2 text-ink-2">{"{eta}"}</code>
-          <span>(replaced with the ETA, or stripped if none)</span>
-        </div>
       </section>
     </div>
   );
@@ -231,12 +258,28 @@ function PerJobTypeOverridesSection({
 
   if (sortedTypes.length === 0) return null;
 
+  // Hide the whole section behind a disclosure when no overrides
+  // are active — most offices use the global defaults across all job
+  // types. Expand defaults to open when at least one override exists.
+  const hasAnyOverride = Object.values(byJobType).some(
+    (e) => Array.isArray(e?.visibleStatuses),
+  );
+
   return (
-    <section>
-      <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
-        Different defaults by job type (optional)
-      </Label>
-      <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1 mb-2.5">
+    <Collapsible defaultOpen={hasAnyOverride}>
+      <CollapsibleTrigger
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[calc(12px*var(--ui-scale))] text-ink-mute hover:bg-paper-2 group"
+        data-testid="tracking-by-job-type-trigger"
+      >
+        <ChevronRight
+          className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90"
+          aria-hidden
+        />
+        <span>Different defaults by job type</span>
+        <span className="text-ink-faint">— optional</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-1.5">
+      <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mb-1.5 m-0 leading-snug px-3">
         Override the global default per job type. Useful when, e.g., contacts skip a "Quality Check" stage that glasses go through.
       </p>
       <div className="rounded-lg border border-line bg-panel divide-y divide-line-2" data-testid="tracking-defaults-by-job-type">
@@ -302,7 +345,8 @@ function PerJobTypeOverridesSection({
           );
         })}
       </div>
-    </section>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
