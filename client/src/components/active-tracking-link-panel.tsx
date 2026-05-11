@@ -12,15 +12,15 @@
 // revoke + regenerate resets the panel cleanly instead of carrying
 // over stale state.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import {
   AlertTriangle,
   CalendarPlus,
   Check,
+  ChevronDown,
   Copy,
   Eye,
-  MoreVertical,
   QrCode,
   Save,
   Sliders,
@@ -172,18 +172,24 @@ export function ActiveTrackingLinkPanel({
     }
   };
 
-  const handleCopyMessage = async () => {
+  // Memoized so it can both display in the preview card AND feed the
+  // copy handler — keeps the visible message identical to what's
+  // pasted into the patient's SMS / email.
+  const renderedMessage = useMemo(() => {
     const etaFormatted = link.eta ? format(new Date(link.eta), "EEEE, MMMM d") : null;
-    const message = renderTrackingMessageTemplate(messageTemplate, {
+    return renderTrackingMessageTemplate(messageTemplate, {
       url: link.url,
       eta: etaFormatted,
     });
+  }, [link.eta, link.url, messageTemplate]);
+
+  const handleCopyMessage = async () => {
     try {
-      await navigator.clipboard.writeText(message);
+      await navigator.clipboard.writeText(renderedMessage);
       setMessageCopied(true);
       setTimeout(() => setMessageCopied(false), 2000);
       // No toast — the button itself self-confirms via the Check icon
-      // + "Message copied" text for 2s.
+      // for 2s.
       fetch("/api/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -204,9 +210,12 @@ export function ActiveTrackingLinkPanel({
 
   return (
     <div className="space-y-5" data-testid="tracking-tab-active">
-      {/* Share section — the 90% surface. Compact header with the
-          job's current status + an overflow menu; below, the dominant
-          "Copy message" button. */}
+      {/* Share section — the 90% surface. Status + a labeled "More"
+          dropdown trigger above, then a single share card with two
+          stacked rows: URL (raw link + its own Copy) and Message
+          (preview of the rendered template + Copy). Staff sees what
+          they're about to paste before choosing — the message
+          preview is the whole point of the template-based flow. */}
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <Badge
@@ -226,20 +235,16 @@ export function ActiveTrackingLinkPanel({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                className="h-8 w-8 p-0 text-ink-mute hover:text-ink"
-                aria-label="Tracking link actions"
+                className="h-8 gap-1.5 text-[calc(12px*var(--ui-scale))]"
                 data-testid="tracking-link-actions-menu"
               >
-                <MoreVertical className="h-4 w-4" />
+                More
+                <ChevronDown className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuItem onSelect={handleCopyURL} data-testid="menu-copy-url">
-                <Copy className="h-3.5 w-3.5 mr-2" />
-                Copy URL only
-              </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={() => setQrVisible((v) => !v)}
                 data-testid="menu-toggle-qr"
@@ -277,61 +282,108 @@ export function ActiveTrackingLinkPanel({
           </DropdownMenu>
         </div>
 
-        <Button
-          size="lg"
-          className="w-full h-12 text-[calc(14px*var(--ui-scale))] font-semibold gap-2"
-          onClick={handleCopyMessage}
-          data-testid="button-copy-tracking-message"
+        <div
+          className="rounded-lg border border-line bg-panel divide-y divide-line-2"
+          data-testid="tracking-share-card"
         >
-          {messageCopied ? (
-            <>
-              <Check className="h-4 w-4" />
-              Message copied
-            </>
-          ) : (
-            <>
-              <Copy className="h-4 w-4" />
-              Copy message
-            </>
-          )}
-        </Button>
-
-        <div className="space-y-1.5">
-          <div
-            className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute font-mono truncate"
-            title={link.url}
-            data-testid="tracking-link-summary"
-          >
-            {link.url}
-            {urlCopied && (
-              <span className="ml-2 text-brand-emerald not-italic font-sans">Copied</span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(11px*var(--ui-scale))] text-ink-faint">
-            <span className="inline-flex items-center gap-1">
-              <Eye className="h-3 w-3" />
-              {link.viewCount} view{link.viewCount === 1 ? "" : "s"}
-            </span>
-            {link.lastViewedAt && (
-              <span>· last {format(new Date(link.lastViewedAt), "MMM d · HH:mm")}</span>
-            )}
-            {link.expiresAt && (
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1",
-                  trackingExpiringSoon ? "text-warn font-medium" : "",
-                )}
-                data-testid="tracking-link-expiry"
-              >
-                {trackingExpiringSoon && <AlertTriangle className="h-3 w-3" aria-hidden />}
-                {trackingDaysUntilExpiry !== null && trackingDaysUntilExpiry > 0
-                  ? `Expires ${trackingDaysUntilExpiry === 1 ? "tomorrow" : `in ${trackingDaysUntilExpiry} days`}`
-                  : trackingDaysUntilExpiry === 0
-                    ? "Expires today"
-                    : `Expired ${format(new Date(link.expiresAt), "MMM d")}`}
+          {/* URL row — raw link with its own copy button. The 10%
+              workflow where the office's message template doesn't
+              fit (e.g. pasting into a third-party tool that expects
+              just the URL). */}
+          <div className="px-3.5 py-3">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <span className="text-[calc(10.5px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
+                Link URL
               </span>
-            )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-[calc(11.5px*var(--ui-scale))]"
+                onClick={handleCopyURL}
+                data-testid="button-copy-tracking-url"
+              >
+                {urlCopied ? (
+                  <>
+                    <Check className="h-3 w-3" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3 w-3" />
+                    Copy
+                  </>
+                )}
+              </Button>
+            </div>
+            <code
+              className="block text-[calc(12px*var(--ui-scale))] font-mono text-ink-2 truncate"
+              title={link.url}
+              data-testid="tracking-link-summary"
+            >
+              {link.url}
+            </code>
           </div>
+
+          {/* Message row — preview of the office's outbound template
+              with {url} + {eta} substituted. Staff sees the exact
+              text that'll land on the clipboard, then decides. */}
+          <div className="px-3.5 py-3">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <span className="text-[calc(10.5px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
+                Message
+              </span>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-[calc(11.5px*var(--ui-scale))]"
+                onClick={handleCopyMessage}
+                data-testid="button-copy-tracking-message"
+              >
+                {messageCopied ? (
+                  <>
+                    <Check className="h-3 w-3" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3 w-3" />
+                    Copy
+                  </>
+                )}
+              </Button>
+            </div>
+            <p
+              className="text-[calc(12.5px*var(--ui-scale))] text-ink-2 leading-relaxed whitespace-pre-wrap break-words m-0"
+              data-testid="tracking-message-preview"
+            >
+              {renderedMessage}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(11px*var(--ui-scale))] text-ink-faint">
+          <span className="inline-flex items-center gap-1">
+            <Eye className="h-3 w-3" />
+            {link.viewCount} view{link.viewCount === 1 ? "" : "s"}
+          </span>
+          {link.lastViewedAt && (
+            <span>· last {format(new Date(link.lastViewedAt), "MMM d · HH:mm")}</span>
+          )}
+          {link.expiresAt && (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1",
+                trackingExpiringSoon ? "text-warn font-medium" : "",
+              )}
+              data-testid="tracking-link-expiry"
+            >
+              {trackingExpiringSoon && <AlertTriangle className="h-3 w-3" aria-hidden />}
+              {trackingDaysUntilExpiry !== null && trackingDaysUntilExpiry > 0
+                ? `Expires ${trackingDaysUntilExpiry === 1 ? "tomorrow" : `in ${trackingDaysUntilExpiry} days`}`
+                : trackingDaysUntilExpiry === 0
+                  ? "Expires today"
+                  : `Expired ${format(new Date(link.expiresAt), "MMM d")}`}
+            </span>
+          )}
         </div>
 
         {qrVisible && (
