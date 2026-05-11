@@ -14,6 +14,18 @@ import { Switch } from "@/components/ui/switch";
 import { ShieldCheck, Share2 } from "lucide-react";
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
+import {
+  DEFAULT_MESSAGE_TEMPLATE,
+  DEFAULT_VISIBLE_STATUSES,
+  type TrackingLinkDefaults,
+} from "@shared/tracking-link-defaults";
+
+// Re-export the shared constants/types so existing imports from this
+// module keep working — the canonical source moved to
+// `shared/tracking-link-defaults.ts` so the desktop server can seed new
+// offices from the same defaults the UI uses.
+export { DEFAULT_MESSAGE_TEMPLATE, DEFAULT_VISIBLE_STATUSES };
+export type { TrackingLinkDefaults };
 
 const PATIENT_FACING_STATUS_LABELS: Record<string, string> = {
   job_created: "Order received",
@@ -25,41 +37,6 @@ const PATIENT_FACING_STATUS_LABELS: Record<string, string> = {
   completed: "Picked up",
   cancelled: "Cancelled",
 };
-
-// `delayed` intentionally excluded — it surfaces as a banner on the patient
-// page when active rather than as a sequential timeline step.
-export const DEFAULT_VISIBLE_STATUSES = [
-  "ordered",
-  "in_progress",
-  "ready_for_pickup",
-];
-
-export interface TrackingLinkDefaults {
-  /**
-   * When true, every newly-created job automatically gets a tracking
-   * link generated using the office's defaults. The user can opt out
-   * per-job via a checkbox in the New Job dialog. Default false (off)
-   * so existing offices aren't surprised by behavior changes.
-   */
-  autoGenerateTrackingLinks?: boolean;
-  visibleStatuses?: string[];
-  defaultNotes?: string;
-  // Office-wide template the staff copies from the share view and pastes
-  // into Weave / SMS / email. Supports `{url}` (required) and `{eta}`
-  // placeholders. PHI never goes through this template — it's the office's
-  // own outbound voice, not the patient page itself.
-  messageTemplate?: string;
-  // Per-job-type overrides for visible statuses. Falls back to the global
-  // `visibleStatuses` for any type not present here.
-  byJobType?: Record<string, { visibleStatuses?: string[] }>;
-  // Per-status patient-facing label overrides. When set, the patient
-  // page renders the office's chosen label instead of Otto's static
-  // default. Office responsible for keeping these generic / non-PHI;
-  // length-capped to 60 chars at send time.
-  patientStatusLabels?: Record<string, string>;
-}
-
-export const DEFAULT_MESSAGE_TEMPLATE = "Hi! Here's a link to follow your order: {url}";
 
 interface Props {
   customStatuses: { id: string; label: string; color: string; order: number }[];

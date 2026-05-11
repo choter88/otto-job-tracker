@@ -109,6 +109,11 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
   // when shown so the office's chosen default behavior is the path of
   // least resistance — staff can uncheck per-job if a particular
   // patient shouldn't get a link.
+  //
+  // The actual link creation happens server-side inside `POST /api/jobs`
+  // — this checkbox value is forwarded as `generateTrackingLink` in
+  // the request body so a single round-trip both creates the job and
+  // returns the link URL (when one was generated).
   const trackingDefaults = (office?.settings as any)?.trackingLinkDefaults ?? {};
   const officeAutoGenerate = !!trackingDefaults.autoGenerateTrackingLinks;
   const [generateTrackingLink, setGenerateTrackingLink] = useState(true);
@@ -166,11 +171,17 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
         const res = await apiRequest("PUT", `/api/jobs/${job.id}`, formattedData);
         return res.json();
       } else {
-        // For creates, include createdAt as a Date
+        // For creates, include createdAt as a Date. The server reads
+        // `generateTrackingLink` and auto-creates (or merges into) a
+        // tracking link in the same handler, returning the URL on the
+        // response. This used to be a follow-up POST from this client;
+        // it now lives on the server so EHR/CSV imports get the same
+        // behavior.
         const res = await apiRequest("POST", "/api/jobs", {
           id: data.clientJobId,
           ...formattedData,
           createdAt: new Date(createdAt),
+          generateTrackingLink: officeAutoGenerate && generateTrackingLink,
         });
         return res.json();
       }
@@ -238,29 +249,21 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
       });
     },
     onSuccess: (data) => {
-      // Auto-generate path: NEW job + office has auto-gen on + the
-      // per-job checkbox kept checked. Fire-and-forget the create call
-      // — the user finds + shares the link from Job Details → Patient
-      // tracking. Single combined toast keeps the surface quiet.
-      const wantsTracking = !job && officeAutoGenerate && generateTrackingLink
-        && data && typeof data === "object" && (data as any).id;
+      // Server-side auto-gen path: the create call returns `trackingLinkUrl`
+      // on the response when a link was generated (or an existing
+      // sibling-link was extended via the merge path). The toast UX
+      // gets richer in commit 2 (copy / open actions) — for now we
+      // surface the URL in the description so staff at least know it
+      // exists.
+      const trackingLinkUrl =
+        data && typeof data === "object" && typeof (data as any).trackingLinkUrl === "string"
+          ? ((data as any).trackingLinkUrl as string)
+          : null;
 
-      if (wantsTracking) {
-        const jobId = (data as Job).id;
-        apiRequest("POST", "/api/tracking-links", { jobIds: [jobId] })
-          .catch((err: Error) => {
-            // Surface failures distinctly so staff know to fall back to
-            // the manual Generate path. Job creation already succeeded;
-            // the failure is local to the link.
-            toast({
-              title: "Couldn't generate tracking link",
-              description: err.message + " — generate manually from Job Details.",
-              variant: "destructive",
-            });
-          });
+      if (!job && trackingLinkUrl) {
         toast({
           title: "Job Created",
-          description: "Tracking link generated — share it from Job Details → Patient tracking.",
+          description: `Tracking link ready: ${trackingLinkUrl}`,
         });
       } else {
         toast({

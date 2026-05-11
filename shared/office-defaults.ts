@@ -11,6 +11,11 @@
  */
 
 import { defaultOnboardingForNewOffice, type OnboardingState } from "./onboarding";
+import {
+  DEFAULT_MESSAGE_TEMPLATE,
+  DEFAULT_VISIBLE_STATUSES,
+  type TrackingLinkDefaults,
+} from "./tracking-link-defaults";
 
 export interface DefaultOfficeSettings {
   customStatuses: Array<{ id: string; label: string; color: string; order: number }>;
@@ -20,6 +25,11 @@ export interface DefaultOfficeSettings {
   onboarding: OnboardingState;
   smsEnabled: boolean;
   smsTemplates: Record<string, string>;
+  // Seeded ON for new offices so "create a job → patient gets a link" is
+  // the default behavior without any setup. Existing offices that
+  // pre-date this default keep whatever their `office.settings.trackingLinkDefaults`
+  // already holds — `updateOffice` merges instead of replacing.
+  trackingLinkDefaults: TrackingLinkDefaults;
 }
 
 export function getDefaultOfficeSettings(): DefaultOfficeSettings {
@@ -70,6 +80,12 @@ export function getDefaultOfficeSettings(): DefaultOfficeSettings {
       completed: "Your {job_type} order #{order_id} has been dispensed.",
       cancelled:
         "Update: Your {job_type} order #{order_id} was cancelled. Please contact {office_name} at {office_phone}.",
+    },
+    trackingLinkDefaults: {
+      autoGenerateTrackingLinks: true,
+      visibleStatuses: [...DEFAULT_VISIBLE_STATUSES],
+      defaultNotes: "",
+      messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
     },
   };
 }

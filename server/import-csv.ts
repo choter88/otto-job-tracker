@@ -169,13 +169,30 @@ interface ImportConfig {
   statusMappings: Record<string, string | null>;
   notesFromColumns?: string[];
   destinationFallbackColumn?: string;
+  /**
+   * Whether the caller intends to auto-generate tracking links for
+   * the imported jobs. Consumed by the route caller, not by this
+   * function — kept here so the import config carries a complete
+   * description of the user's intent for future reference (audit
+   * logs, retry tooling, etc.).
+   */
+  generateTrackingLinks?: boolean;
+}
+
+/**
+ * Extended internal return type. The shared `ImportExecuteResult` stays
+ * lean (it's what the client gets); we expose `importedJobIds` so the
+ * route can fan out auto-gen calls after the sync transaction returns.
+ */
+export interface ExecuteImportResult extends ImportExecuteResult {
+  importedJobIds: string[];
 }
 
 export function executeImport(
   config: ImportConfig,
   officeId: string,
   userId: string,
-): ImportExecuteResult {
+): ExecuteImportResult {
   const safePath = validateImportPath(config.filePath);
   if (!fs.existsSync(safePath)) {
     throw new Error("CSV file not found");
@@ -315,8 +332,10 @@ export function executeImport(
   if (prepared.length === 0) {
     return {
       imported: 0,
+      archived: 0,
       skipped: dataRows.length,
       skipReasons: Object.entries(skipReasonCounts).map(([reason, count]) => ({ reason, count })),
+      importedJobIds: [],
     };
   }
 
@@ -357,6 +376,7 @@ export function executeImport(
 
     let activeCount = 0;
     let archivedCount = 0;
+    const insertedJobIds: string[] = [];
     const isTerminalStatus = (s: string) => s === "completed" || s === "cancelled";
 
     for (const row of prepared) {
@@ -420,10 +440,11 @@ export function executeImport(
           })
           .run();
         activeCount++;
+        insertedJobIds.push(jobId);
       }
     }
 
-    return { activeCount, archivedCount };
+    return { activeCount, archivedCount, insertedJobIds };
   });
 
   const totalProcessed = imported.activeCount + imported.archivedCount;
@@ -432,5 +453,6 @@ export function executeImport(
     archived: imported.archivedCount,
     skipped: dataRows.length - totalProcessed,
     skipReasons: Object.entries(skipReasonCounts).map(([reason, count]) => ({ reason, count })),
+    importedJobIds: imported.insertedJobIds,
   };
 }

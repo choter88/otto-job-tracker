@@ -38,6 +38,7 @@ import StepEhrImport from "./steps/step-ehr-import";
 import StepDone from "./steps/step-done";
 import type { TrackingLinkDefaults } from "@/components/customization/tracking-link-defaults-editor";
 import type { OnboardingStepId } from "@shared/onboarding";
+import { getDefaultOfficeSettings } from "@shared/office-defaults";
 
 function defaultStatuses(): CustomListItem[] {
   return DEFAULT_STATUS_COLORS.map((d) => ({
@@ -123,9 +124,13 @@ export default function SetupWizardPage() {
     setColumns(existingColumns as CustomColumn[]);
     setIdentifierMode(settings.jobIdentifierMode === "trayNumber" ? "trayNumber" : "patientName");
 
+    // Existing offices that have ever touched their tracking-link
+    // settings keep what they chose. Fresh offices get the defaults from
+    // `getDefaultOfficeSettings` so the wizard's auto-generate toggle
+    // starts ON — same value `storage.createOffice` seeded into the row.
     const tld = (settings.trackingLinkDefaults && typeof settings.trackingLinkDefaults === "object")
       ? settings.trackingLinkDefaults as TrackingLinkDefaults
-      : {};
+      : (getDefaultOfficeSettings().trackingLinkDefaults as TrackingLinkDefaults);
     setTrackingLinkDefaults(tld);
 
     // Step entry rule:

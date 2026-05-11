@@ -65,6 +65,7 @@ import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
 import { getDefaultOfficeSettings } from "@shared/office-defaults";
+import { DEFAULT_VISIBLE_STATUSES } from "@shared/tracking-link-defaults";
 import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
 import { trackEvent, CLIENT_TRACKABLE_EVENTS, getAggregatedDailyStats, getRawEventsSince } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
@@ -533,6 +534,115 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     "completed",
     "cancelled",
   ]);
+
+  /**
+   * Auto-generate (or merge into) a tracking link for a newly-created
+   * job. The single source of truth for the auto-gen flow, called from
+   * both `POST /api/jobs` and the CSV import route so EHR-imported jobs
+   * get the same behavior as dialog-created ones.
+   *
+   * Merge rule: if any other active job in the same office has the same
+   * patient first+last name (case + whitespace insensitive) AND that
+   * sibling already has an un-revoked tracking link, this job's snapshot
+   * is appended to that link instead of creating a second link. Patients
+   * with multiple items (glasses + sunglasses) get one URL, not many.
+   *
+   * Returns the link URL on success; null on any failure. Never throws —
+   * callers should treat a null URL as "auto-gen failed, job creation
+   * still succeeded" rather than rolling anything back.
+   */
+  async function autoGenerateOrMergeTrackingLinkForJob(
+    newJob: typeof jobs.$inferSelect,
+    hostToken: string,
+  ): Promise<{ url: string | null; merged: boolean }> {
+    try {
+      const office = await storage.getOffice(newJob.officeId);
+      const tld = ((office?.settings as any)?.trackingLinkDefaults ?? {}) as {
+        visibleStatuses?: string[];
+        defaultNotes?: string;
+      };
+      const visibleStatuses =
+        Array.isArray(tld.visibleStatuses) && tld.visibleStatuses.length > 0
+          ? tld.visibleStatuses
+          : DEFAULT_VISIBLE_STATUSES;
+      const customNotes =
+        typeof tld.defaultNotes === "string" && tld.defaultNotes.trim().length > 0
+          ? tld.defaultNotes
+          : null;
+
+      // Tray-number-only offices have no patient names — every job
+      // lives on its own link (merging would collapse unrelated jobs).
+      const firstName = (newJob.patientFirstName || "").trim().toLowerCase();
+      const lastName = (newJob.patientLastName || "").trim().toLowerCase();
+      if (firstName && lastName) {
+        const siblings = await db
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(
+            and(
+              eq(jobs.officeId, newJob.officeId),
+              sql`lower(trim(${jobs.patientFirstName})) = ${firstName}`,
+              sql`lower(trim(${jobs.patientLastName})) = ${lastName}`,
+              sql`${jobs.id} != ${newJob.id}`,
+            ),
+          );
+        const siblingIds = siblings.map((s) => s.id);
+        if (siblingIds.length > 0) {
+          const listResult = await portalListTrackingLinks({ hostToken, jobIds: siblingIds });
+          if (listResult.ok) {
+            const candidates = listResult.links.filter((l) => l.revokedAt === null);
+            // Most recently created un-revoked link wins. ISO timestamps
+            // sort lexicographically, so localeCompare is sufficient.
+            candidates.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+            const target = candidates[0];
+            if (target) {
+              const mergedIds = Array.from(new Set([...target.jobIds, newJob.id]));
+              // Portal caps a link at 10 jobs — fall through to a new
+              // link if the merge would exceed that. Avoids a confusing
+              // "11th order vanished into the void" failure mode.
+              if (mergedIds.length <= 10) {
+                const { jobs: mergedJobs, missing } = await loadLocalJobsForOffice(
+                  mergedIds,
+                  newJob.officeId,
+                );
+                if (missing.length === 0) {
+                  const snapshots = await buildJobSnapshots(mergedJobs);
+                  const statusCatalog = await buildStatusCatalog(newJob.officeId);
+                  const result = await portalUpdateTrackingLink({
+                    hostToken,
+                    id: target.id,
+                    jobs: snapshots,
+                    statusCatalog,
+                  });
+                  if (result.ok) {
+                    return { url: result.link.url, merged: true };
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // No mergeable sibling — create a fresh link seeded from office defaults.
+      const snapshots = await buildJobSnapshots([newJob]);
+      const statusCatalog = await buildStatusCatalog(newJob.officeId);
+      const result = await portalCreateTrackingLink({
+        hostToken,
+        jobs: snapshots,
+        visibleStatuses,
+        statusCatalog,
+        customNotes,
+      });
+      if (result.ok) {
+        return { url: result.link.url, merged: false };
+      }
+      return { url: null, merged: false };
+    } catch (err: any) {
+      console.error("[tracking-links] auto-generate failed:", err?.message || err);
+      return { url: null, merged: false };
+    }
+  }
 
   app.post("/api/tracking-links", requireAuth, requireNotViewOnly, async (req, res) => {
     const hostToken = getHostToken();
@@ -1412,15 +1522,41 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
       
       const job = await storage.createJob(jobData);
-      
+
       // Log PHI access for creating patient record
-      await logPhiAccess(req, 'create', 'job', job.id, job.orderId, { 
+      await logPhiAccess(req, 'create', 'job', job.id, job.orderId, {
         jobType: job.jobType,
         patientId: job.trayNumber || `${job.patientFirstName} ${job.patientLastName}`.trim()
       });
-      
+
       trackEvent({ userId: getAuthUser(req)?.id, officeId: getOfficeUser(req)?.officeId, eventType: "job_created" });
-      res.status(201).json(job);
+
+      // Auto-generate a tracking link if the office has it on (or the
+      // request explicitly opts in). Centralizing this on the server
+      // means EHR imports get the same behavior as dialog-created jobs
+      // — previously the dialog fired its own POST after the job
+      // returned, which the import path bypassed entirely.
+      let trackingLinkUrl: string | null = null;
+      const requestedAutoGen = req.body?.generateTrackingLink;
+      const officeAutoGen = !!(officeSettings as any).trackingLinkDefaults?.autoGenerateTrackingLinks;
+      const wantsAutoGen = typeof requestedAutoGen === "boolean" ? requestedAutoGen : officeAutoGen;
+      if (wantsAutoGen) {
+        const hostToken = getHostToken();
+        if (hostToken) {
+          const auto = await autoGenerateOrMergeTrackingLinkForJob(job, hostToken);
+          trackingLinkUrl = auto.url;
+          if (auto.url) {
+            trackEvent({
+              userId: getAuthUser(req)?.id,
+              officeId: job.officeId,
+              eventType: "tracking_link_created",
+              metadata: { source: "auto_generate", merged: auto.merged ? 1 : 0 },
+            });
+          }
+        }
+      }
+
+      res.status(201).json(trackingLinkUrl ? { ...job, trackingLinkUrl } : job);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -3610,8 +3746,14 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const user = getOfficeUser(req);
+      const office = await storage.getOffice(user.officeId);
+      const officeSettings = (office?.settings || {}) as Record<string, any>;
+      const officeAutoGen = !!officeSettings.trackingLinkDefaults?.autoGenerateTrackingLinks;
+      const requestedAutoGen = req.body?.generateTrackingLinks;
+      const wantsAutoGen = typeof requestedAutoGen === "boolean" ? requestedAutoGen : officeAutoGen;
+
       const { notesFromColumns, destinationFallbackColumn } = req.body || {};
-      const result = executeImport(
+      const { importedJobIds, ...publicResult } = executeImport(
         {
           filePath,
           jobType,
@@ -3619,21 +3761,51 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           statusMappings: statusMappings || {},
           notesFromColumns: Array.isArray(notesFromColumns) ? notesFromColumns : undefined,
           destinationFallbackColumn: typeof destinationFallbackColumn === "string" ? destinationFallbackColumn : undefined,
+          generateTrackingLinks: wantsAutoGen,
         },
         user.officeId,
         user.id,
       );
 
       await logPhiAccess(req, "create", "patient_list", "csv-import-execute", undefined, {
-        imported: result.imported,
-        skipped: result.skipped,
+        imported: publicResult.imported,
+        skipped: publicResult.skipped,
       });
 
       // Notify other clients so they refresh the jobs list
       broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "csv_import" });
-      trackEvent({ userId: user.id, officeId: user.officeId, eventType: "csv_import_completed", metadata: { imported: result.imported } });
+      trackEvent({ userId: user.id, officeId: user.officeId, eventType: "csv_import_completed", metadata: { imported: publicResult.imported } });
 
-      res.json(result);
+      // Fire-and-forget auto-gen for each imported active job. Sequential
+      // so siblings-from-the-same-import collapse into one shared link
+      // via the merge path (two concurrent calls for the same patient
+      // would race to create separate links). The import response goes
+      // out immediately — staff don't need to wait on portal round-trips
+      // for a 200-row CSV.
+      if (wantsAutoGen && importedJobIds.length > 0) {
+        const hostToken = getHostToken();
+        if (hostToken) {
+          (async () => {
+            for (const jobId of importedJobIds) {
+              const job = await storage.getJob(jobId);
+              if (!job) continue;
+              const auto = await autoGenerateOrMergeTrackingLinkForJob(job, hostToken);
+              if (auto.url) {
+                trackEvent({
+                  userId: user.id,
+                  officeId: user.officeId,
+                  eventType: "tracking_link_created",
+                  metadata: { source: "csv_import", merged: auto.merged ? 1 : 0 },
+                });
+              }
+            }
+          })().catch((err) =>
+            console.error("[tracking-links] import auto-gen loop failed:", err?.message || err),
+          );
+        }
+      }
+
+      res.json(publicResult);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
