@@ -82,6 +82,10 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   // toast action so we can measure how often staff actually share the
   // generated link vs. let the toast time out unused.
   "tracking_link_copy_link",
+  // Fired from the worklist row overflow's "Update tracker note" quick
+  // editor — distinct from the in-tab note save so we can tell which
+  // surface staff actually reach for.
+  "tracking_link_quick_note_updated",
   // Spotlight system — telemetry for feature-adoption analysis. The
   // event metadata carries `featureId` and (for tour events) `stepId`.
   "spotlight_modal_seen",

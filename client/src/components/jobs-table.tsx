@@ -28,6 +28,8 @@ import JobDialog from "./job-dialog";
 import JobMessageTemplatesModal from "./job-message-templates-modal";
 import JobDetailsModal, { type JobDetailsTab } from "./job-details-modal";
 import { OPEN_JOB_DETAILS_EVENT } from "./spotlight/feature-spotlight-host";
+import { Save, StickyNote } from "lucide-react";
+import type { TrackingLinkRecord } from "./tracking-link-dialog";
 import ImportWizard from "./import-wizard";
 import PageHead, { SubAccent, SubDanger, SubDot } from "./page-head";
 import LifecycleTrack from "./lifecycle-track";
@@ -256,6 +258,14 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [selectedDetailsJobId, setSelectedDetailsJobId] = useState<string | null>(null);
   const [messageTemplatesOpen, setMessageTemplatesOpen] = useState(false);
   const [selectedMessagesJobId, setSelectedMessagesJobId] = useState<string | null>(null);
+
+  // Quick-note editor state for the worklist row overflow's "Update
+  // tracker note" item. Targets the single active link covering the
+  // selected job — most jobs only have one anyway, and we pick the
+  // most-recent active one if multiple exist.
+  const [quickNoteOpen, setQuickNoteOpen] = useState(false);
+  const [quickNoteLinkId, setQuickNoteLinkId] = useState<string | null>(null);
+  const [quickNoteDraft, setQuickNoteDraft] = useState("");
   const tableViewportRef = useRef<HTMLDivElement | null>(null);
   // useState copy of the table element so the dynamic-min-width hook can react
   // when the element is mounted (refs alone don't trigger re-renders).
@@ -322,6 +332,46 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     enabled: !!user?.officeId,
   });
 
+  // Bulk-fetch tracking links covering the office's active jobs so the
+  // row overflow's "Update tracker note" item knows which rows have a
+  // live link to update. Keyed on the sorted-jobs-id signature so the
+  // query reuses results when jobs change order or get filtered out
+  // but the underlying set stays the same.
+  const allJobsForTrackingQuery = jobs as Job[];
+  const trackingListKey = useMemo(
+    () => allJobsForTrackingQuery.map((j) => j.id).sort().join(","),
+    [allJobsForTrackingQuery],
+  );
+  const { data: trackingLinksList } = useQuery<{ links: TrackingLinkRecord[] }>({
+    queryKey: ["/api/tracking-links/list", trackingListKey],
+    queryFn: async () => {
+      if (allJobsForTrackingQuery.length === 0) return { links: [] };
+      const res = await apiRequest("POST", "/api/tracking-links/list", {
+        jobIds: allJobsForTrackingQuery.map((j) => j.id),
+      });
+      return res.json();
+    },
+    enabled: !!user?.officeId && allJobsForTrackingQuery.length > 0,
+  });
+
+  // Map jobId → active (un-revoked) tracking link covering it. A link
+  // can cover multiple jobs (the merge path from commit 1), so every
+  // job in the link's `jobIds` array gets a pointer to the same record.
+  const activeLinkByJobId = useMemo(() => {
+    const map = new Map<string, TrackingLinkRecord>();
+    const links = trackingLinksList?.links ?? [];
+    for (const link of links) {
+      if (link.revokedAt) continue;
+      for (const jid of link.jobIds) {
+        const existing = map.get(jid);
+        if (!existing || new Date(link.createdAt).getTime() > new Date(existing.createdAt).getTime()) {
+          map.set(jid, link);
+        }
+      }
+    }
+    return map;
+  }, [trackingLinksList]);
+
   const flaggedJobIds = useMemo(() => flaggedJobs.map((job: any) => job.id), [flaggedJobs]);
   const overdueJobIds = useMemo(() => new Set(overdueJobs.map((job: any) => job.id)), [overdueJobs]);
 
@@ -369,6 +419,34 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs/archived"] });
+    },
+  });
+
+  // Worklist row → "Update tracker note" save. Fires the same PATCH the
+  // in-tab note composer fires (customNotes on the active link); the
+  // difference is the entry point — staff don't have to open Job
+  // Details just to push a generic "we're delayed" line to the patient.
+  const quickNoteMutation = useMutation({
+    mutationFn: async ({ linkId, note }: { linkId: string; note: string }) => {
+      const trimmed = note.trim();
+      const res = await apiRequest("PATCH", `/api/tracking-links/${linkId}`, {
+        customNotes: trimmed.length > 0 ? trimmed : null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+      setQuickNoteOpen(false);
+      toast({ title: "Tracker note updated", description: "The patient will see your update." });
+      fetch("/api/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ eventType: "tracking_link_quick_note_updated" }),
+      }).catch(() => {});
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't save note", description: error.message, variant: "destructive" });
     },
   });
 
@@ -1768,6 +1846,27 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                           >
                             Edit
                           </DropdownMenuItem>
+                          {/* Quick tracker-note update — disabled when the
+                              job has no active tracking link, so staff
+                              don't get the editor open onto a no-op. */}
+                          {(() => {
+                            const link = activeLinkByJobId.get(job.id);
+                            return (
+                              <DropdownMenuItem
+                                disabled={!link}
+                                onSelect={() => {
+                                  if (!link) return;
+                                  setQuickNoteLinkId(link.id);
+                                  setQuickNoteDraft(link.customNotes ?? "");
+                                  setQuickNoteOpen(true);
+                                }}
+                                data-testid={`menu-update-tracker-note-${job.id}`}
+                              >
+                                <StickyNote className="h-3.5 w-3.5 mr-2" />
+                                Update tracker note
+                              </DropdownMenuItem>
+                            );
+                          })()}
                           <DropdownMenuItem
                             className="text-destructive focus:text-destructive"
                             onSelect={() => handleDeleteJob(job.id)}
@@ -1802,6 +1901,53 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         onOpenChange={setJobDialogOpen}
         job={editingJob}
       />
+
+      {/* Quick tracker-note editor — opened from the row overflow's
+          "Update tracker note" item. Single textarea + Save; deeper
+          tweaks live in Job Details → Patient tracking. */}
+      <Dialog open={quickNoteOpen} onOpenChange={setQuickNoteOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <StickyNote className="h-4 w-4 text-otto-accent" />
+              Update tracker note
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute leading-snug">
+              Short message the patient will see on their tracking page. Avoid names, phone numbers, and anything clinical.
+            </p>
+            <Textarea
+              value={quickNoteDraft}
+              onChange={(e) => setQuickNoteDraft(e.target.value)}
+              placeholder="e.g. Lens was delayed — we expect it to arrive on June 1."
+              maxLength={500}
+              className="min-h-[110px] bg-white text-[calc(13px*var(--ui-scale))]"
+              data-testid="quick-tracker-note-textarea"
+            />
+            <div className="text-right text-[calc(11px*var(--ui-scale))] text-ink-faint tabular-nums">
+              {quickNoteDraft.length}/500
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setQuickNoteOpen(false)} data-testid="button-cancel-quick-note">
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                if (!quickNoteLinkId) return;
+                quickNoteMutation.mutate({ linkId: quickNoteLinkId, note: quickNoteDraft });
+              }}
+              disabled={!quickNoteLinkId || quickNoteMutation.isPending}
+              data-testid="button-save-quick-note"
+            >
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+              {quickNoteMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Import Wizard */}
       <ImportWizard open={importWizardOpen} onOpenChange={setImportWizardOpen} />

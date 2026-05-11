@@ -855,21 +855,30 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
               When the office has tracking-link auto-generate on AND
               this is a NEW job, a left-justified opt-out checkbox lets
               staff skip link generation for this particular patient
-              without changing the office default. */}
+              without changing the office default.
+
+              The left slot is always reserved in create-mode so the
+              Cancel / Create buttons don't reflow when the office
+              query resolves (used to flicker: officeAutoGenerate is
+              false while loading, then true once settings arrive). */}
           <div className="flex items-center gap-2 px-6 py-3.5 border-t border-line bg-panel-2 shrink-0">
-            {!readOnly && !job && officeAutoGenerate && (
-              <label
-                className="flex items-center gap-2 text-[calc(12.5px*var(--ui-scale))] text-ink-2 cursor-pointer mr-auto"
-                data-testid="generate-tracking-link-checkbox-row"
-              >
-                <Checkbox
-                  checked={generateTrackingLink}
-                  onCheckedChange={(v) => setGenerateTrackingLink(v === true)}
-                  data-testid="checkbox-generate-tracking-link"
-                />
-                <Share2 className="h-3.5 w-3.5 text-otto-accent" aria-hidden />
-                Generate tracking link
-              </label>
+            {!readOnly && !job && (
+              <div className="mr-auto min-h-[20px] flex items-center" data-testid="generate-tracking-link-checkbox-slot">
+                {officeAutoGenerate && (
+                  <label
+                    className="flex items-center gap-2 text-[calc(12.5px*var(--ui-scale))] text-ink-2 cursor-pointer"
+                    data-testid="generate-tracking-link-checkbox-row"
+                  >
+                    <Checkbox
+                      checked={generateTrackingLink}
+                      onCheckedChange={(v) => setGenerateTrackingLink(v === true)}
+                      data-testid="checkbox-generate-tracking-link"
+                    />
+                    <Share2 className="h-3.5 w-3.5 text-otto-accent" aria-hidden />
+                    Generate tracking link
+                  </label>
+                )}
+              </div>
             )}
             <Button
               type="button"
@@ -877,7 +886,7 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
               size="sm"
               onClick={() => onOpenChange(false)}
               data-testid="button-cancel"
-              className={(!readOnly && !job && officeAutoGenerate) ? "" : "ml-auto"}
+              className={(!readOnly && !job) ? "" : "ml-auto"}
             >
               {readOnly ? "Close" : "Cancel"}
             </Button>

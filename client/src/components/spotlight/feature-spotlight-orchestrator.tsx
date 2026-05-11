@@ -23,6 +23,7 @@ import { SpotlightPulse } from "./spotlight-pulse";
 import { SpotlightCoachmark } from "./spotlight-coachmark";
 import { WhatsNewModal } from "./whats-new-modal";
 import { openOfficeSettings } from "./feature-spotlight-host";
+import { PatientTrackingInlineWidget } from "./patient-tracking-inline-widget";
 import type { FeatureSpotlight, SpotlightTarget } from "@shared/feature-spotlights";
 
 interface OrchestratorProps {
@@ -57,6 +58,12 @@ export function FeatureSpotlightOrchestrator({
   const [tour, setTour] = useState<TourState | null>(null);
   // Tracks which feature's modal is currently visible.
   const [modalFor, setModalFor] = useState<string | null>(null);
+  // Latched ON state for the patient-tracking inline-widget toggle.
+  // When the user flips auto-generate ON inside the modal, this flips
+  // to true and stays true for the modal's lifetime so the primary CTA
+  // reads "Done" (and dismisses) instead of "Open Tracking Links
+  // settings" (which is the right next step only when still OFF).
+  const [trackingToggleAcceptedInModal, setTrackingToggleAcceptedInModal] = useState(false);
   // Tracks open modals/dialogs in the app to suppress spotlights when
   // the user is already busy.
   const [appHasOpenDialog, setAppHasOpenDialog] = useState(false);
@@ -120,6 +127,7 @@ export function FeatureSpotlightOrchestrator({
   useEffect(() => {
     if (eligibleForModal && modalFor !== eligibleForModal.feature.id) {
       setModalFor(eligibleForModal.feature.id);
+      setTrackingToggleAcceptedInModal(false);
       trackSpotlightEvent("spotlight_modal_seen", { featureId: eligibleForModal.feature.id });
     }
     if (!eligibleForModal && modalFor) {
@@ -212,14 +220,38 @@ export function FeatureSpotlightOrchestrator({
 
   return (
     <>
-      {modalFeature && (
-        <WhatsNewModal
-          open={!!modalFor}
-          feature={modalFeature}
-          onShowMe={handleModalShowMe}
-          onDismiss={handleModalDismiss}
-        />
-      )}
+      {modalFeature && (() => {
+        // Patient-tracking spotlight gets an embedded auto-generate
+        // toggle (commit 3, task J). When the user flips it ON via
+        // the widget, the primary CTA flips from "Open Tracking Links
+        // settings" to "Done" because the user has already done the
+        // thing the deep-link would help them do.
+        const isPatientTracking = modalFeature.id === "patient-tracking-2026-05";
+        const widget = isPatientTracking ? (
+          <PatientTrackingInlineWidget
+            onTurnedOn={() => setTrackingToggleAcceptedInModal(true)}
+          />
+        ) : undefined;
+        const primaryOverride = trackingToggleAcceptedInModal ? "Done" : undefined;
+        const onPrimaryOverride = trackingToggleAcceptedInModal
+          ? () => {
+              trackSpotlightEvent("spotlight_modal_show_me", { featureId: modalFeature.id });
+              completeTour(modalFeature.id);
+              setModalFor(null);
+            }
+          : undefined;
+        return (
+          <WhatsNewModal
+            open={!!modalFor}
+            feature={modalFeature}
+            onShowMe={handleModalShowMe}
+            onDismiss={handleModalDismiss}
+            inlineWidget={widget}
+            primaryCtaLabelOverride={primaryOverride}
+            onPrimaryClickOverride={onPrimaryOverride}
+          />
+        );
+      })()}
 
       {/* Active tour — coachmark for current step */}
       {tour && tourFeature && (

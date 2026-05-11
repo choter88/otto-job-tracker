@@ -1,22 +1,46 @@
 // What's New modal — shown once per session per spotlight when the
 // spotlight first appears for a user. Centered Otto-branded card with
 // optional media, body copy, and primary/secondary CTAs.
+//
+// `inlineWidget` is a generic slot rendered between the body copy and
+// the CTA row — features that want to let the user act on the
+// announcement without leaving the modal (e.g. flip a setting) plug
+// their UI in here. Kept generic so future spotlights can reuse the
+// affordance.
 
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Sparkles, X } from "lucide-react";
 import type { FeatureSpotlight } from "@shared/feature-spotlights";
+import type { ReactNode } from "react";
 
 interface WhatsNewModalProps {
   open: boolean;
   feature: FeatureSpotlight;
   onShowMe: () => void;
   onDismiss: () => void;
+  /** Optional inline UI rendered between body copy and CTAs. */
+  inlineWidget?: ReactNode;
+  /** Overrides for the primary CTA — when the inline widget changes
+   *  what the right next action is (e.g. "Done" instead of "Open
+   *  Settings" after a toggle is flipped). */
+  primaryCtaLabelOverride?: string;
+  onPrimaryClickOverride?: () => void;
 }
 
-export function WhatsNewModal({ open, feature, onShowMe, onDismiss }: WhatsNewModalProps) {
+export function WhatsNewModal({
+  open,
+  feature,
+  onShowMe,
+  onDismiss,
+  inlineWidget,
+  primaryCtaLabelOverride,
+  onPrimaryClickOverride,
+}: WhatsNewModalProps) {
   const modal = feature.modal;
   if (!modal) return null;
+  const primaryLabel = primaryCtaLabelOverride ?? modal.primaryCtaLabel ?? "Show me";
+  const onPrimary = onPrimaryClickOverride ?? onShowMe;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onDismiss(); }}>
@@ -70,6 +94,11 @@ export function WhatsNewModal({ open, feature, onShowMe, onDismiss }: WhatsNewMo
           <p className="mt-2 text-[calc(13.5px*var(--ui-scale))] leading-relaxed text-ink-2 m-0">
             {modal.body}
           </p>
+          {inlineWidget && (
+            <div className="mt-4" data-testid={`whats-new-${feature.id}-inline-widget`}>
+              {inlineWidget}
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2 border-t border-line bg-panel-2 px-6 py-3.5">
@@ -86,11 +115,11 @@ export function WhatsNewModal({ open, feature, onShowMe, onDismiss }: WhatsNewMo
             type="button"
             size="sm"
             className="ml-auto"
-            onClick={onShowMe}
+            onClick={onPrimary}
             data-testid={`whats-new-${feature.id}-show-me`}
           >
             <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-            {modal.primaryCtaLabel ?? "Show me"}
+            {primaryLabel}
           </Button>
         </div>
       </DialogContent>
