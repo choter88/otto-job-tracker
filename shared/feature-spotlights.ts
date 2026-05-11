@@ -135,7 +135,7 @@ export const FEATURE_SPOTLIGHTS: FeatureSpotlight[] = [
     modal: {
       title: "Share order status with patients",
       body:
-        "Generate a public link from any job. Patients see live order updates without logging in, without seeing PHI, and without knowing which office they came from. Open Settings to choose what statuses they see, write a default note, and customize your share-message template.",
+        "Otto can auto-generate a public tracking link for every new job — patients see live order updates without logging in, without seeing PHI, and without knowing which office they came from. Turn auto-generate on in Settings → Tracking Links, then customize what patients see.",
       primaryCtaLabel: "Open Tracking Links settings",
       secondaryCtaLabel: "Maybe later",
     },

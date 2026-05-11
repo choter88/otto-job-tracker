@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -16,7 +16,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, User, Briefcase, Save, Check, ChevronsUpDown, AlertTriangle, Share2 } from "lucide-react";
-import TrackingLinkDialog from "@/components/tracking-link-dialog";
 import { cn } from "@/lib/utils";
 import type { Job, Office, ArchivedJob } from "@shared/schema";
 import { formatPatientDisplayName, normalizePatientNamePart } from "@shared/name-format";
@@ -104,11 +103,21 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
     defaultValues,
   });
 
-  // "Save & generate tracking link" intent. Synchronous via ref because
-  // both buttons trigger the same form submit; React state updates aren't
-  // applied in time for the mutation onSuccess to read them.
-  const trackAfterSaveRef = useRef(false);
-  const [createdJobForTracking, setCreatedJobForTracking] = useState<Job | null>(null);
+  // Per-job opt-in checkbox state for "generate tracking link on save".
+  // Only relevant when (a) we're CREATING a job (not editing) and
+  // (b) the office has auto-generate turned on. Defaults to checked
+  // when shown so the office's chosen default behavior is the path of
+  // least resistance — staff can uncheck per-job if a particular
+  // patient shouldn't get a link.
+  const trackingDefaults = (office?.settings as any)?.trackingLinkDefaults ?? {};
+  const officeAutoGenerate = !!trackingDefaults.autoGenerateTrackingLinks;
+  const [generateTrackingLink, setGenerateTrackingLink] = useState(true);
+
+  // Reset the checkbox to the office default whenever the dialog opens
+  // for a new job (avoid sticky state from a previous job's choice).
+  useEffect(() => {
+    if (open && !job) setGenerateTrackingLink(true);
+  }, [open, job]);
 
   // Reset form when job or open state changes
   useEffect(() => {
@@ -229,21 +238,39 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
       });
     },
     onSuccess: (data) => {
-      toast({
-        title: job ? "Job Updated" : "Job Created",
-        description: job ? "Job has been updated successfully." : "Job has been created successfully.",
-      });
-      // If the user clicked "Save & generate tracking link" on a NEW job,
-      // hand off to the tracking-link dialog with the just-created job.
-      // Edits don't trigger this — there's a tracking section in the job
-      // details modal for existing jobs.
-      const wantsTracking = trackAfterSaveRef.current && !job && data && typeof data === "object";
-      trackAfterSaveRef.current = false;
+      // Auto-generate path: NEW job + office has auto-gen on + the
+      // per-job checkbox kept checked. Fire-and-forget the create call
+      // — the user finds + shares the link from Job Details → Patient
+      // tracking. Single combined toast keeps the surface quiet.
+      const wantsTracking = !job && officeAutoGenerate && generateTrackingLink
+        && data && typeof data === "object" && (data as any).id;
+
+      if (wantsTracking) {
+        const jobId = (data as Job).id;
+        apiRequest("POST", "/api/tracking-links", { jobIds: [jobId] })
+          .catch((err: Error) => {
+            // Surface failures distinctly so staff know to fall back to
+            // the manual Generate path. Job creation already succeeded;
+            // the failure is local to the link.
+            toast({
+              title: "Couldn't generate tracking link",
+              description: err.message + " — generate manually from Job Details.",
+              variant: "destructive",
+            });
+          });
+        toast({
+          title: "Job Created",
+          description: "Tracking link generated — share it from Job Details → Patient tracking.",
+        });
+      } else {
+        toast({
+          title: job ? "Job Updated" : "Job Created",
+          description: job ? "Job has been updated successfully." : "Job has been created successfully.",
+        });
+      }
+
       onOpenChange(false);
       form.reset();
-      if (wantsTracking) {
-        setCreatedJobForTracking(data as Job);
-      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
@@ -338,7 +365,6 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
   const sectionDesc = "text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1";
 
   return (
-    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="w-full max-w-[720px] h-[min(760px,calc(100vh-64px))] p-0 overflow-hidden flex flex-col gap-0"
@@ -784,39 +810,40 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
           </div>
 
           {/* Sticky footer — buttons stay anchored as the form scrolls.
-              On NEW jobs, the secondary action lets staff save and jump
-              straight into the tracking-link generator. Both buttons
-              submit the same form; the trackAfterSaveRef signals intent
-              to the mutation's onSuccess. */}
-          <div className="flex items-center justify-end gap-2 px-6 py-3.5 border-t border-line bg-panel-2 shrink-0">
+              When the office has tracking-link auto-generate on AND
+              this is a NEW job, a left-justified opt-out checkbox lets
+              staff skip link generation for this particular patient
+              without changing the office default. */}
+          <div className="flex items-center gap-2 px-6 py-3.5 border-t border-line bg-panel-2 shrink-0">
+            {!readOnly && !job && officeAutoGenerate && (
+              <label
+                className="flex items-center gap-2 text-[calc(12.5px*var(--ui-scale))] text-ink-2 cursor-pointer mr-auto"
+                data-testid="generate-tracking-link-checkbox-row"
+              >
+                <Checkbox
+                  checked={generateTrackingLink}
+                  onCheckedChange={(v) => setGenerateTrackingLink(v === true)}
+                  data-testid="checkbox-generate-tracking-link"
+                />
+                <Share2 className="h-3.5 w-3.5 text-otto-accent" aria-hidden />
+                Generate tracking link
+              </label>
+            )}
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => onOpenChange(false)}
               data-testid="button-cancel"
+              className={(!readOnly && !job && officeAutoGenerate) ? "" : "ml-auto"}
             >
               {readOnly ? "Close" : "Cancel"}
             </Button>
-            {!readOnly && !job && (
-              <Button
-                type="submit"
-                variant="outline"
-                size="sm"
-                disabled={createJobMutation.isPending}
-                onClick={() => { trackAfterSaveRef.current = true; }}
-                data-testid="button-save-job-and-track"
-              >
-                <Share2 className="mr-1.5 h-3.5 w-3.5" />
-                Save &amp; generate tracking link
-              </Button>
-            )}
             {!readOnly && (
               <Button
                 type="submit"
                 size="sm"
                 disabled={createJobMutation.isPending}
-                onClick={() => { trackAfterSaveRef.current = false; }}
                 data-testid="button-save-job"
               >
                 {createJobMutation.isPending && (
@@ -854,16 +881,5 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
-
-    {/* Patient tracking link — sibling of (not nested in) the job dialog
-        so closing the job dialog after a successful save doesn't unmount
-        this. Opens automatically when "Save & generate tracking link"
-        succeeded; uses the freshly-created job as the only target. */}
-    <TrackingLinkDialog
-      open={!!createdJobForTracking}
-      onOpenChange={(o) => { if (!o) setCreatedJobForTracking(null); }}
-      jobs={createdJobForTracking ? [createdJobForTracking] : []}
-    />
-    </>
   );
 }

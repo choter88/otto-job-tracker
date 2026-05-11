@@ -925,34 +925,45 @@ export default function JobDetailsModal({
                 </section>
               </div>
             ) : (
-              // No active link — invite to generate one. Same affordance
-              // as the worklist bulk action and the New Job dialog.
-              <div
-                className="rounded-lg border border-line bg-panel px-5 py-6 max-w-lg mx-auto text-center"
-                data-testid="tracking-tab-empty"
-              >
-                <div className="h-12 w-12 rounded-full bg-otto-accent-soft text-otto-accent mx-auto grid place-items-center mb-3">
-                  <Share2 className="h-5 w-5" />
-                </div>
-                <h4 className="font-display text-[calc(16px*var(--ui-scale))] font-medium text-ink m-0">
-                  No tracking link yet
-                </h4>
-                <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1.5 max-w-sm mx-auto">
-                  Generate one to share order status with the patient. No PHI, no office identity — just the statuses you choose.
-                </p>
-                <Button
-                  size="sm"
-                  className="mt-4"
-                  onClick={() => {
-                    setTrackingDialogEditing(undefined);
-                    setTrackingDialogOpen(true);
-                  }}
-                  data-testid="button-generate-tracking-link"
-                >
-                  <Share2 className="h-3.5 w-3.5 mr-1.5" />
-                  Generate tracking link
-                </Button>
-              </div>
+              // No active link — fallback path. With auto-generate the
+              // primary surface, this happens when (a) office has the
+              // toggle off, or (b) the staff unchecked the per-job
+              // checkbox at creation, or (c) the link was revoked.
+              // The CTA still lets them generate one manually for this
+              // single job.
+              (() => {
+                const officeAutoGenerate = !!((office?.settings as any)?.trackingLinkDefaults?.autoGenerateTrackingLinks);
+                return (
+                  <div
+                    className="rounded-lg border border-line bg-panel px-5 py-6 max-w-lg mx-auto text-center"
+                    data-testid="tracking-tab-empty"
+                  >
+                    <div className="h-12 w-12 rounded-full bg-otto-accent-soft text-otto-accent mx-auto grid place-items-center mb-3">
+                      <Share2 className="h-5 w-5" />
+                    </div>
+                    <h4 className="font-display text-[calc(16px*var(--ui-scale))] font-medium text-ink m-0">
+                      No tracking link for this job
+                    </h4>
+                    <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mt-1.5 max-w-sm mx-auto">
+                      {officeAutoGenerate
+                        ? "This job was created without a tracking link, or the link was revoked. Generate one now to start sharing status with the patient."
+                        : "Auto-generate is off for your office, so jobs don't get tracking links by default. Turn it on in Settings → Tracking Links, or generate one just for this job."}
+                    </p>
+                    <Button
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => {
+                        setTrackingDialogEditing(undefined);
+                        setTrackingDialogOpen(true);
+                      }}
+                      data-testid="button-generate-tracking-link"
+                    >
+                      <Share2 className="h-3.5 w-3.5 mr-1.5" />
+                      Generate tracking link
+                    </Button>
+                  </div>
+                );
+              })()
             )}
           </TabsContent>
 

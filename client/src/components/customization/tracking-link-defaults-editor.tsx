@@ -35,6 +35,13 @@ export const DEFAULT_VISIBLE_STATUSES = [
 ];
 
 export interface TrackingLinkDefaults {
+  /**
+   * When true, every newly-created job automatically gets a tracking
+   * link generated using the office's defaults. The user can opt out
+   * per-job via a checkbox in the New Job dialog. Default false (off)
+   * so existing offices aren't surprised by behavior changes.
+   */
+  autoGenerateTrackingLinks?: boolean;
   visibleStatuses?: string[];
   defaultNotes?: string;
   // Office-wide template the staff copies from the share view and pastes
@@ -78,9 +85,37 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
           Patient tracking links
         </h3>
         <p className="text-[calc(13px*var(--ui-scale))] text-ink-mute mt-1">
-          When you generate a tracking link from the worklist or job details, these defaults are pre-selected. You can still tweak them per-link.
+          When patient tracking is on, every new job automatically gets a shareable status link. Customize what patients see below — staff can still opt out per-job from the New Job dialog.
         </p>
       </div>
+
+      {/* Auto-generate toggle — the centerpiece of this tab. Off by
+          default for existing offices; the setup wizard recommends
+          turning it on for new offices. */}
+      <section
+        className="rounded-lg border border-line bg-panel px-4 py-3 flex items-start gap-3"
+        data-testid="tracking-auto-generate-toggle"
+      >
+        <Switch
+          id="auto-generate-tracking-links"
+          checked={!!value.autoGenerateTrackingLinks}
+          onCheckedChange={(v) => onChange({ ...value, autoGenerateTrackingLinks: v })}
+          className="mt-0.5"
+        />
+        <div className="flex-1 min-w-0">
+          <Label
+            htmlFor="auto-generate-tracking-links"
+            className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer"
+          >
+            Auto-generate tracking links for new jobs
+          </Label>
+          <p className="text-[calc(12px*var(--ui-scale))] text-ink-mute mt-0.5 leading-snug m-0">
+            {value.autoGenerateTrackingLinks
+              ? "Every new job gets a tracking link by default. Find it in Job Details → Patient tracking when you're ready to share."
+              : "New jobs won't have tracking links unless you generate one from Job Details → Patient tracking."}
+          </p>
+        </div>
+      </section>
 
       <section
         className="rounded-md border border-line bg-paper-2 px-3.5 py-2.5 flex items-start gap-2"

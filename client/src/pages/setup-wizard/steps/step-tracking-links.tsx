@@ -35,13 +35,14 @@ export default function StepTrackingLinks({
         <h2 className="text-2xl font-semibold">Patient tracking links</h2>
         <p className="text-muted-foreground mt-1">
           Otto can give your patients a public link to follow their order's
-          status — no login, no PHI, no office identity. Configure what they
-          see by default below. You can fine-tune per link later when you
-          generate one from a job.
+          status — no login, no PHI, no office identity. Turn on auto-generate
+          below and every new job will silently get a shareable link.
+          Customize what patients see by default in the same panel.
         </p>
         <p className="text-sm text-muted-foreground mt-2">
-          This step is optional — defaults are already sensible. Skip if you
-          want to come back later from <em>Office Settings → Tracking Links</em>.
+          Optional — leave the toggle off and you can still generate links
+          per-job from Job Details. Either way, you can come back from
+          <em> Office Settings → Tracking Links</em>.
         </p>
       </div>
       <TrackingLinkDefaultsEditor
