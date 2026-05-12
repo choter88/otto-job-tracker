@@ -172,15 +172,18 @@ export function ActiveTrackingLinkPanel({
       setUrlCopied(true);
       setTimeout(() => setUrlCopied(false), 2000);
       toast({ title: "URL copied" });
-      // Telemetry: distinguish URL-only copy from message copy so we
-      // can see which paste target staff actually use most.
+      // Split telemetry: `tracking_link_copy_url` and
+      // `tracking_link_copy_message` are distinct events so each can
+      // be measured independently. `metadata.source` further breaks
+      // down where the copy fired from (toast | tracking_tab |
+      // configure_dialog).
       fetch("/api/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          eventType: "tracking_link_copy_link",
-          metadata: { source: "tracking_tab_url" },
+          eventType: "tracking_link_copy_url",
+          metadata: { source: "tracking_tab" },
         }),
       }).catch(() => {});
     } catch {
@@ -211,8 +214,8 @@ export function ActiveTrackingLinkPanel({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          eventType: "tracking_link_copy_link",
-          metadata: { source: "tracking_tab_message" },
+          eventType: "tracking_link_copy_message",
+          metadata: { source: "tracking_tab" },
         }),
       }).catch(() => {});
     } catch {

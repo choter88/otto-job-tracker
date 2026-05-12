@@ -78,9 +78,17 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   "job_detail_tab_related",
   "job_detail_tab_tracking",
   "custom_column_edited",
-  // Patient tracking links — copy-link clicks fire from the post-create
-  // toast action so we can measure how often staff actually share the
-  // generated link vs. let the toast time out unused.
+  // Patient tracking links — two distinct copy events so URL-only
+  // and templated-message shares can be measured independently
+  // (different paste targets, different downstream UX implications).
+  // Each event carries a `metadata.source` indicating the surface
+  // (toast | tracking_tab | configure_dialog) so we can also break
+  // down where staff prefers to share from.
+  "tracking_link_copy_url",
+  "tracking_link_copy_message",
+  // Legacy combined event — kept in the allowlist so old clients
+  // (pre-split) don't get their events rejected during rollout.
+  // New code uses the split events above.
   "tracking_link_copy_link",
   // Fired from the worklist row overflow's "Update tracker note" quick
   // editor — distinct from the in-tab note save so we can tell which

@@ -339,12 +339,25 @@ export default function TrackingLinkDialog({
     })();
   }, [generatedLink?.url]);
 
+  // Split telemetry: `tracking_link_copy_url` and
+  // `tracking_link_copy_message` are distinct events so each can be
+  // measured independently. `metadata.source` (toast | tracking_tab |
+  // configure_dialog) also breaks down the entry surface.
   const handleCopyUrl = async () => {
     if (!generatedLink?.url) return;
     try {
       await navigator.clipboard.writeText(generatedLink.url);
       setCopied("url");
       setTimeout(() => setCopied("none"), 2000);
+      fetch("/api/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          eventType: "tracking_link_copy_url",
+          metadata: { source: "configure_dialog" },
+        }),
+      }).catch(() => {});
     } catch {
       toast({ title: "Copy failed", variant: "destructive" });
     }
@@ -358,6 +371,15 @@ export default function TrackingLinkDialog({
       setCopied("message");
       setTimeout(() => setCopied("none"), 2000);
       toast({ title: "Message copied", description: "Paste into Weave, SMS, or email." });
+      fetch("/api/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          eventType: "tracking_link_copy_message",
+          metadata: { source: "configure_dialog" },
+        }),
+      }).catch(() => {});
     } catch {
       toast({ title: "Copy failed", variant: "destructive" });
     }

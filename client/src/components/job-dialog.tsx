@@ -283,7 +283,10 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       credentials: "include",
-                      body: JSON.stringify({ eventType: "tracking_link_copy_link", metadata: { source: "create_toast" } }),
+                      body: JSON.stringify({
+                        eventType: "tracking_link_copy_url",
+                        metadata: { source: "toast" },
+                      }),
                     }).catch(() => {});
                   } catch {
                     toast({ title: "Copy failed", variant: "destructive" });
