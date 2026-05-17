@@ -50,16 +50,14 @@ import {
   portalUpdateTrackingLink,
   portalRevokeTrackingLink,
   portalListTrackingLinks,
-  portalAddTrackingLinkNote,
-  portalSyncTrackingJob,
-  portalRefreshTrackingCatalog,
+  portalAppendTrackingEvent,
   portalGetFeatureFlags,
   getLicenseBaseUrl,
-  type TrackingJobSnapshot,
-  type TrackingStatusCatalogEntry,
   type TrackingLinkRecord,
 } from "./license-client";
 import { scanNotesForPhi } from "./tracking-link-phi-scan";
+import { mapStatusToEnum, type PatientStatus } from "@shared/patient-status-enum";
+import { trackingLinkNotesLocal } from "@shared/schema";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
@@ -67,10 +65,7 @@ import { parseCsvFile, executeImport } from "./import-csv";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
 import { getDefaultOfficeSettings } from "@shared/office-defaults";
-import {
-  resolveTrackingLinkDefaultsForJobTypes,
-  sortVisibleStatusesByOffice,
-} from "@shared/tracking-link-defaults";
+import { sortVisibleStatusesByOffice } from "@shared/tracking-link-defaults";
 import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
 import { trackEvent, CLIENT_TRACKABLE_EVENTS, getAggregatedDailyStats, getRawEventsSince } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
@@ -408,10 +403,19 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // ── Patient tracking links (proxied to portal, host-token-authenticated) ──
-  // The desktop is the source of truth for job data. We build a snapshot
-  // from local SQLite, run a PHI scan against the patient data those jobs
-  // hold, then forward to /license/v1/tracking-links/* on the portal —
-  // which never sees patient identifiers, only the snapshot we send.
+  //
+  // The desktop holds all patient/order data locally. The portal stores
+  // only an opaque token, opaque job UUIDs for coverage, and an
+  // append-only (status enum, occurred_at) event log.
+  //
+  // Status translation: every status change that we want patients to
+  // see is mapped via mapStatusToEnum() BEFORE the desktop emits an
+  // event. Unmappable statuses (office-custom IDs without a configured
+  // enum mapping) are dropped silently — they never reach the portal.
+  //
+  // Notes: the staff still authors per-link notes in the worklist UI.
+  // They are written to a local SQLite table and rendered in the
+  // desktop UI from there. They never leave this host.
 
   /**
    * Resolve local jobs by ID, scoped to the caller's office. Returns the
@@ -433,17 +437,29 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   }
 
   /**
-   * Build the per-job snapshot the portal stores. PHI guard: this function
-   * is the *only* path from a local Job row to a portal-bound payload.
-   * It explicitly enumerates the four non-PHI fields below and never
-   * spreads `j` — adding a new column to the local jobs table cannot leak
-   * to the portal without code-level changes here.
-   *
-   * Excluded by construction: patientFirstName, patientLastName, phone,
-   * trayNumber, orderId, notes, customColumnValues.
+   * Read the office's per-status enum mapping override (settings.
+   * trackingLinkDefaults.statusEnumMapping), used by mapStatusToEnum
+   * to translate office-custom status IDs onto the canonical enum.
    */
-  async function buildJobSnapshots(jobRows: typeof jobs.$inferSelect[]): Promise<TrackingJobSnapshot[]> {
-    if (jobRows.length === 0) return [];
+  async function getOfficeStatusEnumMapping(officeId: string): Promise<Record<string, string> | undefined> {
+    const office = await storage.getOffice(officeId);
+    const tld = ((office?.settings as any)?.trackingLinkDefaults ?? {}) as { statusEnumMapping?: unknown };
+    if (!tld.statusEnumMapping || typeof tld.statusEnumMapping !== "object") return undefined;
+    return tld.statusEnumMapping as Record<string, string>;
+  }
+
+  /**
+   * Backfill a freshly-created link with one event per historical status
+   * change across its covered jobs. Each historical status is mapped
+   * through the office's enum mapping; unmappable values are dropped.
+   * Idempotent on the portal side.
+   */
+  async function backfillEventsForLink(
+    jobRows: typeof jobs.$inferSelect[],
+    hostToken: string,
+    officeMapping: Record<string, string> | undefined,
+  ): Promise<void> {
+    if (jobRows.length === 0) return;
     const ids = jobRows.map((j) => j.id);
     const histories = await db.select({
       jobId: jobStatusHistory.jobId,
@@ -453,92 +469,34 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       .from(jobStatusHistory)
       .where(sql`${jobStatusHistory.jobId} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`)
       .orderBy(jobStatusHistory.changedAt);
-    const byJob = new Map<string, Array<{ status: string; at: string }>>();
-    for (const h of histories) {
-      const arr = byJob.get(h.jobId) ?? [];
-      arr.push({ status: h.newStatus, at: new Date(h.changedAt).toISOString() });
-      byJob.set(h.jobId, arr);
-    }
-    return jobRows.map((j): TrackingJobSnapshot => ({
-      id: j.id,
-      jobType: j.jobType,
-      currentStatus: j.status,
-      statusChangedAt: new Date(j.statusChangedAt).toISOString(),
-      history: byJob.get(j.id) ?? [],
-    }));
-  }
 
-  /**
-   * Build the status catalog (status ID → patient-facing label) the
-   * portal stores alongside the link.
-   *
-   * Two label sources, in priority order:
-   *   1. office.settings.trackingLinkDefaults.patientStatusLabels[id]
-   *      — the office's per-status patient-facing override
-   *   2. office.settings.customStatuses[i].label — the office's
-   *      internal label (only used as a catalog entry for office-
-   *      custom IDs that aren't in Otto's static patient map; the
-   *      portal's `patientLabelFor` falls back to the static map
-   *      when an entry is missing, so we don't need to ship every
-   *      standard ID's internal label)
-   *
-   * We pluck only `id` and `label` (capping label length to match
-   * the portal's z.string().max(60)) — no `color`, `order`, or
-   * other fields ride along. No PHI: status IDs and human-typed
-   * status labels only.
-   */
-  async function buildStatusCatalog(officeId: string): Promise<TrackingStatusCatalogEntry[]> {
-    const office = await storage.getOffice(officeId);
-    const settings = (office?.settings || {}) as {
-      customStatuses?: Array<{ id?: unknown; label?: unknown }>;
-      trackingLinkDefaults?: { patientStatusLabels?: Record<string, unknown> };
+    // Take the EARLIEST occurrence of each enum value across all jobs
+    // covered by the link — the patient sees one ordered timeline, not
+    // a per-job stream. Matches the portal's cleanup-script logic.
+    const earliest = new Map<PatientStatus, Date>();
+    const consider = (rawStatus: string, atIso: string | Date) => {
+      const mapped = mapStatusToEnum(rawStatus, officeMapping);
+      if (!mapped) return;
+      const at = atIso instanceof Date ? atIso : new Date(atIso);
+      if (Number.isNaN(at.getTime())) return;
+      const existing = earliest.get(mapped);
+      if (!existing || at.getTime() < existing.getTime()) earliest.set(mapped, at);
     };
-    const list = Array.isArray(settings.customStatuses) ? settings.customStatuses : [];
-    const overrides = (settings.trackingLinkDefaults?.patientStatusLabels ?? {}) as Record<string, unknown>;
+    for (const h of histories) consider(h.newStatus, new Date(h.changedAt));
+    for (const j of jobRows) consider(j.status, new Date(j.statusChangedAt));
 
-    const out: TrackingStatusCatalogEntry[] = [];
-    for (const s of list) {
-      if (!s) continue;
-      const id = typeof s.id === "string" ? s.id.trim() : "";
-      if (id.length === 0 || id.length > 50) continue;
-
-      const overrideRaw = overrides[id];
-      const override = typeof overrideRaw === "string" ? overrideRaw.trim() : "";
-      if (override.length > 0) {
-        // Office set an explicit patient-facing label — use it.
-        out.push({ id, label: override.slice(0, 60) });
-        continue;
-      }
-
-      // No override. We could still send the internal label as a
-      // fallback, but that risks leaking office terminology onto
-      // the patient page (e.g. office named "ready_for_pickup" as
-      // "Bob's Front Desk"). Send only when the id is clearly an
-      // office-custom one — the portal's static patient-label map
-      // covers every standard id.
-      if (!STANDARD_PATIENT_STATUS_IDS.has(id)) {
-        const label = typeof s.label === "string" ? s.label.trim() : "";
-        if (label.length > 0) {
-          out.push({ id, label: label.slice(0, 60) });
-        }
+    const earliestEntries = Array.from(earliest.entries());
+    for (const j of jobRows) {
+      for (const [status, occurredAt] of earliestEntries) {
+        portalAppendTrackingEvent({
+          hostToken,
+          jobId: j.id,
+          status,
+          occurredAt: occurredAt.toISOString(),
+        }).catch((err) => console.error("[tracking-links] backfill failed:", err?.message || err));
       }
     }
-    return out.slice(0, 30);
   }
-
-  // Mirror of the standard ids that otto-web's tracking-status-map
-  // knows how to render with curated patient-facing labels. Kept in
-  // sync by hand — the list is short and rarely changes.
-  const STANDARD_PATIENT_STATUS_IDS = new Set<string>([
-    "job_created",
-    "ordered",
-    "in_progress",
-    "delayed",
-    "quality_check",
-    "ready_for_pickup",
-    "completed",
-    "cancelled",
-  ]);
 
   /**
    * Auto-generate (or merge into) a tracking link for a newly-created
@@ -568,17 +526,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     hostToken: string,
   ): Promise<{ url: string | null; merged: boolean }> {
     try {
-      const office = await storage.getOffice(newJob.officeId);
-      // Single source of truth: `resolveTrackingLinkDefaultsForJobTypes`
-      // honors office's `byJobType` overrides (e.g. contacts skip a
-      // quality_check stage that glasses go through) plus the global
-      // visibleStatuses + defaultNotes. Previously this path only used
-      // the global defaults — per-type overrides were silently ignored
-      // for auto-generated links.
-      const { visibleStatuses, customNotes } = resolveTrackingLinkDefaultsForJobTypes(
-        office?.settings,
-        [newJob.jobType],
-      );
+      const officeMapping = await getOfficeStatusEnumMapping(newJob.officeId);
 
       // Look for a manual link group involving this job. The auto-gen
       // path runs in the same request that just inserted the job, so
@@ -608,15 +556,15 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               newJob.officeId,
             );
             if (missing.length === 0) {
-              const snapshots = await buildJobSnapshots(mergedJobs);
-              const statusCatalog = await buildStatusCatalog(newJob.officeId);
               const result = await portalUpdateTrackingLink({
                 hostToken,
                 id: target.id,
-                jobs: snapshots,
-                statusCatalog,
+                jobIds: mergedIds,
               });
               if (result.ok) {
+                // The newly-added job needs its history backfilled as
+                // events on the (now expanded) link.
+                await backfillEventsForLink([newJob], hostToken, officeMapping);
                 return { url: result.link.url, merged: true };
               }
             }
@@ -624,20 +572,22 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
 
-      // No manual-link-group merge candidate — create a fresh link
-      // seeded from office defaults. Patients with multiple unlinked
-      // orders get separate URLs by design; staff consolidates via the
-      // worklist's Link feature when appropriate.
-      const snapshots = await buildJobSnapshots([newJob]);
-      const statusCatalog = await buildStatusCatalog(newJob.officeId);
+      // No manual-link-group merge candidate — create a fresh link.
+      // Initial event is the current status mapped to the enum so the
+      // patient page renders something on first visit.
+      const initialEnum = mapStatusToEnum(newJob.status, officeMapping);
       const result = await portalCreateTrackingLink({
         hostToken,
-        jobs: snapshots,
-        visibleStatuses,
-        statusCatalog,
-        customNotes,
+        jobIds: [newJob.id],
+        initialStatus: initialEnum ?? undefined,
+        initialStatusAt: initialEnum ? new Date(newJob.statusChangedAt).toISOString() : undefined,
       });
       if (result.ok) {
+        // Backfill historical status changes (if any) — this is mostly a
+        // no-op for newly-created jobs that only have job_created in
+        // history, but matters for the post-link merge path where the
+        // existing job may already have a history.
+        await backfillEventsForLink([newJob], hostToken, officeMapping);
         return { url: result.link.url, merged: false };
       }
       return { url: null, merged: false };
@@ -685,7 +635,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       return res.status(503).json({ error: "Host is not activated" });
     }
     const user = getOfficeUser(req);
-    const { jobIds, visibleStatuses, eta, customNotes, expiresAt } = req.body || {};
+    // `visibleStatuses`, `eta`, `customNotes` are still accepted from
+    // older UI callers but no longer sent to the portal. ETA stays
+    // local (the SMS template can render it). The note (if any) is
+    // PHI-scanned and stored locally — never sent upstream.
+    const { jobIds, eta, customNotes, expiresAt } = req.body || {};
     if (!Array.isArray(jobIds) || jobIds.length === 0) {
       return res.status(400).json({ error: "jobIds must be a non-empty array" });
     }
@@ -698,67 +652,58 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(404).json({ error: "Some of the selected jobs are no longer available." });
       }
 
-      const phi = scanNotesForPhi({
-        notes: typeof customNotes === "string" ? customNotes : null,
-        jobs: localJobs.map((j) => ({
-          patientFirstName: j.patientFirstName,
-          patientLastName: j.patientLastName,
-          phone: j.phone,
-        })),
-      });
-      if (!phi.ok) {
-        return res.status(400).json({ error: phi.reason, code: "PHI_DETECTED" });
+      // PHI scan the initial note if supplied. This is a local write
+      // (notes never leave the host) but the scan still gates obvious
+      // mistakes — staff shouldn't be putting patient names into a
+      // field labeled "patient sees this".
+      if (typeof customNotes === "string" && customNotes.trim().length > 0) {
+        const phi = scanNotesForPhi({
+          notes: customNotes,
+          jobs: localJobs.map((j) => ({
+            patientFirstName: j.patientFirstName,
+            patientLastName: j.patientLastName,
+            phone: j.phone,
+          })),
+        });
+        if (!phi.ok) {
+          return res.status(400).json({ error: phi.reason, code: "PHI_DETECTED" });
+        }
       }
 
-      const snapshots = await buildJobSnapshots(localJobs);
-      const statusCatalog = await buildStatusCatalog(user.officeId);
-
-      // Defense in depth: callers SHOULD send visibleStatuses /
-      // customNotes scoped to the user's choice, but if they don't,
-      // fall back to the office's defaults (honoring per-job-type
-      // overrides) rather than letting the portal receive `undefined`
-      // and pick its own. Two callers today:
-      //   - TrackingLinkDialog: passes explicit values from its
-      //     configure phase (always defined)
-      //   - JobDetails one-click Generate: passes office defaults
-      //     resolved client-side — this fallback makes the wire
-      //     contract robust to either skipping that resolution.
-      const office = await storage.getOffice(user.officeId);
-      const fallback = resolveTrackingLinkDefaultsForJobTypes(
-        office?.settings,
-        localJobs.map((j) => j.jobType),
+      const officeMapping = await getOfficeStatusEnumMapping(user.officeId);
+      // Use the most-recently-changed job's current status as the
+      // initial event so the patient page renders something on first
+      // visit (rather than an empty timeline).
+      const sortedByStatusTime = localJobs.slice().sort(
+        (a, b) => new Date(b.statusChangedAt).getTime() - new Date(a.statusChangedAt).getTime(),
       );
-      const rawEffectiveVisible = Array.isArray(visibleStatuses) && visibleStatuses.length > 0
-        ? visibleStatuses
-        : fallback.visibleStatuses;
-      // Always sort by the office's customStatuses.order so the
-      // patient-page timeline reads as a natural progression,
-      // regardless of the order the caller assembled the array in.
-      // Without this, a caller (or staff toggling checkboxes in
-      // Settings) could land statuses in scrambled order and the
-      // patient sees Ready-for-pickup before Order-received.
-      const officeCustomStatuses = Array.isArray((office?.settings as any)?.customStatuses)
-        ? ((office?.settings as any).customStatuses as Array<{ id: string; order?: number }>)
-        : undefined;
-      const effectiveVisible = sortVisibleStatusesByOffice(rawEffectiveVisible, officeCustomStatuses);
-      const effectiveNotes = typeof customNotes === "string"
-        ? customNotes
-        : customNotes === null
-          ? null
-          : fallback.customNotes;
+      const seedJob = sortedByStatusTime[0];
+      const initialEnum = seedJob ? mapStatusToEnum(seedJob.status, officeMapping) : null;
 
       const result = await portalCreateTrackingLink({
         hostToken,
-        jobs: snapshots,
-        visibleStatuses: effectiveVisible,
-        statusCatalog,
-        eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
-        customNotes: effectiveNotes,
+        jobIds,
+        initialStatus: initialEnum ?? undefined,
+        initialStatusAt: initialEnum && seedJob ? new Date(seedJob.statusChangedAt).toISOString() : undefined,
         expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
       });
       if (!result.ok) {
         return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
       }
+
+      // Backfill historical status changes as events.
+      await backfillEventsForLink(localJobs, hostToken, officeMapping);
+
+      // If the caller supplied an initial note, persist it locally.
+      if (typeof customNotes === "string" && customNotes.trim().length > 0) {
+        await db.insert(trackingLinkNotesLocal).values({
+          id: randomUUID(),
+          linkToken: result.link.token,
+          content: customNotes.trim(),
+          createdAt: new Date(),
+        });
+      }
+
       trackEvent({ userId: user.id, officeId: user.officeId, eventType: "tracking_link_created", metadata: { jobCount: jobIds.length } });
       res.status(201).json({ link: result.link });
     } catch (error: any) {
@@ -773,58 +718,25 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
     const user = getOfficeUser(req);
     const { id } = req.params;
-    const { jobIds, visibleStatuses, eta, customNotes, expiresAt } = req.body || {};
+    // Only jobIds (coverage) and expiresAt actually change the portal.
+    // visibleStatuses/eta/customNotes from older callers are accepted
+    // but no-ops on the portal side now.
+    const { jobIds, expiresAt } = req.body || {};
     try {
-      let snapshots: TrackingJobSnapshot[] | undefined;
       if (Array.isArray(jobIds)) {
         if (jobIds.length === 0 || jobIds.length > 10) {
           return res.status(400).json({ error: "jobIds must be 1–10 entries." });
         }
-        const { jobs: localJobs, missing } = await loadLocalJobsForOffice(jobIds, user.officeId);
+        const { missing } = await loadLocalJobsForOffice(jobIds, user.officeId);
         if (missing.length > 0) {
           return res.status(404).json({ error: "Some of the selected jobs are no longer available." });
         }
-        snapshots = await buildJobSnapshots(localJobs);
-
-        if (typeof customNotes === "string") {
-          const phi = scanNotesForPhi({
-            notes: customNotes,
-            jobs: localJobs.map((j) => ({
-              patientFirstName: j.patientFirstName,
-              patientLastName: j.patientLastName,
-              phone: j.phone,
-            })),
-          });
-          if (!phi.ok) {
-            return res.status(400).json({ error: phi.reason, code: "PHI_DETECTED" });
-          }
-        }
-      }
-
-      // Refresh the catalog on every update so label edits in office
-      // settings flow to the patient page.
-      const statusCatalog = await buildStatusCatalog(user.officeId);
-
-      // Sort visibleStatuses (if supplied) by customStatuses.order so
-      // the patient-page timeline renders in natural progression
-      // regardless of the order the caller built the array in.
-      let normalizedVisible: string[] | undefined;
-      if (Array.isArray(visibleStatuses)) {
-        const office = await storage.getOffice(user.officeId);
-        const cs = Array.isArray((office?.settings as any)?.customStatuses)
-          ? ((office?.settings as any).customStatuses as Array<{ id: string; order?: number }>)
-          : undefined;
-        normalizedVisible = sortVisibleStatusesByOffice(visibleStatuses, cs);
       }
 
       const result = await portalUpdateTrackingLink({
         hostToken,
         id,
-        jobs: snapshots,
-        visibleStatuses: normalizedVisible,
-        statusCatalog,
-        eta: typeof eta === "string" ? eta : eta === null ? null : undefined,
-        customNotes: typeof customNotes === "string" ? customNotes : customNotes === null ? null : undefined,
+        jobIds: Array.isArray(jobIds) ? jobIds : undefined,
         expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
       });
       if (!result.ok) {
@@ -926,25 +838,27 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  // Append a timestamped note to a tracking link's notes log.
-  // The note becomes a new entry in the patient-facing timeline —
-  // staff doesn't overwrite previous updates, they accumulate.
-  // Caller passes `jobIds` (the link's covered jobs, cached client-
-  // side) so the PHI scan can compare the note text against the right
-  // patient names + phones without an extra portal round-trip.
+  // Append a timestamped note for the patient-facing tracking link.
+  // LOCAL-ONLY: notes are stored in the desktop's SQLite and never
+  // sent to the portal. The note text still gets a PHI scan as
+  // defense-in-depth against staff accidentally including patient
+  // identifiers in a field they think the patient sees (they don't —
+  // patients see only the canonical status timeline).
+  //
+  // Caller passes `linkToken` so we key the note on the durable
+  // portal token rather than the link's internal UUID.
   app.post("/api/tracking-links/:id/notes", requireAuth, requireNotViewOnly, async (req, res) => {
-    const hostToken = getHostToken();
-    if (!hostToken) {
-      return res.status(503).json({ error: "Host is not activated" });
-    }
     const user = getOfficeUser(req);
-    const { content, jobIds } = req.body || {};
+    const { content, jobIds, linkToken } = req.body || {};
     if (typeof content !== "string" || content.trim().length === 0) {
       return res.status(400).json({ error: "Note content is required" });
     }
     const trimmed = content.trim();
     if (trimmed.length > 500) {
       return res.status(400).json({ error: "Note is too long (max 500 chars)" });
+    }
+    if (typeof linkToken !== "string" || linkToken.length < 16 || linkToken.length > 64) {
+      return res.status(400).json({ error: "linkToken is required" });
     }
     if (!Array.isArray(jobIds) || jobIds.length === 0) {
       return res.status(400).json({ error: "jobIds must be a non-empty array" });
@@ -968,21 +882,50 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const note = {
         id: randomUUID(),
+        linkToken,
         content: trimmed,
-        createdAt: new Date().toISOString(),
+        createdAt: new Date(),
       };
-      const result = await portalAddTrackingLinkNote({ hostToken, id: req.params.id, note });
-      if (!result.ok) {
-        return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
-      }
+      await db.insert(trackingLinkNotesLocal).values(note);
+
       trackEvent({
         userId: user.id,
         officeId: user.officeId,
         eventType: "tracking_link_note_added",
       });
-      res.status(201).json({ link: result.link, note });
+      res.status(201).json({
+        note: {
+          id: note.id,
+          content: note.content,
+          createdAt: note.createdAt.toISOString(),
+        },
+      });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to add note" });
+    }
+  });
+
+  // List local notes for a given tracking link token. Replaces the
+  // portal-side notes field — notes never leave this host.
+  app.get("/api/tracking-links/notes/:token", requireAuth, async (req, res) => {
+    const token = String(req.params.token || "");
+    if (token.length < 16 || token.length > 64) {
+      return res.status(400).json({ error: "Invalid token" });
+    }
+    try {
+      const rows = await db.select()
+        .from(trackingLinkNotesLocal)
+        .where(eq(trackingLinkNotesLocal.linkToken, token))
+        .orderBy(trackingLinkNotesLocal.createdAt);
+      res.json({
+        notes: rows.map((r) => ({
+          id: r.id,
+          content: r.content,
+          createdAt: r.createdAt.toISOString(),
+        })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to load notes" });
     }
   });
 
@@ -1000,38 +943,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (!result.ok) {
         return res.status(result.error.statusCode || 500).json({ error: result.error.message });
       }
-
-      // Self-heal pass for pre-fix links: any link whose
-      // `visibleStatuses` is in the wrong order (saved when staff
-      // toggled checkboxes in a non-progression sequence in Settings)
-      // gets normalized in the response AND PATCHed back to the
-      // portal so the patient page renders the natural progression.
-      // Fire-and-forget on the PATCH — we don't want a flaky portal
-      // round-trip blocking the list response.
-      const user = getOfficeUser(req);
-      const office = await storage.getOffice(user.officeId);
-      const cs = Array.isArray((office?.settings as any)?.customStatuses)
-        ? ((office?.settings as any).customStatuses as Array<{ id: string; order?: number }>)
-        : undefined;
-      if (cs && cs.length > 0) {
-        for (const link of result.links) {
-          if (link.revokedAt) continue;
-          const sorted = sortVisibleStatusesByOffice(link.visibleStatuses, cs);
-          const same =
-            sorted.length === link.visibleStatuses.length
-            && sorted.every((v, i) => v === link.visibleStatuses[i]);
-          if (!same) {
-            // Surface the corrected order to the caller right away.
-            link.visibleStatuses = sorted;
-            // Fix the portal-side copy in the background.
-            portalUpdateTrackingLink({ hostToken, id: link.id, visibleStatuses: sorted })
-              .catch((err) =>
-                console.error("[tracking-links] self-heal sort failed:", err?.message || err),
-              );
-          }
-        }
-      }
-
       res.json({ links: result.links });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to list tracking links" });
@@ -1835,26 +1746,24 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         // Send notifications while job still exists in database (fixes FK violation)
         await notifyJobStatusChange(job, oldJob.status, getAuthUser(req), storage);
 
-        // Push the new status to any active patient tracking link covering
-        // this job. Fire-and-forget — a portal hiccup must not block the
-        // local status change. We also refresh the office's status catalog
-        // so label changes in settings propagate to the patient page.
+        // Push the new status as an enum event to any active patient
+        // tracking link covering this job. Fire-and-forget — a portal
+        // hiccup must not block the local status change. Unmappable
+        // statuses are dropped before any portal call is made.
         const localHostToken = getHostToken();
         if (localHostToken) {
-          const changedAt = new Date(job.statusChangedAt).toISOString();
-          buildStatusCatalog(job.officeId)
-            .then((statusCatalog) =>
-              portalSyncTrackingJob({
+          getOfficeStatusEnumMapping(job.officeId)
+            .then((mapping) => {
+              const mapped = mapStatusToEnum(job.status, mapping);
+              if (!mapped) return;
+              return portalAppendTrackingEvent({
                 hostToken: localHostToken,
                 jobId: job.id,
-                jobType: job.jobType,
-                currentStatus: job.status,
-                statusChangedAt: changedAt,
-                appendHistory: { status: job.status, at: changedAt },
-                statusCatalog,
-              }),
-            )
-            .catch((err) => console.error("[tracking-links] sync failed:", err?.message || err));
+                status: mapped,
+                occurredAt: new Date(job.statusChangedAt).toISOString(),
+              });
+            })
+            .catch((err) => console.error("[tracking-links] event sync failed:", err?.message || err));
         }
 
         if (isAiSummaryEnabled()) {
@@ -1916,9 +1825,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       let archived = 0;
 
       const bulkHostToken = getHostToken();
-      // Compute the catalog once for this batch — shared across every
-      // sync push since it only depends on office settings.
-      const bulkCatalog = bulkHostToken ? await buildStatusCatalog(officeId) : null;
+      // Office-wide enum mapping (looked up once per batch — it depends
+      // only on settings.trackingLinkDefaults.statusEnumMapping).
+      const bulkEnumMapping = bulkHostToken ? await getOfficeStatusEnumMapping(officeId) : undefined;
       for (const jobId of jobIds) {
         if (typeof jobId !== "string") continue;
         const job = await storage.getJob(jobId);
@@ -1928,20 +1837,19 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         await storage.updateJob(jobId, updates, userId);
         updated++;
 
-        // Push status change to any active tracking link (fire-and-forget).
+        // Push status change as an enum event to any active tracking
+        // link covering this jobId (fire-and-forget). Unmappable
+        // statuses are dropped before any portal call is made.
         if (bulkHostToken && updates.status && updates.status !== oldStatus) {
           const refreshed = await storage.getJob(jobId);
-          if (refreshed) {
-            const at = new Date(refreshed.statusChangedAt).toISOString();
-            portalSyncTrackingJob({
+          const mapped = refreshed ? mapStatusToEnum(refreshed.status, bulkEnumMapping) : null;
+          if (refreshed && mapped) {
+            portalAppendTrackingEvent({
               hostToken: bulkHostToken,
               jobId: refreshed.id,
-              jobType: refreshed.jobType,
-              currentStatus: refreshed.status,
-              statusChangedAt: at,
-              appendHistory: { status: refreshed.status, at },
-              statusCatalog: bulkCatalog ?? undefined,
-            }).catch((err) => console.error("[tracking-links] bulk sync failed:", err?.message || err));
+              status: mapped,
+              occurredAt: new Date(refreshed.statusChangedAt).toISOString(),
+            }).catch((err) => console.error("[tracking-links] bulk event failed:", err?.message || err));
           }
         }
 
@@ -2364,14 +2272,17 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
                     user.officeId,
                   );
                   if (missing.length === 0) {
-                    const snapshots = await buildJobSnapshots(mergedJobs);
-                    const statusCatalog = await buildStatusCatalog(user.officeId);
                     await portalUpdateTrackingLink({
                       hostToken: hostTokenForMerge,
                       id: target.id,
-                      jobs: snapshots,
-                      statusCatalog,
+                      jobIds: mergedIds,
                     });
+                    // Backfill events for the newly-added jobs so the
+                    // patient page reflects each one's history on the
+                    // (now-expanded) link.
+                    const newlyAdded = mergedJobs.filter((j) => !target.jobIds.includes(j.id));
+                    const mapping = await getOfficeStatusEnumMapping(user.officeId);
+                    await backfillEventsForLink(newlyAdded, hostTokenForMerge, mapping);
                     trackingLinkConsolidated = true;
                     trackEvent({
                       userId: user.id,
@@ -2874,25 +2785,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // patient-facing label alone left existing links showing the old
       // label until the next per-link PATCH bumped them.
       const settingsUpdate = (updates.settings as any) ?? {};
-      const catalogAffectingChange =
-        Object.prototype.hasOwnProperty.call(updates, "settings")
-        && (
-          Array.isArray(settingsUpdate.customStatuses)
-          || (settingsUpdate.trackingLinkDefaults
-              && typeof settingsUpdate.trackingLinkDefaults === "object"
-              && Object.prototype.hasOwnProperty.call(
-                settingsUpdate.trackingLinkDefaults,
-                "patientStatusLabels",
-              ))
-        );
-      const settingsHostToken = getHostToken();
-      if (catalogAffectingChange && settingsHostToken) {
-        buildStatusCatalog(req.params.id)
-          .then((statusCatalog) =>
-            portalRefreshTrackingCatalog({ hostToken: settingsHostToken, statusCatalog }),
-          )
-          .catch((err) => console.error("[tracking-links] catalog refresh failed:", err?.message || err));
-      }
+      // Patient-facing status labels are now portal-owned (canonical
+      // enum) — there's no per-office catalog to push to the portal.
+      // The office's customStatuses / patientStatusLabels settings
+      // still drive the desktop's INTERNAL UI; they no longer reach
+      // the portal in any form.
 
       res.json(office);
     } catch (error: any) {

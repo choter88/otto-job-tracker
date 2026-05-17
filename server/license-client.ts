@@ -462,68 +462,44 @@ export async function portalSubmitFeedback(payload: {
 
 // --- Patient tracking links (host-token authenticated) ---
 //
-// PHI guarantee — what we send to otto-web for tracking links:
+// PHI guarantee — what we send to otto-web for tracking links is now
+// strictly minimal. The portal stores opaque tokens, lifecycle, an
+// append-only (status enum, occurred_at) event log, and opaque job
+// UUIDs for coverage. Nothing else.
 //
 //   ✅ SENT
 //     - hostToken (random secret, not patient data)
-//     - jobs[] snapshot — strictly { id, jobType, currentStatus,
-//       statusChangedAt, history? }. Built by `buildJobSnapshots` in
-//       routes.ts which never spreads the raw Job row.
-//     - visibleStatuses[] — array of status IDs (e.g. "in_progress")
-//     - statusCatalog[] — { id, label } from office.settings.customStatuses,
-//       length-capped server-side. Lets the patient page render office-
-//       custom status IDs sensibly. Office-defined labels — never patient
-//       data.
-//     - eta — ISO date for the order, not the patient
-//     - customNotes — free text, scanned by `scanNotesForPhi` BEFORE this
-//       is called. Rejected if it contains a phone, email, SSN, DOB, the
-//       patient's first/last name, or "prescription"/"diagnosis".
-//     - expiresAt — ISO date
+//     - jobIds[] (opaque desktop UUIDs — no PHI recoverable)
+//     - status — canonical enum value, mapped from internal status
+//       on the desktop before send. Unmappable statuses are DROPPED
+//       on the desktop and never reach the portal.
+//     - occurredAt / expiresAt — ISO timestamps
 //
-//   ❌ NEVER SENT (anywhere in the tracking-link flow)
+//   ❌ NEVER SENT
 //     - patientFirstName / patientLastName / patientFirstInitial
-//     - phone (patient phone)
-//     - trayNumber, orderId, internal `notes`, customColumnValues
-//     - office name / address / phone / email
-//     - user names
+//     - phone / trayNumber / orderId / internal notes /
+//       customColumnValues
+//     - office name / address / phone / email / user names
+//     - jobType, status labels, status colors, custom-status mapping,
+//       per-link visibility, ETA, custom notes / patient-facing notes,
+//       link view counts, history of out-of-enum statuses
 
-export interface TrackingJobSnapshot {
-  id: string;
-  jobType: string;
-  currentStatus: string;
-  statusChangedAt: string;
-  history?: Array<{ status: string; at: string }>;
-}
+import { PATIENT_STATUS_VALUES, type PatientStatus } from "@shared/patient-status-enum";
 
-export interface TrackingStatusCatalogEntry {
-  id: string;
-  label: string;
-}
-
-export interface TrackingNoteEntry {
-  id: string;
-  content: string;
-  createdAt: string;
-}
-
+/**
+ * The DTO the desktop UI binds to. Most fields are vestigial now (the
+ * portal returns empty arrays / nulls), kept so existing components
+ * compile without forced churn. Notes are sourced from local SQLite
+ * via the desktop's `/api/tracking-links/:id/notes` GET, not from the
+ * portal — see active-tracking-link-panel.tsx.
+ */
 export interface TrackingLinkRecord {
   id: string;
   token: string;
   url: string;
   jobIds: string[];
-  jobs: TrackingJobSnapshot[];
-  visibleStatuses: string[];
-  eta: string | null;
-  /** Legacy single-string note. New writes go to `notes[]`; left in
-   *  place so existing links don't lose their note on deploy. */
-  customNotes: string | null;
-  /** Append-only timestamped patient-facing notes log. Each entry
-   *  surfaces as a row on the patient tracking page's update list. */
-  notes: TrackingNoteEntry[];
   expiresAt: string | null;
   revokedAt: string | null;
-  viewCount: number;
-  lastViewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -536,40 +512,6 @@ export type TrackingLinkListResult =
   | { ok: true; links: TrackingLinkRecord[] }
   | { ok: false; error: LicenseRequestError };
 
-function parseTrackingJobs(raw: any): TrackingJobSnapshot[] {
-  if (!Array.isArray(raw)) return [];
-  const out: TrackingJobSnapshot[] = [];
-  for (const j of raw) {
-    if (!j || typeof j !== "object") continue;
-    if (typeof j.id !== "string" || typeof j.jobType !== "string") continue;
-    if (typeof j.currentStatus !== "string" || typeof j.statusChangedAt !== "string") continue;
-    const history = Array.isArray(j.history)
-      ? j.history
-          .filter((h: any) => h && typeof h.status === "string" && typeof h.at === "string")
-          .map((h: any) => ({ status: String(h.status), at: String(h.at) }))
-      : undefined;
-    out.push({
-      id: j.id,
-      jobType: j.jobType,
-      currentStatus: j.currentStatus,
-      statusChangedAt: j.statusChangedAt,
-      history,
-    });
-  }
-  return out;
-}
-
-function parseTrackingNotes(raw: any): TrackingNoteEntry[] {
-  if (!Array.isArray(raw)) return [];
-  const out: TrackingNoteEntry[] = [];
-  for (const n of raw) {
-    if (!n || typeof n !== "object") continue;
-    if (typeof n.id !== "string" || typeof n.content !== "string" || typeof n.createdAt !== "string") continue;
-    out.push({ id: n.id, content: n.content, createdAt: n.createdAt });
-  }
-  return out;
-}
-
 function parseTrackingLink(json: any): TrackingLinkRecord | null {
   if (!json || typeof json !== "object") return null;
   if (typeof json.id !== "string" || typeof json.token !== "string") return null;
@@ -578,15 +520,8 @@ function parseTrackingLink(json: any): TrackingLinkRecord | null {
     token: json.token,
     url: typeof json.url === "string" ? json.url : "",
     jobIds: Array.isArray(json.jobIds) ? json.jobIds.map((s: any) => String(s)) : [],
-    jobs: parseTrackingJobs(json.jobs),
-    visibleStatuses: Array.isArray(json.visibleStatuses) ? json.visibleStatuses.map((s: any) => String(s)) : [],
-    eta: typeof json.eta === "string" ? json.eta : null,
-    customNotes: typeof json.customNotes === "string" ? json.customNotes : null,
-    notes: parseTrackingNotes(json.notes),
     expiresAt: typeof json.expiresAt === "string" ? json.expiresAt : null,
     revokedAt: typeof json.revokedAt === "string" ? json.revokedAt : null,
-    viewCount: typeof json.viewCount === "number" ? json.viewCount : 0,
-    lastViewedAt: typeof json.lastViewedAt === "string" ? json.lastViewedAt : null,
     createdAt: typeof json.createdAt === "string" ? json.createdAt : new Date(0).toISOString(),
     updatedAt: typeof json.updatedAt === "string" ? json.updatedAt : new Date(0).toISOString(),
   };
@@ -594,12 +529,12 @@ function parseTrackingLink(json: any): TrackingLinkRecord | null {
 
 export async function portalCreateTrackingLink(payload: {
   hostToken: string;
-  jobs: TrackingJobSnapshot[];
-  visibleStatuses?: string[];
-  statusCatalog?: TrackingStatusCatalogEntry[];
-  eta?: string | null;
-  customNotes?: string | null;
+  jobIds: string[];
   expiresAt?: string | null;
+  // Optional initial event — the desktop posts the very first status
+  // mapping so the patient page renders something on first visit.
+  initialStatus?: PatientStatus;
+  initialStatusAt?: string;
 }): Promise<TrackingLinkResult> {
   const base = getLicenseBaseUrl();
   const url = new URL("/license/v1/tracking-links", base);
@@ -638,29 +573,26 @@ export async function portalGetFeatureFlags(payload: {
   return { ok: true, disabledFeatureIds: ids };
 }
 
-export async function portalRefreshTrackingCatalog(payload: {
-  hostToken: string;
-  statusCatalog: TrackingStatusCatalogEntry[];
-}): Promise<{ ok: true } | { ok: false; error: LicenseRequestError }> {
-  const base = getLicenseBaseUrl();
-  const url = new URL("/license/v1/tracking-links/refresh-catalog", base);
-  const { status, json, networkError } = await fetchJson(url, payload);
-  if (networkError) return { ok: false, error: networkError };
-  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
-  return { ok: true };
-}
-
-export async function portalSyncTrackingJob(payload: {
+/**
+ * Append a (status enum, occurredAt) event scoped to a jobId. The portal
+ * resolves which active office links cover the jobId and appends to
+ * each. Idempotent on (link, status, occurredAt).
+ *
+ * The status MUST already be a canonical enum value. Callers should
+ * use shared/patient-status-enum.ts → mapStatusToEnum() and skip
+ * sending when it returns null.
+ */
+export async function portalAppendTrackingEvent(payload: {
   hostToken: string;
   jobId: string;
-  jobType?: string;
-  currentStatus: string;
-  statusChangedAt: string;
-  appendHistory?: { status: string; at: string };
-  statusCatalog?: TrackingStatusCatalogEntry[];
+  status: PatientStatus;
+  occurredAt: string;
 }): Promise<{ ok: true; updatedLinks: number } | { ok: false; error: LicenseRequestError }> {
   const base = getLicenseBaseUrl();
-  const url = new URL("/license/v1/tracking-links/sync-job", base);
+  const url = new URL("/license/v1/tracking-links/events", base);
+  if (!(PATIENT_STATUS_VALUES as readonly string[]).includes(payload.status)) {
+    return { ok: false, error: { statusCode: 400, code: "INVALID_STATUS", message: "status must be a canonical enum value" } };
+  }
   const { status, json, networkError } = await fetchJson(url, payload);
   if (networkError) return { ok: false, error: networkError };
   if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
@@ -700,37 +632,13 @@ async function patchJson(url: URL, body: unknown): Promise<PostJsonResult> {
 export async function portalUpdateTrackingLink(payload: {
   hostToken: string;
   id: string;
-  jobs?: TrackingJobSnapshot[];
-  visibleStatuses?: string[];
-  statusCatalog?: TrackingStatusCatalogEntry[];
-  eta?: string | null;
-  customNotes?: string | null;
+  jobIds?: string[];
   expiresAt?: string | null;
 }): Promise<TrackingLinkResult> {
   const base = getLicenseBaseUrl();
   const url = new URL(`/license/v1/tracking-links/${encodeURIComponent(payload.id)}`, base);
   const { id, ...body } = payload;
   const { status, json, networkError } = await patchJson(url, body);
-  if (networkError) return { ok: false, error: networkError };
-  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
-  const link = parseTrackingLink(json);
-  if (!link) {
-    return { ok: false, error: { statusCode: 502, code: "BAD_PORTAL_RESPONSE", message: "Tracking link response was malformed." } };
-  }
-  return { ok: true, link };
-}
-
-export async function portalAddTrackingLinkNote(payload: {
-  hostToken: string;
-  id: string;
-  note: TrackingNoteEntry;
-}): Promise<TrackingLinkResult> {
-  const base = getLicenseBaseUrl();
-  const url = new URL(`/license/v1/tracking-links/${encodeURIComponent(payload.id)}/notes`, base);
-  const { status, json, networkError } = await fetchJson(url, {
-    hostToken: payload.hostToken,
-    note: payload.note,
-  });
   if (networkError) return { ok: false, error: networkError };
   if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
   const link = parseTrackingLink(json);

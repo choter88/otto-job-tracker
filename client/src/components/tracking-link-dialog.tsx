@@ -54,7 +54,6 @@ import {
   Link2,
   Copy,
   Check,
-  Eye,
   Trash2,
   AlertTriangle,
   ShieldCheck,
@@ -94,39 +93,13 @@ function patientLabel(id: string): string {
 const EXPIRY_WARN_DAYS = 7;
 const EXTEND_BY_DAYS = 30;
 
-export interface TrackingJobSnapshot {
-  id: string;
-  jobType: string;
-  currentStatus: string;
-  statusChangedAt: string;
-  history?: Array<{ status: string; at: string }>;
-}
-
-export interface TrackingNoteEntry {
-  id: string;
-  content: string;
-  createdAt: string;
-}
-
 export interface TrackingLinkRecord {
   id: string;
   token: string;
   url: string;
   jobIds: string[];
-  jobs: TrackingJobSnapshot[];
-  visibleStatuses: string[];
-  eta: string | null;
-  /** Legacy single-string note; superseded by `notes[]`. Kept so
-   *  pre-migration links continue to render. */
-  customNotes: string | null;
-  /** Append-only timestamped notes log shown to the patient as a
-   *  chronological update list. New "Save note" clicks append; the
-   *  desktop and patient page both render entries oldest-first. */
-  notes: TrackingNoteEntry[];
   expiresAt: string | null;
   revokedAt: string | null;
-  viewCount: number;
-  lastViewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -364,7 +337,9 @@ export default function TrackingLinkDialog({
   };
   const handleCopyMessage = async () => {
     if (!generatedLink?.url) return;
-    const etaFormatted = generatedLink.eta ? format(new Date(generatedLink.eta), "EEEE, MMMM d") : null;
+    // ETA is no longer round-tripped through the portal — render from
+    // the dialog's local state instead.
+    const etaFormatted = eta ? format(new Date(eta + "T00:00:00"), "EEEE, MMMM d") : null;
     const message = renderMessageTemplate(officeDefaults.messageTemplate, { url: generatedLink.url, eta: etaFormatted });
     try {
       await navigator.clipboard.writeText(message);
@@ -480,13 +455,13 @@ export default function TrackingLinkDialog({
                 <section>
                   <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold flex items-center gap-1.5">
                     <StickyNote className="h-3.5 w-3.5" />
-                    Note
-                    <span className="text-[calc(10.5px*var(--ui-scale))] text-ink-faint normal-case tracking-normal font-normal">— optional</span>
+                    Local note
+                    <span className="text-[calc(10.5px*var(--ui-scale))] text-ink-faint normal-case tracking-normal font-normal">— optional, stays on this computer</span>
                   </Label>
                   <Textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="e.g. Your frames arrived early — we'll text you when ready."
+                    placeholder="e.g. Called patient — expects pickup next Tuesday."
                     className="mt-1.5 min-h-[56px] bg-white text-[calc(13px*var(--ui-scale))]"
                     maxLength={500}
                   />
@@ -499,15 +474,15 @@ export default function TrackingLinkDialog({
                           data-testid="note-warning"
                         >
                           <AlertTriangle className="h-3 w-3 text-warn" aria-hidden />
-                          No names or phone numbers — patients see this.
+                          Stored locally — patients do not see this.
                         </span>
                       </TooltipTrigger>
                       <TooltipContent side="top" className="max-w-xs">
                         <p className="text-xs leading-snug">
-                          The tracking page is publicly accessible to anyone with the link.
-                          Don't include patient names, phone numbers, addresses, dates of
-                          birth, or anything clinical (Rx, diagnosis, prescription details).
-                          Otto will reject notes that look like they contain these.
+                          Notes never leave this computer. The patient page shows only
+                          generic status updates with timestamps. Even so, Otto rejects
+                          notes that look like they contain patient identifiers (names,
+                          phone numbers, prescription details) as a defense-in-depth check.
                         </p>
                       </TooltipContent>
                     </Tooltip>
@@ -517,7 +492,7 @@ export default function TrackingLinkDialog({
 
                 <p className="text-[calc(11px*var(--ui-scale))] text-ink-faint flex items-center gap-1.5 m-0">
                   <ShieldCheck className="h-3 w-3 text-brand-emerald" aria-hidden />
-                  No name, no contact info, no office identity — just status, ETA, and your note.
+                  Patient sees only generic status updates — no name, no office, no order details.
                 </p>
               </>
             )}
@@ -859,7 +834,6 @@ function ShareView({
 }) {
   const expiresAt = link.expiresAt ? new Date(link.expiresAt) : null;
   const expiresAtLabel = expiresAt ? format(expiresAt, "MMM d, yyyy") : null;
-  const lastViewed = link.lastViewedAt ? format(new Date(link.lastViewedAt), "MMM d, yyyy h:mm a") : null;
   const daysUntilExpiry = expiresAt
     ? Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000))
     : null;
@@ -937,8 +911,6 @@ function ShareView({
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Stat icon={<Eye className="h-3.5 w-3.5" />} label="Views" value={String(link.viewCount)} />
-        <Stat icon={<CalendarClock className="h-3.5 w-3.5" />} label="Last viewed" value={lastViewed || "—"} small />
         <Stat
           icon={<CalendarClock className="h-3.5 w-3.5" />}
           label="Expires"

@@ -20,17 +20,14 @@ import {
   Check,
   ChevronDown,
   Copy,
-  Eye,
   QrCode,
   Save,
-  Sliders,
   StickyNote,
   Trash2,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,12 +35,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { renderMessageTemplate as renderTrackingMessageTemplate } from "@/components/customization/tracking-link-defaults-editor";
-import { DEFAULT_VISIBLE_STATUSES } from "@shared/tracking-link-defaults";
 import { cn } from "@/lib/utils";
 import type { Job } from "@shared/schema";
 import type { TrackingLinkRecord } from "@/components/tracking-link-dialog";
@@ -65,15 +59,17 @@ interface Props {
   trackingExpiringSoon: boolean;
   trackingDaysUntilExpiry: number | null;
 
-  /** Append a new timestamped note to the patient-facing log. */
-  onAddNote: (args: { linkId: string; jobIds: string[]; content: string }) => void;
+  /** Append a new timestamped note. LOCAL-ONLY — notes are stored on
+   *  this host and never sent to the portal. The patient page does not
+   *  render notes. */
+  onAddNote: (args: { linkToken: string; jobIds: string[]; content: string }) => void;
   isAddingNote: boolean;
+  /** Locally-stored notes for this link. Fetched from the desktop's
+   *  `/api/tracking-links/notes/:token` endpoint by the parent. */
+  localNotes: { id: string; content: string; createdAt: string }[];
 
   onExtend: (linkId: string) => void;
   isExtending: boolean;
-
-  onSaveInlineSettings: (args: { linkId: string; visibleStatuses: string[]; eta: string | null }) => void;
-  isSavingInlineSettings: boolean;
 
   onRequestRevoke: () => void;
 }
@@ -87,10 +83,9 @@ export function ActiveTrackingLinkPanel({
   trackingDaysUntilExpiry,
   onAddNote,
   isAddingNote,
+  localNotes,
   onExtend,
   isExtending,
-  onSaveInlineSettings,
-  isSavingInlineSettings,
   onRequestRevoke,
 }: Props) {
   const { toast } = useToast();
@@ -100,46 +95,20 @@ export function ActiveTrackingLinkPanel({
   const [urlCopied, setUrlCopied] = useState(false);
   const [messageCopied, setMessageCopied] = useState(false);
 
-  // Inline-edit state — seeded from `link` on first open and on link
-  // changes. Closes whenever the link rotates (parent passes a new
-  // `key` so the component remounts).
-  const [inlineEditOpen, setInlineEditOpen] = useState(false);
-  const [editVisible, setEditVisible] = useState<string[]>([]);
-  const [editEta, setEditEta] = useState<string>("");
-
-  useEffect(() => {
-    if (!inlineEditOpen) return;
-    setEditVisible(
-      link.visibleStatuses.length > 0
-        ? [...link.visibleStatuses]
-        : [...DEFAULT_VISIBLE_STATUSES],
-    );
-    setEditEta(link.eta ? link.eta.slice(0, 10) : "");
-  }, [inlineEditOpen, link.id, link.visibleStatuses, link.eta]);
-
-  // Note composer — fresh blank draft for each new entry. Saved
-  // entries accumulate in `link.notes`; legacy single-string
-  // `customNotes` (from links created before timestamped notes
-  // shipped) surfaces as a synthesized first entry below so the
-  // desktop view mirrors what the patient sees.
+  // Note composer — fresh blank draft for each new entry. Notes are
+  // local-only: they're written to the desktop's SQLite and read back
+  // via the parent's `localNotes` prop. They are NOT shown on the
+  // patient page — the staff sees them as an internal audit log of
+  // what they've considered communicating, not as something the
+  // patient is reading.
   const [noteDraft, setNoteDraft] = useState("");
 
-  // Unified, chronologically-sorted view of notes for display. Pulls
-  // the new `link.notes` array (preferred) OR falls back to the
-  // legacy `link.customNotes` single-string. Once a link has anything
-  // in `notes`, the legacy field is ignored — matches the patient-
-  // page rule so both sides agree on what's visible.
-  const displayedNotes = useMemo<TrackingLinkRecord["notes"]>(() => {
-    if (link.notes.length > 0) {
-      return link.notes.slice().sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-      );
-    }
-    if (link.customNotes && link.customNotes.trim().length > 0) {
-      return [{ id: "legacy", content: link.customNotes, createdAt: link.updatedAt }];
-    }
-    return [];
-  }, [link.notes, link.customNotes, link.updatedAt]);
+  // Chronologically-sorted view for display.
+  const displayedNotes = useMemo(() => {
+    return localNotes.slice().sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+  }, [localNotes]);
 
   // Lazy QR SVG — only generated when the panel is shown to avoid
   // doing crypto-style canvas work on every modal open.
@@ -193,14 +162,16 @@ export function ActiveTrackingLinkPanel({
 
   // Memoized so it can both display in the preview card AND feed the
   // copy handler — keeps the visible message identical to what's
-  // pasted into the patient's SMS / email.
+  // pasted into the patient's SMS / email. ETA is no longer
+  // round-tripped through the portal; staff who want to include an
+  // ETA can edit the message after pasting.
   const renderedMessage = useMemo(() => {
-    const etaFormatted = link.eta ? format(new Date(link.eta), "EEEE, MMMM d") : null;
+    const etaFormatted: string | null = null;
     return renderTrackingMessageTemplate(messageTemplate, {
       url: link.url,
       eta: etaFormatted,
     });
-  }, [link.eta, link.url, messageTemplate]);
+  }, [link.url, messageTemplate]);
 
   const handleCopyMessage = async () => {
     try {
@@ -270,13 +241,6 @@ export function ActiveTrackingLinkPanel({
               >
                 <QrCode className="h-3.5 w-3.5 mr-2" />
                 {qrVisible ? "Hide QR code" : "Show QR code"}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => setInlineEditOpen((v) => !v)}
-                data-testid="menu-edit-settings"
-              >
-                <Sliders className="h-3.5 w-3.5 mr-2" />
-                {inlineEditOpen ? "Close editor" : "Edit settings"}
               </DropdownMenuItem>
               {trackingExpiringSoon && (
                 <DropdownMenuItem
@@ -380,13 +344,6 @@ export function ActiveTrackingLinkPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[calc(11px*var(--ui-scale))] text-ink-faint">
-          <span className="inline-flex items-center gap-1">
-            <Eye className="h-3 w-3" />
-            {link.viewCount} view{link.viewCount === 1 ? "" : "s"}
-          </span>
-          {link.lastViewedAt && (
-            <span>· last {format(new Date(link.lastViewedAt), "MMM d · HH:mm")}</span>
-          )}
           {link.expiresAt && (
             <span
               className={cn(
@@ -422,108 +379,6 @@ export function ActiveTrackingLinkPanel({
         )}
       </section>
 
-      {inlineEditOpen && (
-        <section
-          className="rounded-lg border border-line bg-panel p-4 space-y-3"
-          data-testid="tracking-tab-inline-edit"
-        >
-          <div className="flex items-center justify-between">
-            <h4 className="text-[calc(11px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute m-0 flex items-center gap-1.5">
-              <Sliders className="h-3.5 w-3.5" />
-              Edit tracking settings
-            </h4>
-          </div>
-          <div>
-            <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
-              Visible statuses
-            </Label>
-            <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1.5">
-              {customStatuses
-                .filter((s) => s.id !== "delayed")
-                .map((s) => {
-                  const checked = editVisible.includes(s.id);
-                  const id = `inline-vis-${s.id}`;
-                  return (
-                    <label
-                      key={s.id}
-                      htmlFor={id}
-                      className="flex items-center gap-2 cursor-pointer text-[calc(12.5px*var(--ui-scale))] text-ink"
-                    >
-                      <Checkbox
-                        id={id}
-                        checked={checked}
-                        onCheckedChange={(v) => {
-                          setEditVisible((prev) =>
-                            v
-                              ? Array.from(new Set([...prev, s.id]))
-                              : prev.filter((x) => x !== s.id),
-                          );
-                        }}
-                      />
-                      <span
-                        className="h-1.5 w-1.5 rounded-full shrink-0"
-                        style={{ backgroundColor: s.color }}
-                        aria-hidden
-                      />
-                      <span>{s.label}</span>
-                    </label>
-                  );
-                })}
-            </div>
-          </div>
-          <div>
-            <Label className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold">
-              Estimated ready
-            </Label>
-            <div className="mt-1.5 flex items-center gap-2">
-              <Input
-                type="date"
-                value={editEta}
-                onChange={(e) => setEditEta(e.target.value)}
-                className="max-w-[220px] bg-white"
-                data-testid="tracking-inline-eta"
-              />
-              {editEta && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 px-2 text-[calc(11.5px*var(--ui-scale))] text-ink-mute hover:text-ink"
-                  onClick={() => setEditEta("")}
-                >
-                  Clear
-                </Button>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 pt-1">
-            <Button
-              size="sm"
-              onClick={() =>
-                onSaveInlineSettings({
-                  linkId: link.id,
-                  visibleStatuses: editVisible,
-                  eta: editEta ? new Date(editEta + "T00:00:00").toISOString() : null,
-                })
-              }
-              disabled={isSavingInlineSettings}
-              data-testid="button-save-inline-edit"
-            >
-              <Save className="h-3.5 w-3.5 mr-1.5" />
-              {isSavingInlineSettings ? "Saving…" : "Save"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-ink-mute hover:text-ink"
-              onClick={() => setInlineEditOpen(false)}
-              data-testid="button-cancel-inline-edit"
-            >
-              Cancel
-            </Button>
-          </div>
-        </section>
-      )}
 
       {/* Notes for patient — chronological timeline + composer for a
           new entry. Each saved note becomes its own timestamped row
@@ -565,12 +420,12 @@ export function ActiveTrackingLinkPanel({
 
         <div className="rounded-lg border border-line bg-panel p-3 space-y-2">
           <div className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute leading-snug">
-            Add a new timestamped update to the patient's tracking page — e.g. <em>"Lens was delayed. We expect it to arrive on 6/1."</em> Don't include patient names, phone numbers, or anything clinical.
+            Add a local note about this patient's order — e.g. <em>"Lens was delayed. Called patient on 6/1."</em> Notes stay on this computer and are NOT shown to the patient.
           </div>
           <Textarea
             value={noteDraft}
             onChange={(e) => setNoteDraft(e.target.value)}
-            placeholder="e.g. Lens was delayed — we expect it to arrive on June 1."
+            placeholder="e.g. Called patient — expects pickup next Tuesday."
             maxLength={500}
             className="min-h-[64px] bg-white text-[calc(13px*var(--ui-scale))]"
             data-testid="tracking-note-textarea"
@@ -578,7 +433,7 @@ export function ActiveTrackingLinkPanel({
           <div className="flex items-center justify-between text-[calc(11px*var(--ui-scale))] text-ink-faint">
             <span className="inline-flex items-center gap-1">
               <AlertTriangle className="h-3 w-3 text-warn" aria-hidden />
-              Each saved note is also added to <em>Comments</em> as an audit trail.
+              Notes are stored locally on this host and also appear in <em>Comments</em>.
             </span>
             <span className="tabular-nums">{noteDraft.length}/500</span>
           </div>
@@ -587,7 +442,7 @@ export function ActiveTrackingLinkPanel({
               size="sm"
               onClick={() => {
                 onAddNote({
-                  linkId: link.id,
+                  linkToken: link.token,
                   jobIds: link.jobIds,
                   content: noteDraft.trim(),
                 });

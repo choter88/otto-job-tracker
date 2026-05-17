@@ -40,7 +40,6 @@ import { useToast } from "@/hooks/use-toast";
 import JobCommentsPanel from "@/components/job-comments-panel";
 import TrackingLinkDialog, { type TrackingLinkRecord } from "@/components/tracking-link-dialog";
 import { ActiveTrackingLinkPanel } from "@/components/active-tracking-link-panel";
-import { resolveTrackingLinkDefaultsForJobTypes } from "@shared/tracking-link-defaults";
 import { TRACKER_NOTE_COMMENT_PREFIX } from "@/lib/tracker-note-comment";
 import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { sortByOrder } from "@/lib/custom-list-sort";
@@ -228,21 +227,14 @@ export default function JobDetailsModal({
     },
   });
 
-  // One-click generate for the empty-state path. Resolves the office's
-  // defaults (including per-job-type overrides) through the same shared
-  // helper the server auto-gen path uses, so a one-click link from
-  // here is shape-identical to one auto-generated at job creation.
+  // One-click generate for the empty-state path. Sends only jobIds —
+  // the portal now owns status labeling, visibility config no longer
+  // exists per-link, and notes/ETA stay desktop-local.
   const directGenerateMutation = useMutation({
     mutationFn: async () => {
       if (!job?.id) throw new Error("No job");
-      const { visibleStatuses, customNotes } = resolveTrackingLinkDefaultsForJobTypes(
-        office?.settings,
-        [job.jobType],
-      );
       const res = await apiRequest("POST", "/api/tracking-links", {
         jobIds: [job.id],
-        visibleStatuses,
-        customNotes,
       });
       return res.json();
     },
@@ -253,28 +245,6 @@ export default function JobDetailsModal({
     },
     onError: (error: Error) => {
       toast({ title: "Couldn't generate link", description: error.message, variant: "destructive" });
-    },
-  });
-
-  // Inline-edit save (visible-statuses + ETA). PATCH on the active
-  // link; the broader "edit notes/template/etc" surface lives in the
-  // bigger TrackingLinkDialog still — though only via the empty-state
-  // customize path now, never as an active-link edit.
-  const updateInlineSettingsMutation = useMutation({
-    mutationFn: async (args: { linkId: string; visibleStatuses: string[]; eta: string | null }) => {
-      const res = await apiRequest("PATCH", `/api/tracking-links/${args.linkId}`, {
-        visibleStatuses: args.visibleStatuses,
-        eta: args.eta,
-      });
-      return res.json();
-    },
-    onSuccess: async (data) => {
-      if (data?.link) writeUpdatedLinkToCache(data.link as TrackingLinkRecord);
-      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
-      toast({ title: "Tracking link updated" });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Couldn't update", description: error.message, variant: "destructive" });
     },
   });
 
@@ -299,16 +269,18 @@ export default function JobDetailsModal({
   // revoke+regenerate naturally remounts the panel and clears its
   // internal state.
 
-  // Append a new timestamped note to the tracking link's notes log,
-  // then post an audit comment on the job (the comments panel renders
-  // these distinctly as "Added to patient tracking page" entries).
-  // The portal stores the note in an append-only array so previous
-  // notes stay visible to the patient — no overwrites.
+  // Append a new local note for the tracking link. LOCAL-ONLY: the note
+  // is written to the desktop's SQLite and never sent to the portal.
+  // The patient-facing tracking page does NOT render notes; this is an
+  // internal staff log keyed on the link's token.
   const addTrackingNoteMutation = useMutation({
-    mutationFn: async ({ linkId, jobIds, content }: { linkId: string; jobIds: string[]; content: string }) => {
-      const res = await apiRequest("POST", `/api/tracking-links/${linkId}/notes`, {
+    mutationFn: async ({ linkToken, jobIds, content }: { linkToken: string; jobIds: string[]; content: string }) => {
+      // `:id` segment is vestigial in the route — the handler doesn't
+      // read it. Use "local" as a no-op placeholder.
+      const res = await apiRequest("POST", `/api/tracking-links/local/notes`, {
         content,
         jobIds,
+        linkToken,
       });
       const json = await res.json();
       // Audit comment on the focus job. Use a marker prefix so the
@@ -320,30 +292,35 @@ export default function JobDetailsModal({
           console.error("[tracking note] comment audit failed:", err);
         });
       }
-      return json.link as TrackingLinkRecord;
+      return { note: json.note, linkToken };
     },
-    onSuccess: async (updatedLink) => {
-      // Instant cache update — the global staleTime: Infinity means
-      // invalidate alone is async + perceptibly delayed. Inject the
-      // updated link into the cached list so the panel re-renders
-      // immediately, then invalidate to keep the cache consistent.
-      queryClient.setQueriesData<{ links: TrackingLinkRecord[] }>(
-        { queryKey: ["/api/tracking-links/list"] },
-        (old) => {
-          if (!old?.links) return old;
-          return {
-            links: old.links.map((l) => (l.id === updatedLink.id ? updatedLink : l)),
-          };
-        },
-      );
-      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+    onSuccess: async ({ linkToken }) => {
+      // Re-fetch the local notes for this link so the panel renders
+      // the new entry immediately.
+      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/notes", linkToken] });
       await queryClient.invalidateQueries({ queryKey: ["/api/jobs", job?.id, "comments"] });
-      toast({ title: "Note added", description: "The patient will see your update on their tracking page." });
+      toast({ title: "Note saved locally", description: "Recorded on this computer. Patients do not see this." });
     },
     onError: (error: Error) => {
       toast({ title: "Couldn't save note", description: error.message, variant: "destructive" });
     },
   });
+
+  // Fetch local notes for the currently-active tracking link.
+  const activeLinkToken = activeTrackingLink?.token ?? null;
+  const { data: localNotesData } = useQuery<{ notes: { id: string; content: string; createdAt: string }[] }>({
+    queryKey: ["/api/tracking-links/notes", activeLinkToken],
+    queryFn: async () => {
+      if (!activeLinkToken) return { notes: [] };
+      const res = await fetch(`/api/tracking-links/notes/${encodeURIComponent(activeLinkToken)}`, {
+        credentials: "include",
+      });
+      if (!res.ok) return { notes: [] };
+      return res.json();
+    },
+    enabled: !!activeLinkToken && open,
+  });
+  const localNotes = localNotesData?.notes ?? [];
 
   // Group notes for linked jobs
   const { data: groupNotes = [] } = useQuery<any[]>({
@@ -913,10 +890,9 @@ export default function JobDetailsModal({
                 trackingDaysUntilExpiry={trackingDaysUntilExpiry}
                 onAddNote={(args) => addTrackingNoteMutation.mutate(args)}
                 isAddingNote={addTrackingNoteMutation.isPending}
+                localNotes={localNotes}
                 onExtend={(linkId) => extendTrackingMutation.mutate(linkId)}
                 isExtending={extendTrackingMutation.isPending}
-                onSaveInlineSettings={(args) => updateInlineSettingsMutation.mutate(args)}
-                isSavingInlineSettings={updateInlineSettingsMutation.isPending}
                 onRequestRevoke={() => setConfirmRevokeOpen(true)}
               />
             ) : (

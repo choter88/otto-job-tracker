@@ -264,7 +264,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   // selected job — most jobs only have one anyway, and we pick the
   // most-recent active one if multiple exist.
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
-  const [quickNoteLinkId, setQuickNoteLinkId] = useState<string | null>(null);
+  const [quickNoteTarget, setQuickNoteTarget] = useState<{ linkToken: string; jobIds: string[] } | null>(null);
   const [quickNoteDraft, setQuickNoteDraft] = useState("");
   const tableViewportRef = useRef<HTMLDivElement | null>(null);
   // useState copy of the table element so the dynamic-min-width hook can react
@@ -422,22 +422,31 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     },
   });
 
-  // Worklist row → "Update tracker note" save. Fires the same PATCH the
-  // in-tab note composer fires (customNotes on the active link); the
-  // difference is the entry point — staff don't have to open Job
-  // Details just to push a generic "we're delayed" line to the patient.
+  // Worklist row → "Update tracker note" save. Appends a LOCAL note
+  // for the tracking link. Notes never leave this host — the patient
+  // tracking page does not render notes. The composer entry point
+  // exists so staff can record context inline from the worklist
+  // without opening Job Details.
   const quickNoteMutation = useMutation({
-    mutationFn: async ({ linkId, note }: { linkId: string; note: string }) => {
+    mutationFn: async ({ linkToken, jobIds, note }: { linkToken: string; jobIds: string[]; note: string }) => {
       const trimmed = note.trim();
-      const res = await apiRequest("PATCH", `/api/tracking-links/${linkId}`, {
-        customNotes: trimmed.length > 0 ? trimmed : null,
+      if (trimmed.length === 0) {
+        // Empty note → no-op; this entry point used to also support
+        // clearing a single-string field, but the new model has no
+        // "the" note to clear.
+        return { note: null };
+      }
+      const res = await apiRequest("POST", `/api/tracking-links/local/notes`, {
+        content: trimmed,
+        jobIds,
+        linkToken,
       });
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/list"] });
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/notes", vars.linkToken] });
       setQuickNoteOpen(false);
-      toast({ title: "Tracker note updated", description: "The patient will see your update." });
+      toast({ title: "Note saved locally", description: "Recorded on this computer. Patients do not see this." });
       fetch("/api/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1878,8 +1887,8 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                                 disabled={!link}
                                 onSelect={() => {
                                   if (!link) return;
-                                  setQuickNoteLinkId(link.id);
-                                  setQuickNoteDraft(link.customNotes ?? "");
+                                  setQuickNoteTarget({ linkToken: link.token, jobIds: link.jobIds });
+                                  setQuickNoteDraft("");
                                   setQuickNoteOpen(true);
                                 }}
                                 data-testid={`menu-update-tracker-note-${job.id}`}
@@ -1958,10 +1967,14 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
             <Button
               size="sm"
               onClick={() => {
-                if (!quickNoteLinkId) return;
-                quickNoteMutation.mutate({ linkId: quickNoteLinkId, note: quickNoteDraft });
+                if (!quickNoteTarget) return;
+                quickNoteMutation.mutate({
+                  linkToken: quickNoteTarget.linkToken,
+                  jobIds: quickNoteTarget.jobIds,
+                  note: quickNoteDraft,
+                });
               }}
-              disabled={!quickNoteLinkId || quickNoteMutation.isPending}
+              disabled={!quickNoteTarget || quickNoteMutation.isPending}
               data-testid="button-save-quick-note"
             >
               <Save className="h-3.5 w-3.5 mr-1.5" />
