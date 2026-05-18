@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,18 +9,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, User, Briefcase, Save, Check, ChevronsUpDown, AlertTriangle, Share2, Copy } from "lucide-react";
+import { Loader2, User, Save, Check, ChevronsUpDown, ChevronDown, ChevronRight, AlertTriangle, Share2, Copy, Rows3, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Job, Office, ArchivedJob } from "@shared/schema";
 import { formatPatientDisplayName, normalizePatientNamePart } from "@shared/name-format";
 import { ToastAction } from "@/components/ui/toast";
 import { openJobDetails } from "@/components/spotlight/feature-spotlight-host";
+
+const STICKY_LAB_STORAGE_KEY = "otto.newJob.lastLab";
 
 const jobSchema = z.object({
   patientFirstName: z.string().optional().or(z.literal("")),
@@ -31,9 +34,17 @@ const jobSchema = z.object({
     { message: "Phone number must be at least 10 digits when provided" }
   ),
   jobType: z.string().min(1, "Please select a job type"),
-  status: z.string().min(1, "Please select a status"),
+  // Status defaults to "job_created" on the server when omitted in create
+  // mode — the New Job dialog no longer surfaces this field because a
+  // brand-new job is always "Created". Edit mode still includes it.
+  status: z.string().min(1).default("job_created"),
   orderDestination: z.string().min(1, "Lab is required"),
-  createdAt: z.string().refine(date => new Date(date) <= new Date(), "Creation date cannot be in the future"),
+  // Creation date defaults to today on submit when omitted; edit mode
+  // surfaces it for back-dating.
+  createdAt: z.string().optional().refine(
+    (date) => !date || new Date(date) <= new Date(),
+    "Creation date cannot be in the future",
+  ),
   isRedoJob: z.boolean().default(false),
   originalJobId: z.string().optional(),
   notes: z.string().optional(),
@@ -85,6 +96,16 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
     setCustomColumnValues(source?.customColumnValues || {});
   }, [source, open]);
 
+  // Sticky lab default per workstation. Pre-fills Lab on create-mode
+  // so the common case (every job goes to the same lab in this clinic)
+  // is zero clicks. Saved to localStorage on successful create. Edit
+  // mode ignores this and uses the source's own lab.
+  const stickyLab = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    try { return window.localStorage.getItem(STICKY_LAB_STORAGE_KEY) || ""; }
+    catch { return ""; }
+  }, []);
+
   // Memoize form default values to prevent unnecessary re-creation
   const defaultValues = useMemo(() => ({
     patientFirstName: source?.patientFirstName || "",
@@ -93,12 +114,12 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
     phone: source?.phone || "",
     jobType: source?.jobType || undefined,
     status: readOnly && archivedJob ? archivedJob.finalStatus : source?.status || "job_created",
-    orderDestination: source?.orderDestination || "",
+    orderDestination: source?.orderDestination || (job ? "" : stickyLab),
     createdAt: sourceCreatedAt ? new Date(sourceCreatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
     isRedoJob: source?.isRedoJob || false,
     originalJobId: source?.originalJobId || undefined,
     notes: source?.notes || "",
-  }), [source, archivedJob, readOnly]);
+  }), [source, archivedJob, readOnly, job, stickyLab]);
 
   const form = useForm<JobFormData>({
     resolver: zodResolver(jobSchema),
@@ -136,14 +157,14 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
         phone: source?.phone || "",
         jobType: source?.jobType || undefined,
         status: readOnly && archivedJob ? archivedJob.finalStatus : source?.status || "job_created",
-        orderDestination: source?.orderDestination || "",
+        orderDestination: source?.orderDestination || (job ? "" : stickyLab),
         createdAt: sourceCreatedAt ? new Date(sourceCreatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
         isRedoJob: source?.isRedoJob || false,
         originalJobId: source?.originalJobId || undefined,
         notes: source?.notes || "",
       });
     }
-  }, [job, open, form]);
+  }, [job, open, form, stickyLab]);
 
   const isRedoJob = form.watch("isRedoJob");
   const selectedOriginalJobId = form.watch("originalJobId");
@@ -173,16 +194,17 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
         const res = await apiRequest("PUT", `/api/jobs/${job.id}`, formattedData);
         return res.json();
       } else {
-        // For creates, include createdAt as a Date. The server reads
-        // `generateTrackingLink` and auto-creates (or merges into) a
-        // tracking link in the same handler, returning the URL on the
-        // response. This used to be a follow-up POST from this client;
-        // it now lives on the server so EHR/CSV imports get the same
-        // behavior.
+        // For creates, include createdAt as a Date (defaults to today
+        // when omitted). Status defaults to "job_created" via the
+        // schema. The server reads `generateTrackingLink` and
+        // auto-creates (or merges into) a tracking link in the same
+        // handler, returning the URL on the response.
+        const effectiveCreatedAt = createdAt ? new Date(createdAt) : new Date();
         const res = await apiRequest("POST", "/api/jobs", {
           id: data.clientJobId,
           ...formattedData,
-          createdAt: new Date(createdAt),
+          status: formattedData.status || "job_created",
+          createdAt: effectiveCreatedAt,
           generateTrackingLink: officeAutoGenerate && generateTrackingLink,
         });
         return res.json();
@@ -223,7 +245,7 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
           phone: data.phone ? data.phone.replace(/\D/g, '') : '',
           customColumnValues,
           originalJobId: data.originalJobId || null,
-          createdAt: new Date(data.createdAt),
+          createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
           isRedoJob: data.isRedoJob || false,
         } as unknown as Job;
         
@@ -250,7 +272,16 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
         variant: "destructive",
       });
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
+      // Sticky lab: remember the chosen lab on this workstation so the
+      // next New Job dialog opens with it pre-selected. Skip on edit
+      // — staff editing an existing job's lab shouldn't change the
+      // default for future new jobs.
+      if (!job && variables.orderDestination && typeof window !== "undefined") {
+        try { window.localStorage.setItem(STICKY_LAB_STORAGE_KEY, variables.orderDestination); }
+        catch {}
+      }
+
       // Server-side auto-gen path: the create call returns `trackingLinkUrl`
       // on the response when a link was generated (or an existing
       // sibling-link was extended via the merge path).
@@ -393,6 +424,41 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
   const jobIdentifierMode = (office?.settings as any)?.jobIdentifierMode || "patientName";
   const useTrayNumber = jobIdentifierMode === "trayNumber";
 
+  // Tab state: create-mode shows "Single" and "Bulk"; edit-mode (and
+  // read-only) is single-only.
+  const showTabs = !job && !readOnly;
+  const [activeTab, setActiveTab] = useState<"single" | "bulk">("single");
+  useEffect(() => { if (open) setActiveTab("single"); }, [open]);
+
+  // More-options disclosure state for the Single tab.
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => { if (open) setMoreOpen(false); }, [open]);
+
+  // When the user opts in to "Generate tracking link", surface Phone
+  // inline (an SMS link without a phone is useless). Otherwise Phone
+  // lives inside More options for the rare case staff still wants to
+  // record it.
+  const phoneInline = !job && !readOnly && officeAutoGenerate && generateTrackingLink;
+
+  // Fallback job-type / lab seed lists when the office hasn't configured
+  // any. The Tracking spec assumes a small enumerated set per office;
+  // these mirror the seed defaults the rest of the app uses.
+  const jobTypeOptions: { id: string; label: string }[] = customJobTypes.length > 0
+    ? customJobTypes.map((t: any) => ({ id: t.id, label: t.label }))
+    : [
+        { id: "glasses", label: "Glasses" },
+        { id: "sunglasses", label: "Sunglasses" },
+        { id: "contacts", label: "Contacts" },
+        { id: "prescription", label: "Prescription" },
+      ];
+  const labOptions: { id: string; label: string }[] = customOrderDestinations.length > 0
+    ? customOrderDestinations.map((d: any) => ({ id: d.id, label: d.label }))
+    : [
+        { id: "hoya", label: "Hoya" },
+        { id: "essilor", label: "Essilor" },
+        { id: "zeiss", label: "Zeiss" },
+      ];
+
   // Combine active and archived jobs for selection, excluding the current job being edited
   const allSelectableJobs = [
     ...activeJobs.filter(j => j.id !== job?.id).map(j => ({ ...j, isArchived: false })),
@@ -412,7 +478,10 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-full max-w-[720px] h-[min(760px,calc(100vh-64px))] p-0 overflow-hidden flex flex-col gap-0"
+        className={cn(
+          "w-full p-0 overflow-hidden flex flex-col gap-0",
+          activeTab === "bulk" ? "max-w-[1080px] h-[min(760px,calc(100vh-64px))]" : "max-w-[560px] h-[min(720px,calc(100vh-64px))]",
+        )}
         data-testid="dialog-job"
       >
         <DialogHeader className="px-6 py-[18px] border-b border-line space-y-0">
@@ -422,6 +491,33 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
             </h3>
           </DialogTitle>
         </DialogHeader>
+
+        {showTabs && (
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "single" | "bulk")} className="border-b border-line">
+            <TabsList className="h-9 mx-6 my-2 bg-paper-2 p-0.5 inline-flex">
+              <TabsTrigger value="single" className="text-[calc(12.5px*var(--ui-scale))] gap-1.5 px-3" data-testid="tab-single">
+                <User className="h-3.5 w-3.5" />
+                Single
+              </TabsTrigger>
+              <TabsTrigger value="bulk" className="text-[calc(12.5px*var(--ui-scale))] gap-1.5 px-3" data-testid="tab-bulk">
+                <Rows3 className="h-3.5 w-3.5" />
+                Bulk
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
+
+        {showTabs && activeTab === "bulk" ? (
+          <BulkAddJobsTab
+            jobTypeOptions={jobTypeOptions}
+            labOptions={labOptions}
+            customColumns={customColumns}
+            useTrayNumber={useTrayNumber}
+            stickyLab={stickyLab}
+            officeAutoGenerate={officeAutoGenerate}
+            onClose={() => onOpenChange(false)}
+          />
+        ) : (
 
         <form
           onSubmit={readOnly ? (e) => e.preventDefault() : form.handleSubmit(onSubmit, () => {
@@ -435,14 +531,18 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
           })}
           className="flex-1 flex flex-col min-h-0"
         >
-          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-            <fieldset disabled={readOnly} className={cn("space-y-6 p-0 m-0 border-0", readOnly && "opacity-80")}>
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            <fieldset disabled={readOnly} className={cn("space-y-5 p-0 m-0 border-0", readOnly && "opacity-80")}>
             {/* Patient Information */}
-            <div className="space-y-3.5">
-              <div className="flex items-center gap-2.5">
-                <User className="h-4 w-4 text-ink-mute" />
-                <h4 className={sectionTitle}>{useTrayNumber ? "Job Identifier" : "Patient"}</h4>
-              </div>
+            <div className="space-y-3">
+              {(job || readOnly) && (
+                <div className="flex items-center gap-2">
+                  <User className="h-3.5 w-3.5 text-ink-mute" />
+                  <h4 className="text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold m-0">
+                    {useTrayNumber ? "Identifier" : "Patient"}
+                  </h4>
+                </div>
+              )}
 
               {useTrayNumber ? (
                 <div className="space-y-1.5">
@@ -505,261 +605,366 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
                 </div>
               )}
 
-              <div className="space-y-1.5">
-                <Label htmlFor="phone" className={fieldLabel}>Phone Number</Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  placeholder="(555) 123-4567"
-                  {...form.register("phone")}
-                  onChange={(e) => {
-                    const formatted = formatPhoneNumber(e.target.value);
-                    form.setValue("phone", formatted);
-                  }}
-                  data-testid="input-phone"
-                />
-                {form.formState.errors.phone && (
-                  <p className={fieldError}>
-                    {form.formState.errors.phone.message}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-line-2" />
-
-            {/* Job Details */}
-            <div className="space-y-3.5">
-              <div className="flex items-center gap-2.5">
-                <Briefcase className="h-4 w-4 text-ink-mute" />
-                <h4 className={sectionTitle}>Job Details</h4>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
+              {/* Phone is surfaced inline only when a tracking link is
+                  going out (SMS needs a phone) or when editing. Otherwise
+                  it lives under More options to keep the new-job surface
+                  tight. */}
+              {(phoneInline || job || readOnly) && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="jobType" className={fieldLabel}>Job Type *</Label>
-                <Controller
-                  name="jobType"
-                  control={form.control}
-                  render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger data-testid="select-job-type">
-                        <SelectValue placeholder="Select type..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {customJobTypes.length > 0 ? (
-                          customJobTypes.map((type: any) => (
-                            <SelectItem key={type.id} value={type.id}>
-                              {type.label}
-                            </SelectItem>
-                          ))
-                        ) : (
-                          <>
-                            <SelectItem value="contacts">Contacts</SelectItem>
-                            <SelectItem value="glasses">Glasses</SelectItem>
-                            <SelectItem value="sunglasses">Sunglasses</SelectItem>
-                            <SelectItem value="prescription">Prescription</SelectItem>
-                          </>
-                        )}
-                      </SelectContent>
-                    </Select>
+                  <Label htmlFor="phone" className={fieldLabel}>
+                    Phone Number
+                    {phoneInline && (
+                      <span className="ml-1.5 text-[calc(10.5px*var(--ui-scale))] text-ink-faint font-normal">
+                        for tracking-link SMS
+                      </span>
+                    )}
+                  </Label>
+                  <Input
+                    id="phone"
+                    type="tel"
+                    placeholder="(555) 123-4567"
+                    {...form.register("phone")}
+                    onChange={(e) => {
+                      const formatted = formatPhoneNumber(e.target.value);
+                      form.setValue("phone", formatted);
+                    }}
+                    data-testid="input-phone"
+                  />
+                  {form.formState.errors.phone && (
+                    <p className={fieldError}>
+                      {form.formState.errors.phone.message}
+                    </p>
                   )}
-                />
-                {form.formState.errors.jobType && (
-                  <p className={fieldError}>
-                    {form.formState.errors.jobType.message}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="status" className={fieldLabel}>Status *</Label>
-                <Controller
-                  name="status"
-                  control={form.control}
-                  render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger data-testid="select-status">
-                        <SelectValue placeholder="Select status..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {customStatuses.length > 0 ? (
-                          customStatuses.map((status: any) => (
-                            <SelectItem key={status.id} value={status.id}>
-                              {status.label}
-                            </SelectItem>
-                          ))
-                        ) : (
-                          <>
-                            <SelectItem value="job_created">Created</SelectItem>
-                            <SelectItem value="ordered">Ordered</SelectItem>
-                            <SelectItem value="in_progress">Lab Processing</SelectItem>
-                            <SelectItem value="quality_check">Quality Check</SelectItem>
-                            <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
-                          </>
-                        )}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-                {form.formState.errors.status && (
-                  <p className={fieldError}>
-                    {form.formState.errors.status.message}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="orderDestination" className={fieldLabel}>Lab *</Label>
-                <Controller
-                  name="orderDestination"
-                  control={form.control}
-                  render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger data-testid="select-destination">
-                        <SelectValue placeholder="Select lab..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {customOrderDestinations.length > 0 ? (
-                          customOrderDestinations.map((destination: any) => (
-                            <SelectItem key={destination.id} value={destination.id}>
-                              {destination.label}
-                            </SelectItem>
-                          ))
-                        ) : (
-                          <>
-                            <SelectItem value="hoya">Hoya</SelectItem>
-                            <SelectItem value="essilor">Essilor</SelectItem>
-                            <SelectItem value="zeiss">Zeiss</SelectItem>
-                          </>
-                        )}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-                {form.formState.errors.orderDestination && (
-                  <p className={fieldError}>
-                    {form.formState.errors.orderDestination.message}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="createdAt" className={fieldLabel}>Creation Date *</Label>
-                <Input
-                  id="createdAt"
-                  type="date"
-                  max={new Date().toISOString().split('T')[0]}
-                  {...form.register("createdAt")}
-                  data-testid="input-created-date"
-                />
-                {form.formState.errors.createdAt && (
-                  <p className={fieldError}>
-                    {form.formState.errors.createdAt.message}
-                  </p>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-          </div>
 
-          <div className="border-t border-line-2" />
-
-          {/* Redo Order Option */}
-          <div className="rounded-lg bg-paper-2 border border-line p-4 space-y-4">
-            <div className="flex items-start gap-3">
+            {/* Job Type — button row. A small enumerated set is faster
+                to scan and pick from than a dropdown. Falls back to
+                seed defaults when the office hasn't configured types. */}
+            <div className="space-y-1.5">
+              <Label className={fieldLabel}>Job Type *</Label>
               <Controller
-                name="isRedoJob"
+                name="jobType"
                 control={form.control}
                 render={({ field }) => (
-                  <Checkbox
-                    id="isRedoJob"
-                    checked={field.value}
-                    onCheckedChange={(checked) => {
-                      field.onChange(checked);
-                      if (!checked) {
-                        form.setValue("originalJobId", undefined);
-                      }
-                    }}
-                    className="mt-0.5"
-                    data-testid="checkbox-redo"
-                  />
+                  <div className="flex flex-wrap gap-1.5" data-testid="select-job-type">
+                    {jobTypeOptions.map((opt) => {
+                      const selected = field.value === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => field.onChange(opt.id)}
+                          disabled={readOnly}
+                          className={cn(
+                            "px-3 py-1.5 rounded-md text-[calc(12.5px*var(--ui-scale))] border transition-colors",
+                            selected
+                              ? "bg-otto-accent text-white border-otto-accent"
+                              : "bg-white text-ink border-line hover:bg-paper-2",
+                          )}
+                          data-testid={`button-job-type-${opt.id}`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
               />
-              <div className="space-y-0.5 leading-none">
-                <Label htmlFor="isRedoJob" className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer">
-                  This is a redo order
-                </Label>
-                <p className={sectionDesc.replace("mt-1", "")}>
-                  Link this new job to an original completed or archived order.
-                </p>
-              </div>
+              {form.formState.errors.jobType && (
+                <p className={fieldError}>{form.formState.errors.jobType.message}</p>
+              )}
             </div>
 
-            {/* Original Job Selector - shown when isRedoJob is true */}
-            {isRedoJob && (
-              <div className="space-y-1.5">
-                <Label htmlFor="originalJob" className={fieldLabel}>Select Original Job *</Label>
-                <Controller
-                  name="originalJobId"
-                  control={form.control}
-                  render={({ field }) => (
-                    <Popover open={originalJobOpen} onOpenChange={setOriginalJobOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          role="combobox"
-                          aria-expanded={originalJobOpen}
-                          className="w-full justify-between"
-                          data-testid="button-select-original-job"
-                        >
-                          {selectedJob
-                            ? formatJobDisplay(selectedJob, selectedJob.isArchived)
-                            : "Select original job..."}
-                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                        <Command>
-                          <CommandInput placeholder="Search jobs..." />
-                          <CommandList>
-                            <CommandEmpty>No jobs found.</CommandEmpty>
-                            <CommandGroup>
-                              {allSelectableJobs.map((selectableJob) => (
-                                <CommandItem
-                                  key={selectableJob.id}
-                                  value={formatJobDisplay(selectableJob, selectableJob.isArchived)}
-                                  onSelect={() => {
-                                    field.onChange(selectableJob.id);
-                                    setOriginalJobOpen(false);
-                                  }}
-                                  data-testid={`item-job-${selectableJob.id}`}
-                                >
-                                  <Check
-                                    className={cn(
-                                      "mr-2 h-4 w-4",
-                                      selectedOriginalJobId === selectableJob.id
-                                        ? "opacity-100"
-                                        : "opacity-0"
-                                    )}
-                                  />
-                                  {formatJobDisplay(selectableJob, selectableJob.isArchived)}
-                                </CommandItem>
-                              ))}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
+            {/* Lab — sticky default per workstation (localStorage). The
+                common case (every job goes to the same lab in this
+                clinic) is pre-selected, so the user can skip this
+                field entirely. */}
+            <div className="space-y-1.5">
+              <Label htmlFor="orderDestination" className={fieldLabel}>Lab *</Label>
+              <Controller
+                name="orderDestination"
+                control={form.control}
+                render={({ field }) => (
+                  <Select onValueChange={field.onChange} value={field.value || undefined}>
+                    <SelectTrigger data-testid="select-destination">
+                      <SelectValue placeholder="Select lab..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {labOptions.map((opt) => (
+                        <SelectItem key={opt.id} value={opt.id}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {form.formState.errors.orderDestination && (
+                <p className={fieldError}>{form.formState.errors.orderDestination.message}</p>
+              )}
+            </div>
+
+            {/* Status + Creation Date — only meaningful when editing or
+                reading an archived job. A new job is always
+                "job_created" at today's date; surfacing these as
+                required fields was dead weight. */}
+            {(job || readOnly) && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="status" className={fieldLabel}>Status</Label>
+                  <Controller
+                    name="status"
+                    control={form.control}
+                    render={({ field }) => (
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <SelectTrigger data-testid="select-status">
+                          <SelectValue placeholder="Select status..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {customStatuses.length > 0 ? (
+                            customStatuses.map((status: any) => (
+                              <SelectItem key={status.id} value={status.id}>
+                                {status.label}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <>
+                              <SelectItem value="job_created">Created</SelectItem>
+                              <SelectItem value="ordered">Ordered</SelectItem>
+                              <SelectItem value="in_progress">Lab Processing</SelectItem>
+                              <SelectItem value="quality_check">Quality Check</SelectItem>
+                              <SelectItem value="ready_for_pickup">Ready for Pickup</SelectItem>
+                            </>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="createdAt" className={fieldLabel}>Creation Date</Label>
+                  <Input
+                    id="createdAt"
+                    type="date"
+                    max={new Date().toISOString().split('T')[0]}
+                    {...form.register("createdAt")}
+                    data-testid="input-created-date"
+                  />
+                  {form.formState.errors.createdAt && (
+                    <p className={fieldError}>{form.formState.errors.createdAt.message}</p>
                   )}
-                />
-                {isRedoJob && !selectedOriginalJobId && (
-                  <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute mt-1">
-                    Pick the original job this is a redo of.
-                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* More options — create-mode only. Edit mode surfaces the
+                redo + phone fields inline above. Collapsed by default
+                so the new-job surface stays tight. */}
+            {!job && !readOnly && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setMoreOpen((v) => !v)}
+                  className="flex items-center gap-1.5 px-1 py-1 text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-ink"
+                  data-testid="button-toggle-more-options"
+                >
+                  {moreOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  More options
+                </button>
+
+                {moreOpen && (
+                  <div className="mt-2 space-y-4 rounded-lg bg-paper-2 border border-line p-3.5">
+                    {/* Phone (only if not surfaced inline above). */}
+                    {!phoneInline && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="phone-more" className={fieldLabel}>Phone Number</Label>
+                        <Input
+                          id="phone-more"
+                          type="tel"
+                          placeholder="(555) 123-4567"
+                          {...form.register("phone")}
+                          onChange={(e) => {
+                            const formatted = formatPhoneNumber(e.target.value);
+                            form.setValue("phone", formatted);
+                          }}
+                          data-testid="input-phone-more"
+                        />
+                        {form.formState.errors.phone && (
+                          <p className={fieldError}>{form.formState.errors.phone.message}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Redo order toggle — small switch + conditional
+                        original-job selector. */}
+                    <div className="space-y-2">
+                      <div className="flex items-start gap-2.5">
+                        <Controller
+                          name="isRedoJob"
+                          control={form.control}
+                          render={({ field }) => (
+                            <Checkbox
+                              id="isRedoJob"
+                              checked={field.value}
+                              onCheckedChange={(checked) => {
+                                field.onChange(checked);
+                                if (!checked) form.setValue("originalJobId", undefined);
+                              }}
+                              className="mt-0.5"
+                              data-testid="checkbox-redo"
+                            />
+                          )}
+                        />
+                        <Label htmlFor="isRedoJob" className="text-[calc(12.5px*var(--ui-scale))] font-medium text-ink cursor-pointer m-0">
+                          This is a redo of an existing order
+                        </Label>
+                      </div>
+
+                      {isRedoJob && (
+                        <div className="space-y-1.5">
+                          <Label className={fieldLabel}>Original Job *</Label>
+                          <Controller
+                            name="originalJobId"
+                            control={form.control}
+                            render={({ field }) => (
+                              <Popover open={originalJobOpen} onOpenChange={setOriginalJobOpen}>
+                                <PopoverTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    role="combobox"
+                                    aria-expanded={originalJobOpen}
+                                    className="w-full justify-between"
+                                    data-testid="button-select-original-job"
+                                  >
+                                    {selectedJob
+                                      ? formatJobDisplay(selectedJob, selectedJob.isArchived)
+                                      : "Select original job..."}
+                                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                                  <Command>
+                                    <CommandInput placeholder="Search jobs..." />
+                                    <CommandList>
+                                      <CommandEmpty>No jobs found.</CommandEmpty>
+                                      <CommandGroup>
+                                        {allSelectableJobs.map((selectableJob) => (
+                                          <CommandItem
+                                            key={selectableJob.id}
+                                            value={formatJobDisplay(selectableJob, selectableJob.isArchived)}
+                                            onSelect={() => {
+                                              field.onChange(selectableJob.id);
+                                              setOriginalJobOpen(false);
+                                            }}
+                                            data-testid={`item-job-${selectableJob.id}`}
+                                          >
+                                            <Check
+                                              className={cn(
+                                                "mr-2 h-4 w-4",
+                                                selectedOriginalJobId === selectableJob.id ? "opacity-100" : "opacity-0",
+                                              )}
+                                            />
+                                            {formatJobDisplay(selectableJob, selectableJob.isArchived)}
+                                          </CommandItem>
+                                        ))}
+                                      </CommandGroup>
+                                    </CommandList>
+                                  </Command>
+                                </PopoverContent>
+                              </Popover>
+                            )}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
-          </div>
+
+            {/* Edit-mode keeps the Redo card visible since editing an
+                existing job's redo-link state happens here. */}
+            {(job || readOnly) && (
+              <div className="rounded-lg bg-paper-2 border border-line p-4 space-y-3">
+                <div className="flex items-start gap-2.5">
+                  <Controller
+                    name="isRedoJob"
+                    control={form.control}
+                    render={({ field }) => (
+                      <Checkbox
+                        id="isRedoJob"
+                        checked={field.value}
+                        onCheckedChange={(checked) => {
+                          field.onChange(checked);
+                          if (!checked) form.setValue("originalJobId", undefined);
+                        }}
+                        className="mt-0.5"
+                        data-testid="checkbox-redo"
+                      />
+                    )}
+                  />
+                  <Label htmlFor="isRedoJob" className="text-[calc(13px*var(--ui-scale))] font-medium text-ink cursor-pointer m-0">
+                    This is a redo of an existing order
+                  </Label>
+                </div>
+                {isRedoJob && (
+                  <div className="space-y-1.5">
+                    <Label className={fieldLabel}>Original Job *</Label>
+                    <Controller
+                      name="originalJobId"
+                      control={form.control}
+                      render={({ field }) => (
+                        <Popover open={originalJobOpen} onOpenChange={setOriginalJobOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={originalJobOpen}
+                              className="w-full justify-between"
+                              data-testid="button-select-original-job"
+                            >
+                              {selectedJob
+                                ? formatJobDisplay(selectedJob, selectedJob.isArchived)
+                                : "Select original job..."}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Search jobs..." />
+                              <CommandList>
+                                <CommandEmpty>No jobs found.</CommandEmpty>
+                                <CommandGroup>
+                                  {allSelectableJobs.map((selectableJob) => (
+                                    <CommandItem
+                                      key={selectableJob.id}
+                                      value={formatJobDisplay(selectableJob, selectableJob.isArchived)}
+                                      onSelect={() => {
+                                        field.onChange(selectableJob.id);
+                                        setOriginalJobOpen(false);
+                                      }}
+                                      data-testid={`item-job-${selectableJob.id}`}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          selectedOriginalJobId === selectableJob.id ? "opacity-100" : "opacity-0",
+                                        )}
+                                      />
+                                      {formatJobDisplay(selectableJob, selectableJob.isArchived)}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      )}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
           {/* Custom Columns */}
           {customColumns.length > 0 && (
@@ -909,6 +1114,7 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
             )}
           </div>
         </form>
+        )}
       </DialogContent>
 
       {/* Duplicate Tray Number Alert Dialog */}
@@ -935,5 +1141,413 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
+  );
+}
+
+// ── Bulk add (spreadsheet view) ────────────────────────────────────
+//
+// Spreadsheet-style multi-job creation. Columns are dynamic — driven
+// by the office's job-type / lab options + any active custom columns.
+// Tab/Shift+Tab moves between cells; Enter moves down one row (and
+// adds a fresh row if the user is on the last one). Submit creates
+// every row in parallel against the same POST /api/jobs handler the
+// single-job form uses.
+
+interface BulkAddProps {
+  jobTypeOptions: { id: string; label: string }[];
+  labOptions: { id: string; label: string }[];
+  customColumns: any[];
+  useTrayNumber: boolean;
+  stickyLab: string;
+  officeAutoGenerate: boolean;
+  onClose: () => void;
+}
+
+interface BulkRow {
+  id: string;
+  patientFirstName: string;
+  patientLastName: string;
+  trayNumber: string;
+  phone: string;
+  jobType: string;
+  orderDestination: string;
+  custom: Record<string, string>;
+}
+
+interface BulkColumn {
+  key: string;
+  label: string;
+  width: string;
+  type: "text" | "select" | "tel" | "date" | "number";
+  options?: { id: string; label: string }[];
+  custom?: boolean;
+}
+
+function newBulkRow(stickyLab: string): BulkRow {
+  return {
+    id: (globalThis as any)?.crypto?.randomUUID?.() || `row-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    patientFirstName: "",
+    patientLastName: "",
+    trayNumber: "",
+    phone: "",
+    jobType: "",
+    orderDestination: stickyLab || "",
+    custom: {},
+  };
+}
+
+function BulkAddJobsTab({
+  jobTypeOptions,
+  labOptions,
+  customColumns,
+  useTrayNumber,
+  stickyLab,
+  officeAutoGenerate,
+  onClose,
+}: BulkAddProps) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Build the column layout once per render. Standard columns first,
+  // then any office-defined custom columns. Identifier mode swaps in
+  // tray number for patient name. Phone is always present (optional
+  // per row) since the bulk surface has plenty of horizontal space.
+  const columns: BulkColumn[] = useMemo(() => {
+    const cols: BulkColumn[] = [];
+    if (useTrayNumber) {
+      cols.push({ key: "trayNumber", label: "Tray #", width: "w-[120px]", type: "text" });
+    } else {
+      cols.push({ key: "patientFirstName", label: "First name", width: "w-[140px]", type: "text" });
+      cols.push({ key: "patientLastName", label: "Last name", width: "w-[140px]", type: "text" });
+    }
+    cols.push({ key: "phone", label: "Phone", width: "w-[140px]", type: "tel" });
+    cols.push({ key: "jobType", label: "Job type", width: "w-[140px]", type: "select", options: jobTypeOptions });
+    cols.push({ key: "orderDestination", label: "Lab", width: "w-[140px]", type: "select", options: labOptions });
+    for (const col of customColumns) {
+      cols.push({
+        key: `custom:${col.id}`,
+        label: col.name,
+        width: "w-[140px]",
+        type: col.type === "date" ? "date" : col.type === "number" ? "number" : "text",
+        custom: true,
+      });
+    }
+    return cols;
+  }, [useTrayNumber, jobTypeOptions, labOptions, customColumns]);
+
+  const [rows, setRows] = useState<BulkRow[]>(() => [newBulkRow(stickyLab), newBulkRow(stickyLab), newBulkRow(stickyLab)]);
+  const [generateTrackingLink, setGenerateTrackingLink] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+
+  // Track refs to every input so Tab can move forward and Enter can
+  // move down without leaving the grid. Keyed by `${rowId}:${colKey}`.
+  const cellRefs = useRef<Map<string, HTMLInputElement | HTMLButtonElement>>(new Map());
+
+  const setCell = (rowId: string, key: string, value: string) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== rowId) return r;
+        if (key.startsWith("custom:")) {
+          return { ...r, custom: { ...r.custom, [key.slice("custom:".length)]: value } };
+        }
+        return { ...r, [key]: value };
+      }),
+    );
+    // Auto-append a fresh row when the user starts filling the last one.
+    setRows((prev) => {
+      const last = prev[prev.length - 1];
+      if (last.id !== rowId) return prev;
+      const anyFilled = ["patientFirstName", "patientLastName", "trayNumber", "phone", "jobType"].some(
+        (k) => (last as any)[k]?.trim?.().length > 0,
+      );
+      if (anyFilled && prev.length < 50) {
+        return [...prev, newBulkRow(stickyLab)];
+      }
+      return prev;
+    });
+  };
+
+  const getCell = (row: BulkRow, key: string): string => {
+    if (key.startsWith("custom:")) return row.custom[key.slice("custom:".length)] ?? "";
+    return (row as any)[key] ?? "";
+  };
+
+  const removeRow = (rowId: string) => {
+    setRows((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== rowId)));
+  };
+
+  const focusCell = (rowId: string, colKey: string) => {
+    const el = cellRefs.current.get(`${rowId}:${colKey}`);
+    if (el) {
+      el.focus();
+      if (el instanceof HTMLInputElement) el.select();
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>, rowIdx: number, colIdx: number) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      let nextRow = rows[rowIdx + 1];
+      if (!nextRow) {
+        // On Enter at the last row, append a fresh one and focus the
+        // same column on it. Matches Notion/Airtable behavior.
+        const fresh = newBulkRow(stickyLab);
+        setRows((prev) => [...prev, fresh]);
+        setTimeout(() => focusCell(fresh.id, columns[colIdx].key), 0);
+        return;
+      }
+      focusCell(nextRow.id, columns[colIdx].key);
+    }
+    // Tab is the browser default — we just need each cell to be
+    // focusable in DOM order, which the rendering does.
+  };
+
+  // Validate a row enough to bother submitting it. Empty rows are
+  // skipped silently; partial rows with no identifier OR no jobType
+  // surface an inline error and block submit.
+  const isRowEmpty = (r: BulkRow) => {
+    const identifierEmpty = useTrayNumber ? !r.trayNumber.trim() : (!r.patientFirstName.trim() && !r.patientLastName.trim());
+    return identifierEmpty && !r.jobType && !r.phone.trim() && Object.values(r.custom).every((v) => !v?.trim?.());
+  };
+
+  const validateRow = (r: BulkRow): string | null => {
+    if (isRowEmpty(r)) return null; // skipped, not error
+    if (useTrayNumber) {
+      if (!r.trayNumber.trim()) return "Tray # is required";
+    } else {
+      if (!r.patientFirstName.trim() || !r.patientLastName.trim()) return "First and last name are required";
+    }
+    if (!r.jobType) return "Job type is required";
+    if (!r.orderDestination) return "Lab is required";
+    if (r.phone && r.phone.replace(/\D/g, "").length < 10) return "Phone must be at least 10 digits";
+    return null;
+  };
+
+  const handleSubmit = async () => {
+    const errors: Record<string, string> = {};
+    const toSubmit: BulkRow[] = [];
+    for (const r of rows) {
+      if (isRowEmpty(r)) continue;
+      const err = validateRow(r);
+      if (err) errors[r.id] = err;
+      else toSubmit.push(r);
+    }
+    if (Object.keys(errors).length > 0) {
+      setRowErrors(errors);
+      toast({ title: "Fix errors before creating jobs", description: `${Object.keys(errors).length} row(s) have problems.`, variant: "destructive" });
+      return;
+    }
+    if (toSubmit.length === 0) {
+      toast({ title: "Nothing to create", description: "Add at least one row.", variant: "destructive" });
+      return;
+    }
+    setRowErrors({});
+    setSubmitting(true);
+
+    let okCount = 0;
+    let failCount = 0;
+    for (const r of toSubmit) {
+      const clientJobId = (globalThis as any)?.crypto?.randomUUID?.() || `job-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const customColumnValues: Record<string, any> = {};
+      for (const [k, v] of Object.entries(r.custom)) {
+        if (v?.trim?.().length > 0) customColumnValues[k] = v;
+      }
+      try {
+        await apiRequest("POST", "/api/jobs", {
+          id: clientJobId,
+          patientFirstName: useTrayNumber ? "" : normalizePatientNamePart(r.patientFirstName),
+          patientLastName: useTrayNumber ? "" : normalizePatientNamePart(r.patientLastName),
+          trayNumber: r.trayNumber || null,
+          phone: r.phone ? r.phone.replace(/\D/g, "") : "",
+          jobType: r.jobType,
+          orderDestination: r.orderDestination,
+          status: "job_created",
+          createdAt: new Date(),
+          isRedoJob: false,
+          customColumnValues,
+          generateTrackingLink: officeAutoGenerate && generateTrackingLink,
+        });
+        okCount++;
+      } catch {
+        failCount++;
+      }
+    }
+
+    setSubmitting(false);
+    queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+    if (typeof window !== "undefined" && toSubmit[0]?.orderDestination) {
+      try { window.localStorage.setItem(STICKY_LAB_STORAGE_KEY, toSubmit[0].orderDestination); } catch {}
+    }
+
+    if (failCount === 0) {
+      toast({ title: `Created ${okCount} job${okCount === 1 ? "" : "s"}` });
+      onClose();
+    } else {
+      toast({
+        title: `${okCount} created, ${failCount} failed`,
+        description: "Failed rows were left in the grid.",
+        variant: failCount > okCount ? "destructive" : "default",
+      });
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 overflow-auto px-6 py-5">
+        <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute mb-3 m-0 leading-snug">
+          Add several jobs at once. Tab moves between cells, Enter moves down a row, empty rows are skipped. Job type and Lab are required per row.
+        </p>
+
+        <div className="rounded-lg border border-line overflow-hidden" data-testid="bulk-grid">
+          <table className="w-full border-collapse text-[calc(12.5px*var(--ui-scale))]">
+            <thead className="bg-paper-2 text-ink-mute">
+              <tr>
+                <th className="w-8" />
+                {columns.map((col) => (
+                  <th key={col.key} className={cn("text-left font-medium px-2 py-1.5 border-b border-line", col.width)}>
+                    {col.label}
+                  </th>
+                ))}
+                <th className="w-10" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rIdx) => {
+                const err = rowErrors[row.id];
+                return (
+                  <tr key={row.id} className={cn("group", err && "bg-danger/5")}>
+                    <td className="px-1 text-center text-ink-faint text-[calc(11px*var(--ui-scale))] border-b border-line-2 select-none">
+                      {rIdx + 1}
+                    </td>
+                    {columns.map((col, cIdx) => {
+                      const cellKey = `${row.id}:${col.key}`;
+                      const value = getCell(row, col.key);
+
+                      if (col.type === "select") {
+                        return (
+                          <td key={col.key} className="border-b border-line-2 p-0">
+                            <Select
+                              value={value || undefined}
+                              onValueChange={(v) => setCell(row.id, col.key, v)}
+                            >
+                              <SelectTrigger
+                                className="h-8 border-0 rounded-none bg-transparent shadow-none focus:ring-1 focus:ring-otto-accent text-[calc(12.5px*var(--ui-scale))]"
+                                ref={(el) => {
+                                  if (el) cellRefs.current.set(cellKey, el);
+                                  else cellRefs.current.delete(cellKey);
+                                }}
+                                onKeyDown={(e) => onKeyDown(e, rIdx, cIdx)}
+                                data-testid={`bulk-cell-${col.key}-${rIdx}`}
+                              >
+                                <SelectValue placeholder="—" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {(col.options ?? []).map((opt) => (
+                                  <SelectItem key={opt.id} value={opt.id}>{opt.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                        );
+                      }
+
+                      return (
+                        <td key={col.key} className="border-b border-line-2 p-0">
+                          <input
+                            type={col.type === "tel" ? "tel" : col.type === "date" ? "date" : col.type === "number" ? "number" : "text"}
+                            value={value}
+                            onChange={(e) => {
+                              const next = col.type === "tel"
+                                ? (e.target.value.replace(/[^\d]/g, "").length < 4
+                                    ? e.target.value.replace(/[^\d]/g, "")
+                                    : e.target.value.replace(/[^\d]/g, "").length < 7
+                                      ? `(${e.target.value.replace(/[^\d]/g, "").slice(0, 3)}) ${e.target.value.replace(/[^\d]/g, "").slice(3)}`
+                                      : `(${e.target.value.replace(/[^\d]/g, "").slice(0, 3)}) ${e.target.value.replace(/[^\d]/g, "").slice(3, 6)}-${e.target.value.replace(/[^\d]/g, "").slice(6, 10)}`)
+                                : e.target.value;
+                              setCell(row.id, col.key, next);
+                            }}
+                            ref={(el) => {
+                              if (el) cellRefs.current.set(cellKey, el);
+                              else cellRefs.current.delete(cellKey);
+                            }}
+                            onKeyDown={(e) => onKeyDown(e, rIdx, cIdx)}
+                            className="w-full h-8 px-2 bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-otto-accent focus:bg-white"
+                            data-testid={`bulk-cell-${col.key}-${rIdx}`}
+                          />
+                        </td>
+                      );
+                    })}
+                    <td className="px-1 border-b border-line-2 text-right">
+                      {rows.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeRow(row.id)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-ink-faint hover:text-danger"
+                          aria-label={`Remove row ${rIdx + 1}`}
+                          data-testid={`bulk-remove-${rIdx}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {Object.keys(rowErrors).length > 0 && (
+          <div className="mt-3 space-y-1 text-[calc(11.5px*var(--ui-scale))] text-danger">
+            {rows.map((r, i) => rowErrors[r.id]
+              ? <div key={r.id} data-testid={`bulk-error-${i}`}>Row {i + 1}: {rowErrors[r.id]}</div>
+              : null)}
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setRows((prev) => [...prev, newBulkRow(stickyLab)])}
+            className="text-[calc(12px*var(--ui-scale))] text-ink-mute hover:text-ink px-1 py-1"
+            data-testid="bulk-add-row"
+          >
+            + Add row
+          </button>
+          <span className="text-[calc(11px*var(--ui-scale))] text-ink-faint">
+            {rows.filter((r) => !isRowEmpty(r)).length} non-empty row{rows.filter((r) => !isRowEmpty(r)).length === 1 ? "" : "s"}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 px-6 py-3.5 border-t border-line bg-panel-2 shrink-0">
+        {officeAutoGenerate && (
+          <label className="mr-auto flex items-center gap-2 text-[calc(12.5px*var(--ui-scale))] text-ink-2 cursor-pointer">
+            <Checkbox
+              checked={generateTrackingLink}
+              onCheckedChange={(v) => setGenerateTrackingLink(v === true)}
+              data-testid="bulk-checkbox-generate-tracking-link"
+            />
+            <Share2 className="h-3.5 w-3.5 text-otto-accent" aria-hidden />
+            Generate tracking links
+          </label>
+        )}
+        <Button type="button" variant="outline" size="sm" onClick={onClose} data-testid="bulk-button-cancel">
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleSubmit}
+          disabled={submitting}
+          data-testid="bulk-button-create"
+        >
+          {submitting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+          <Save className="mr-1.5 h-3.5 w-3.5" />
+          Create jobs
+        </Button>
+      </div>
+    </div>
   );
 }
