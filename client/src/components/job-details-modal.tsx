@@ -322,6 +322,55 @@ export default function JobDetailsModal({
   });
   const localNotes = localNotesData?.notes ?? [];
 
+  // Per-link patient-status visibility (local). The active-link panel's
+  // inline editor reads + writes this. Stored locally; the portal never
+  // sees per-link visibility config.
+  const { data: visibilityData } = useQuery<{ visibility: string[] | null }>({
+    queryKey: ["/api/tracking-links/visibility", activeLinkToken],
+    queryFn: async () => {
+      if (!activeLinkToken) return { visibility: null };
+      const res = await fetch(`/api/tracking-links/visibility/${encodeURIComponent(activeLinkToken)}`, {
+        credentials: "include",
+      });
+      if (!res.ok) return { visibility: null };
+      return res.json();
+    },
+    enabled: !!activeLinkToken && open,
+  });
+  const linkVisibility = visibilityData?.visibility as
+    | import("@shared/patient-status-enum").PatientStatus[]
+    | null
+    | undefined;
+
+  // Office-wide synonym choices for previewing the patient label in the
+  // inline editor. Loaded once per modal open; small payload.
+  const { data: labelChoicesData } = useQuery<{ choices: Record<string, number> }>({
+    queryKey: ["/api/tracking-label-choices"],
+    queryFn: async () => {
+      const res = await fetch("/api/tracking-label-choices", { credentials: "include" });
+      if (!res.ok) return { choices: {} };
+      return res.json();
+    },
+    enabled: open,
+  });
+  const labelChoices = labelChoicesData?.choices;
+
+  const saveLinkVisibilityMutation = useMutation({
+    mutationFn: async (args: { linkId: string; visibleStatuses: string[] }) => {
+      const res = await apiRequest("PATCH", `/api/tracking-links/${args.linkId}`, {
+        visibleStatuses: args.visibleStatuses,
+      });
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-links/visibility", activeLinkToken] });
+      toast({ title: "Tracking settings saved" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't save", description: error.message, variant: "destructive" });
+    },
+  });
+
   // Group notes for linked jobs
   const { data: groupNotes = [] } = useQuery<any[]>({
     queryKey: ["/api/link-groups", linkGroupId, "notes"],
@@ -893,6 +942,10 @@ export default function JobDetailsModal({
                 localNotes={localNotes}
                 onExtend={(linkId) => extendTrackingMutation.mutate(linkId)}
                 isExtending={extendTrackingMutation.isPending}
+                linkVisibility={linkVisibility ?? null}
+                labelChoices={labelChoices}
+                onSaveVisibility={(args) => saveLinkVisibilityMutation.mutate(args)}
+                isSavingVisibility={saveLinkVisibilityMutation.isPending}
                 onRequestRevoke={() => setConfirmRevokeOpen(true)}
               />
             ) : (

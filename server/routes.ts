@@ -51,13 +51,15 @@ import {
   portalRevokeTrackingLink,
   portalListTrackingLinks,
   portalAppendTrackingEvent,
+  portalGetTrackingLabelChoices,
+  portalUpdateTrackingLabelChoices,
   portalGetFeatureFlags,
   getLicenseBaseUrl,
   type TrackingLinkRecord,
 } from "./license-client";
 import { scanNotesForPhi } from "./tracking-link-phi-scan";
-import { mapStatusToEnum, type PatientStatus } from "@shared/patient-status-enum";
-import { trackingLinkNotesLocal } from "@shared/schema";
+import { mapStatusToEnum, PATIENT_STATUS_VALUES, type PatientStatus } from "@shared/patient-status-enum";
+import { trackingLinkNotesLocal, trackingLinkVisibilityLocal } from "@shared/schema";
 import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
@@ -449,15 +451,119 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   }
 
   /**
-   * Backfill a freshly-created link with one event per historical status
-   * change across its covered jobs. Each historical status is mapped
-   * through the office's enum mapping; unmappable values are dropped.
-   * Idempotent on the portal side.
+   * Load the per-link visibility set as a Set of canonical enum values.
+   * If no rows exist (never configured), returns null to signal "no
+   * restriction" — callers treat this as "emit everything" for
+   * backward compat. Once a link has any visibility row, the absence
+   * of a row for a given status means "hide".
+   */
+  async function getLinkVisibility(linkToken: string): Promise<Set<PatientStatus> | null> {
+    const rows = await db.select({ status: trackingLinkVisibilityLocal.status })
+      .from(trackingLinkVisibilityLocal)
+      .where(eq(trackingLinkVisibilityLocal.linkToken, linkToken));
+    if (rows.length === 0) return null;
+    return new Set(
+      rows
+        .map((r) => r.status)
+        .filter((s): s is PatientStatus => (PATIENT_STATUS_VALUES as readonly string[]).includes(s)),
+    );
+  }
+
+  /** Replace a link's visibility set wholesale. */
+  async function setLinkVisibility(linkToken: string, statuses: PatientStatus[]) {
+    await db.delete(trackingLinkVisibilityLocal)
+      .where(eq(trackingLinkVisibilityLocal.linkToken, linkToken));
+    if (statuses.length === 0) return;
+    await db.insert(trackingLinkVisibilityLocal).values(
+      statuses.map((status) => ({ linkToken, status })),
+    );
+  }
+
+  /**
+   * Resolve the default visibility set for a new link covering the given
+   * job types. Honors the office's per-job-type overrides + global
+   * defaults from settings.trackingLinkDefaults. Returns the canonical
+   * enum subset — the office's internal status IDs are mapped through
+   * statusEnumMapping before being returned.
+   */
+  async function resolveDefaultVisibilityForJobTypes(
+    officeId: string,
+    jobTypes: string[],
+  ): Promise<PatientStatus[]> {
+    const office = await storage.getOffice(officeId);
+    const settings = (office?.settings || {}) as any;
+    const tld = settings.trackingLinkDefaults || {};
+    const mapping = (tld.statusEnumMapping || {}) as Record<string, string>;
+    const globalDefault: string[] = Array.isArray(tld.visibleStatuses) && tld.visibleStatuses.length > 0
+      ? tld.visibleStatuses
+      : ["ordered", "in_progress", "ready_for_pickup"];
+    const byJobType = (tld.byJobType && typeof tld.byJobType === "object") ? tld.byJobType : {};
+
+    // Union of every covered type's visible-status set, then map to enum.
+    const internal = new Set<string>();
+    for (const t of jobTypes) {
+      const list = Array.isArray(byJobType[t]?.visibleStatuses) && byJobType[t].visibleStatuses.length > 0
+        ? byJobType[t].visibleStatuses
+        : globalDefault;
+      for (const s of list) internal.add(s);
+    }
+
+    const enumSet = new Set<PatientStatus>();
+    for (const s of Array.from(internal)) {
+      const mapped = mapStatusToEnum(s, mapping);
+      if (mapped) enumSet.add(mapped);
+    }
+    // If no statuses survive the enum mapping, fall back to a sensible
+    // default so the patient page isn't blank.
+    if (enumSet.size === 0) {
+      return ["received", "sent_to_lab", "in_progress", "ready_for_pickup"];
+    }
+    return Array.from(enumSet);
+  }
+
+  /**
+   * Fan out a status event to every active tracking link covering the
+   * given job, gating per-link by the office's stored visibility. Does
+   * a single portal list call to discover coverage, then per-link
+   * visibility checks + targeted appendEvent calls. Each call is
+   * fire-and-forget; a flaky portal must not block the local status
+   * change.
+   */
+  async function emitStatusEventForJob(args: {
+    hostToken: string;
+    jobId: string;
+    status: PatientStatus;
+    occurredAt: string;
+  }) {
+    const list = await portalListTrackingLinks({ hostToken: args.hostToken, jobIds: [args.jobId] });
+    if (!list.ok) return;
+    for (const link of list.links) {
+      if (link.revokedAt) continue;
+      const visibility = await getLinkVisibility(link.token);
+      if (visibility !== null && !visibility.has(args.status)) continue;
+      portalAppendTrackingEvent({
+        hostToken: args.hostToken,
+        linkId: link.id,
+        status: args.status,
+        occurredAt: args.occurredAt,
+      }).catch((err) => console.error("[tracking-links] event emit failed:", err?.message || err));
+    }
+  }
+
+  /**
+   * Backfill a freshly-created (or just-merged) link with one event per
+   * historical status change across the given jobs. Each historical
+   * status is mapped through the office's enum mapping; unmappable
+   * values are dropped. Events are filtered against the link's local
+   * visibility set, then sent to the portal targeted at this specific
+   * link (so a job covered by multiple links doesn't get
+   * cross-pollinated). Idempotent on the portal side.
    */
   async function backfillEventsForLink(
     jobRows: typeof jobs.$inferSelect[],
     hostToken: string,
     officeMapping: Record<string, string> | undefined,
+    link: { id: string; token: string },
   ): Promise<void> {
     if (jobRows.length === 0) return;
     const ids = jobRows.map((j) => j.id);
@@ -485,16 +591,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     for (const h of histories) consider(h.newStatus, new Date(h.changedAt));
     for (const j of jobRows) consider(j.status, new Date(j.statusChangedAt));
 
+    const visibility = await getLinkVisibility(link.token);
     const earliestEntries = Array.from(earliest.entries());
-    for (const j of jobRows) {
-      for (const [status, occurredAt] of earliestEntries) {
-        portalAppendTrackingEvent({
-          hostToken,
-          jobId: j.id,
-          status,
-          occurredAt: occurredAt.toISOString(),
-        }).catch((err) => console.error("[tracking-links] backfill failed:", err?.message || err));
-      }
+    for (const [status, occurredAt] of earliestEntries) {
+      if (visibility !== null && !visibility.has(status)) continue;
+      portalAppendTrackingEvent({
+        hostToken,
+        linkId: link.id,
+        status,
+        occurredAt: occurredAt.toISOString(),
+      }).catch((err) => console.error("[tracking-links] backfill failed:", err?.message || err));
     }
   }
 
@@ -563,8 +669,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               });
               if (result.ok) {
                 // The newly-added job needs its history backfilled as
-                // events on the (now expanded) link.
-                await backfillEventsForLink([newJob], hostToken, officeMapping);
+                // events on the (now expanded) link. Existing
+                // visibility on the merge target governs which events
+                // actually reach the portal.
+                await backfillEventsForLink([newJob], hostToken, officeMapping, { id: target.id, token: target.token });
                 return { url: result.link.url, merged: true };
               }
             }
@@ -573,21 +681,23 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       // No manual-link-group merge candidate — create a fresh link.
-      // Initial event is the current status mapped to the enum so the
-      // patient page renders something on first visit.
+      // Seed per-link visibility from the office's per-job-type defaults
+      // so subsequent backfills + status pushes respect what staff has
+      // configured for this job type. Initial event is the current
+      // status mapped to the enum, gated by visibility so a hidden
+      // initial step doesn't sneak through.
+      const defaultVis = await resolveDefaultVisibilityForJobTypes(newJob.officeId, [newJob.jobType]);
       const initialEnum = mapStatusToEnum(newJob.status, officeMapping);
+      const initialPasses = initialEnum && defaultVis.includes(initialEnum);
       const result = await portalCreateTrackingLink({
         hostToken,
         jobIds: [newJob.id],
-        initialStatus: initialEnum ?? undefined,
-        initialStatusAt: initialEnum ? new Date(newJob.statusChangedAt).toISOString() : undefined,
+        initialStatus: initialPasses ? initialEnum : undefined,
+        initialStatusAt: initialPasses ? new Date(newJob.statusChangedAt).toISOString() : undefined,
       });
       if (result.ok) {
-        // Backfill historical status changes (if any) — this is mostly a
-        // no-op for newly-created jobs that only have job_created in
-        // history, but matters for the post-link merge path where the
-        // existing job may already have a history.
-        await backfillEventsForLink([newJob], hostToken, officeMapping);
+        await setLinkVisibility(result.link.token, defaultVis);
+        await backfillEventsForLink([newJob], hostToken, officeMapping, { id: result.link.id, token: result.link.token });
         return { url: result.link.url, merged: false };
       }
       return { url: null, merged: false };
@@ -671,28 +781,42 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       const officeMapping = await getOfficeStatusEnumMapping(user.officeId);
+      // Caller may pass an explicit visibility set (per-link override
+      // from the dialog); otherwise fall back to the office's per-job-
+      // type defaults.
+      const requestedVisible = Array.isArray(req.body?.visibleStatuses)
+        ? (req.body.visibleStatuses as unknown[])
+            .filter((s): s is PatientStatus => typeof s === "string" && (PATIENT_STATUS_VALUES as readonly string[]).includes(s))
+        : null;
+      const visibility = requestedVisible && requestedVisible.length > 0
+        ? requestedVisible
+        : await resolveDefaultVisibilityForJobTypes(user.officeId, localJobs.map((j) => j.jobType));
+
       // Use the most-recently-changed job's current status as the
       // initial event so the patient page renders something on first
-      // visit (rather than an empty timeline).
+      // visit. Gated by visibility — a hidden initial step doesn't
+      // surface.
       const sortedByStatusTime = localJobs.slice().sort(
         (a, b) => new Date(b.statusChangedAt).getTime() - new Date(a.statusChangedAt).getTime(),
       );
       const seedJob = sortedByStatusTime[0];
       const initialEnum = seedJob ? mapStatusToEnum(seedJob.status, officeMapping) : null;
+      const initialPasses = initialEnum && visibility.includes(initialEnum);
 
       const result = await portalCreateTrackingLink({
         hostToken,
         jobIds,
-        initialStatus: initialEnum ?? undefined,
-        initialStatusAt: initialEnum && seedJob ? new Date(seedJob.statusChangedAt).toISOString() : undefined,
+        initialStatus: initialPasses ? initialEnum : undefined,
+        initialStatusAt: initialPasses && seedJob ? new Date(seedJob.statusChangedAt).toISOString() : undefined,
         expiresAt: typeof expiresAt === "string" ? expiresAt : expiresAt === null ? null : undefined,
       });
       if (!result.ok) {
         return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
       }
 
-      // Backfill historical status changes as events.
-      await backfillEventsForLink(localJobs, hostToken, officeMapping);
+      // Seed per-link visibility before backfilling so the backfill respects it.
+      await setLinkVisibility(result.link.token, visibility);
+      await backfillEventsForLink(localJobs, hostToken, officeMapping, { id: result.link.id, token: result.link.token });
 
       // If the caller supplied an initial note, persist it locally.
       if (typeof customNotes === "string" && customNotes.trim().length > 0) {
@@ -718,10 +842,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
     const user = getOfficeUser(req);
     const { id } = req.params;
-    // Only jobIds (coverage) and expiresAt actually change the portal.
-    // visibleStatuses/eta/customNotes from older callers are accepted
-    // but no-ops on the portal side now.
-    const { jobIds, expiresAt } = req.body || {};
+    // jobIds (coverage) + expiresAt go to the portal. visibleStatuses
+    // updates per-link local visibility — the desktop fans out status
+    // events through that filter on every subsequent change.
+    const { jobIds, expiresAt, visibleStatuses } = req.body || {};
     try {
       if (Array.isArray(jobIds)) {
         if (jobIds.length === 0 || jobIds.length > 10) {
@@ -742,6 +866,17 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       if (!result.ok) {
         return res.status(result.error.statusCode || 500).json({ error: result.error.message, code: result.error.code });
       }
+
+      // Persist per-link visibility updates locally. Accept an array of
+      // canonical enum values; silently filter anything out-of-vocab.
+      if (Array.isArray(visibleStatuses)) {
+        const cleaned = visibleStatuses
+          .filter((s): s is PatientStatus =>
+            typeof s === "string" && (PATIENT_STATUS_VALUES as readonly string[]).includes(s),
+          );
+        await setLinkVisibility(result.link.token, cleaned);
+      }
+
       res.json({ link: result.link });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to update tracking link" });
@@ -902,6 +1037,54 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to add note" });
+    }
+  });
+
+  // Read / write the office's per-status patient-label synonym choice.
+  // Labels are portal-owned (finite synonym list defined in code); the
+  // office picks ONE index per status. No free text reaches the portal.
+  app.get("/api/tracking-label-choices", requireAuth, async (_req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) return res.json({ choices: {} });
+    const result = await portalGetTrackingLabelChoices({ hostToken });
+    if (!result.ok) return res.json({ choices: {} });
+    res.json({ choices: result.choices });
+  });
+
+  app.patch("/api/tracking-label-choices", requireAuth, requireNotViewOnly, async (req, res) => {
+    const hostToken = getHostToken();
+    if (!hostToken) return res.status(503).json({ error: "Host is not activated" });
+    const choices = req.body?.choices;
+    if (!choices || typeof choices !== "object") {
+      return res.status(400).json({ error: "choices object is required" });
+    }
+    // Coerce to integer map; the portal does final validation.
+    const cleaned: Record<string, number> = {};
+    for (const [k, v] of Object.entries(choices)) {
+      if (typeof v === "number" && Number.isInteger(v)) cleaned[k] = v;
+    }
+    const result = await portalUpdateTrackingLabelChoices({ hostToken, choices: cleaned });
+    if (!result.ok) {
+      return res.status(result.error.statusCode || 500).json({ error: result.error.message });
+    }
+    res.json({ choices: result.choices });
+  });
+
+  // GET per-link patient-status visibility (local). Returns the array
+  // of canonical enum values the office has chosen to surface on this
+  // link's patient page. Empty array = nothing visible (rare). Null
+  // means the link has never been configured — caller treats as
+  // "show everything" until the office picks.
+  app.get("/api/tracking-links/visibility/:token", requireAuth, async (req, res) => {
+    const token = String(req.params.token || "");
+    if (token.length < 16 || token.length > 64) {
+      return res.status(400).json({ error: "Invalid token" });
+    }
+    try {
+      const visibility = await getLinkVisibility(token);
+      res.json({ visibility: visibility ? Array.from(visibility) : null });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to load visibility" });
     }
   });
 
@@ -1756,7 +1939,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
             .then((mapping) => {
               const mapped = mapStatusToEnum(job.status, mapping);
               if (!mapped) return;
-              return portalAppendTrackingEvent({
+              return emitStatusEventForJob({
                 hostToken: localHostToken,
                 jobId: job.id,
                 status: mapped,
@@ -1844,7 +2027,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           const refreshed = await storage.getJob(jobId);
           const mapped = refreshed ? mapStatusToEnum(refreshed.status, bulkEnumMapping) : null;
           if (refreshed && mapped) {
-            portalAppendTrackingEvent({
+            emitStatusEventForJob({
               hostToken: bulkHostToken,
               jobId: refreshed.id,
               status: mapped,
@@ -2282,7 +2465,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
                     // (now-expanded) link.
                     const newlyAdded = mergedJobs.filter((j) => !target.jobIds.includes(j.id));
                     const mapping = await getOfficeStatusEnumMapping(user.officeId);
-                    await backfillEventsForLink(newlyAdded, hostTokenForMerge, mapping);
+                    await backfillEventsForLink(newlyAdded, hostTokenForMerge, mapping, { id: target.id, token: target.token });
                     trackingLinkConsolidated = true;
                     trackEvent({
                       userId: user.id,

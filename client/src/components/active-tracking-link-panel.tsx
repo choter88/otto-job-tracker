@@ -20,14 +20,17 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Eye,
   QrCode,
   Save,
+  Sliders,
   StickyNote,
   Trash2,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,9 +38,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { renderMessageTemplate as renderTrackingMessageTemplate } from "@/components/customization/tracking-link-defaults-editor";
+import {
+  PATIENT_STATUS_VALUES,
+  patientLabelForStatus,
+  type PatientStatus,
+} from "@shared/patient-status-enum";
 import { cn } from "@/lib/utils";
 import type { Job } from "@shared/schema";
 import type { TrackingLinkRecord } from "@/components/tracking-link-dialog";
@@ -71,6 +80,15 @@ interface Props {
   onExtend: (linkId: string) => void;
   isExtending: boolean;
 
+  /** Per-link patient-status visibility (canonical enum values). Null
+   *  while loading or when the link has never been configured. */
+  linkVisibility: PatientStatus[] | null;
+  /** Office-wide synonym choices for previewing labels in the editor. */
+  labelChoices: Record<string, number> | undefined;
+  /** Persist a new per-link visibility set. */
+  onSaveVisibility: (args: { linkId: string; visibleStatuses: PatientStatus[] }) => void;
+  isSavingVisibility: boolean;
+
   onRequestRevoke: () => void;
 }
 
@@ -86,6 +104,10 @@ export function ActiveTrackingLinkPanel({
   localNotes,
   onExtend,
   isExtending,
+  linkVisibility,
+  labelChoices,
+  onSaveVisibility,
+  isSavingVisibility,
   onRequestRevoke,
 }: Props) {
   const { toast } = useToast();
@@ -94,6 +116,24 @@ export function ActiveTrackingLinkPanel({
   const [qrSvg, setQrSvg] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [messageCopied, setMessageCopied] = useState(false);
+
+  // Inline-edit state for per-link visibility. Seeded from the parent's
+  // `linkVisibility` prop on open + on link change; closed on save /
+  // cancel. Stored locally only — the portal never sees per-link
+  // visibility config (it only sees the events the desktop chooses to
+  // emit). `delayed` is intentionally not toggleable — it surfaces
+  // as a regular timeline event when emitted, and is rarely configured
+  // off.
+  const [inlineEditOpen, setInlineEditOpen] = useState(false);
+  const [editVisible, setEditVisible] = useState<PatientStatus[]>([]);
+  useEffect(() => {
+    if (!inlineEditOpen) return;
+    setEditVisible(
+      Array.isArray(linkVisibility) && linkVisibility.length > 0
+        ? [...linkVisibility]
+        : ["received", "sent_to_lab", "in_progress", "ready_for_pickup"],
+    );
+  }, [inlineEditOpen, link.id, linkVisibility]);
 
   // Note composer — fresh blank draft for each new entry. Notes are
   // local-only: they're written to the desktop's SQLite and read back
@@ -242,6 +282,13 @@ export function ActiveTrackingLinkPanel({
                 <QrCode className="h-3.5 w-3.5 mr-2" />
                 {qrVisible ? "Hide QR code" : "Show QR code"}
               </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => setInlineEditOpen((v) => !v)}
+                data-testid="menu-edit-settings"
+              >
+                <Sliders className="h-3.5 w-3.5 mr-2" />
+                {inlineEditOpen ? "Close editor" : "Edit visible statuses"}
+              </DropdownMenuItem>
               {trackingExpiringSoon && (
                 <DropdownMenuItem
                   onSelect={() => onExtend(link.id)}
@@ -379,6 +426,79 @@ export function ActiveTrackingLinkPanel({
         )}
       </section>
 
+      {/* Inline edit: per-link visibility. Stored locally — the portal
+          never sees per-link visibility config. The desktop's event-
+          emit code paths consult this when deciding whether to push a
+          status change to the portal. Labels shown here preview the
+          office's chosen synonym from settings. */}
+      {inlineEditOpen && (
+        <section
+          className="rounded-lg border border-line bg-panel p-4 space-y-3"
+          data-testid="tracking-tab-inline-edit"
+        >
+          <div className="flex items-center justify-between">
+            <h4 className="text-[calc(11px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute m-0 flex items-center gap-1.5">
+              <Eye className="h-3.5 w-3.5" />
+              Visible to patient
+            </h4>
+          </div>
+          <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute leading-snug m-0">
+            Choose which steps this patient sees on the public tracking page. Stays on this computer.
+          </p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+            {PATIENT_STATUS_VALUES.filter((s) => s !== "delayed" && s !== "cancelled").map((s) => {
+              const checked = editVisible.includes(s);
+              const id = `inline-vis-${s}`;
+              const label = patientLabelForStatus(s, labelChoices);
+              return (
+                <label
+                  key={s}
+                  htmlFor={id}
+                  className="flex items-center gap-2 cursor-pointer text-[calc(12.5px*var(--ui-scale))] text-ink"
+                >
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    onCheckedChange={(v) => {
+                      setEditVisible((prev) =>
+                        v
+                          ? Array.from(new Set([...prev, s])) as PatientStatus[]
+                          : prev.filter((x) => x !== s),
+                      );
+                    }}
+                  />
+                  <span>{label}</span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <Button
+              size="sm"
+              onClick={() =>
+                onSaveVisibility({
+                  linkId: link.id,
+                  visibleStatuses: editVisible,
+                })
+              }
+              disabled={isSavingVisibility}
+              data-testid="button-save-inline-edit"
+            >
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+              {isSavingVisibility ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-ink-mute hover:text-ink"
+              onClick={() => setInlineEditOpen(false)}
+              data-testid="button-cancel-inline-edit"
+            >
+              Cancel
+            </Button>
+          </div>
+        </section>
+      )}
 
       {/* Notes for patient — chronological timeline + composer for a
           new entry. Each saved note becomes its own timestamped row

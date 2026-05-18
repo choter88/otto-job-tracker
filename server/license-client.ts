@@ -582,16 +582,68 @@ export async function portalGetFeatureFlags(payload: {
  * use shared/patient-status-enum.ts → mapStatusToEnum() and skip
  * sending when it returns null.
  */
+/**
+ * Read the office's per-status label-set choice from the portal. Returns
+ * a map of status → index; missing keys mean "canonical (0)". The desktop
+ * caches this for settings UI seeding and for previewing the patient
+ * label in the office's chosen synonym.
+ */
+export async function portalGetTrackingLabelChoices(payload: {
+  hostToken: string;
+}): Promise<{ ok: true; choices: Record<string, number> } | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/tracking-links/label-choices", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  const choices: Record<string, number> = {};
+  if (json && typeof json.choices === "object" && json.choices !== null) {
+    for (const [k, v] of Object.entries(json.choices)) {
+      if (typeof v === "number" && Number.isInteger(v)) choices[k] = v;
+    }
+  }
+  return { ok: true, choices };
+}
+
+/**
+ * Persist the office's per-status label-set choice on the portal. The
+ * portal validates indices against the synonym list and silently drops
+ * any out-of-range entries — desktop UI should never offer them.
+ */
+export async function portalUpdateTrackingLabelChoices(payload: {
+  hostToken: string;
+  choices: Record<string, number>;
+}): Promise<{ ok: true; choices: Record<string, number> } | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/tracking-links/label-choices", base);
+  const { status, json, networkError } = await patchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  const choices: Record<string, number> = {};
+  if (json && typeof json.choices === "object" && json.choices !== null) {
+    for (const [k, v] of Object.entries(json.choices)) {
+      if (typeof v === "number" && Number.isInteger(v)) choices[k] = v;
+    }
+  }
+  return { ok: true, choices };
+}
+
 export async function portalAppendTrackingEvent(payload: {
   hostToken: string;
-  jobId: string;
   status: PatientStatus;
   occurredAt: string;
+  // Either linkId (targeted) or jobId (fan out to all covering links).
+  // Prefer linkId so per-link visibility gating works.
+  linkId?: string;
+  jobId?: string;
 }): Promise<{ ok: true; updatedLinks: number } | { ok: false; error: LicenseRequestError }> {
   const base = getLicenseBaseUrl();
   const url = new URL("/license/v1/tracking-links/events", base);
   if (!(PATIENT_STATUS_VALUES as readonly string[]).includes(payload.status)) {
     return { ok: false, error: { statusCode: 400, code: "INVALID_STATUS", message: "status must be a canonical enum value" } };
+  }
+  if (!payload.linkId && !payload.jobId) {
+    return { ok: false, error: { statusCode: 400, code: "MISSING_TARGET", message: "linkId or jobId required" } };
   }
   const { status, json, networkError } = await fetchJson(url, payload);
   if (networkError) return { ok: false, error: networkError };

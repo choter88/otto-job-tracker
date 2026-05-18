@@ -17,13 +17,21 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ChevronRight, ShieldCheck, Share2 } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_MESSAGE_TEMPLATE,
   DEFAULT_VISIBLE_STATUSES,
   type TrackingLinkDefaults,
 } from "@shared/tracking-link-defaults";
+import {
+  PATIENT_STATUS_VALUES,
+  PATIENT_STATUS_SYNONYMS,
+  type PatientStatus,
+} from "@shared/patient-status-enum";
 import { AutoGenerateTrackingToggle } from "./auto-generate-tracking-toggle";
 
 // Re-export the shared constants/types so existing imports from this
@@ -32,17 +40,6 @@ import { AutoGenerateTrackingToggle } from "./auto-generate-tracking-toggle";
 // offices from the same defaults the UI uses.
 export { DEFAULT_MESSAGE_TEMPLATE, DEFAULT_VISIBLE_STATUSES };
 export type { TrackingLinkDefaults };
-
-const PATIENT_FACING_STATUS_LABELS: Record<string, string> = {
-  job_created: "Order received",
-  ordered: "Sent to lab",
-  in_progress: "In production",
-  delayed: "Delayed",
-  quality_check: "Final quality check",
-  ready_for_pickup: "Ready for pickup",
-  completed: "Picked up",
-  cancelled: "Cancelled",
-};
 
 interface Props {
   customStatuses: { id: string; label: string; color: string; order: number }[];
@@ -59,10 +56,6 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
     [value.visibleStatuses],
   );
   const visibleSet = new Set(visible);
-  const labelOverrides = value.patientStatusLabels ?? {};
-  const hasAnyOverride = Object.values(labelOverrides).some(
-    (s) => typeof s === "string" && s.trim().length > 0,
-  );
 
   return (
     <div className="space-y-4">
@@ -131,59 +124,7 @@ export default function TrackingLinkDefaultsEditor({ customStatuses, customJobTy
           })}
         </div>
 
-        {/* Patient-facing label overrides — power user feature tucked
-            behind a disclosure so the common case (just toggle on/off)
-            stays compact. Expand only when an office wants to rename
-            a status for the patient-facing page. */}
-        <Collapsible defaultOpen={hasAnyOverride}>
-          <CollapsibleTrigger
-            className="w-full mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[calc(12px*var(--ui-scale))] text-ink-mute hover:bg-paper-2 group"
-            data-testid="tracking-customize-patient-labels-trigger"
-          >
-            <ChevronRight
-              className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90"
-              aria-hidden
-            />
-            <span>Customize patient-facing labels</span>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="pt-1.5">
-            <div className="rounded-lg border border-line bg-panel divide-y divide-line-2">
-              {customStatuses.map((s) => {
-                const defaultPatientLabel = PATIENT_FACING_STATUS_LABELS[s.id] ?? s.label;
-                const overrideValue = labelOverrides[s.id] ?? "";
-                return (
-                  <div
-                    key={s.id}
-                    className="flex items-center gap-2.5 px-3 py-1.5"
-                  >
-                    <span
-                      className="h-1.5 w-1.5 rounded-full shrink-0"
-                      style={{ backgroundColor: s.color }}
-                      aria-hidden
-                    />
-                    <span className="text-[calc(12.5px*var(--ui-scale))] text-ink-2 min-w-[110px]">
-                      {s.label}
-                    </span>
-                    <Input
-                      value={overrideValue}
-                      onChange={(e) => {
-                        const labels = { ...labelOverrides };
-                        const v = e.target.value;
-                        if (v.trim().length === 0) delete labels[s.id];
-                        else labels[s.id] = v;
-                        onChange({ ...value, patientStatusLabels: labels });
-                      }}
-                      placeholder={defaultPatientLabel}
-                      maxLength={60}
-                      className="h-7 text-[calc(12px*var(--ui-scale))] bg-white flex-1"
-                      data-testid={`patient-label-input-${s.id}`}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+        <PatientLabelSynonymPicker />
       </section>
 
       <PerJobTypeOverridesSection
@@ -372,4 +313,140 @@ export function renderMessageTemplate(
     .replace(/\{url\}/g, args.url)
     .replace(/\{eta\}/g, args.eta ?? "")
     .trim();
+}
+
+/**
+ * Patient-facing label picker. Each canonical status has a finite list
+ * of synonyms (defined portal-side); the office picks ONE per status.
+ * No free text reaches the portal — only an integer index. Storage is
+ * portal-side (per-office row), not in the local office.settings, so
+ * this component owns its own data fetch/save loop independent of the
+ * surrounding TrackingLinkDefaults form.
+ */
+function PatientLabelSynonymPicker() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data, isLoading } = useQuery<{ choices: Record<string, number> }>({
+    queryKey: ["/api/tracking-label-choices"],
+    queryFn: async () => {
+      const res = await fetch("/api/tracking-label-choices", { credentials: "include" });
+      if (!res.ok) return { choices: {} };
+      return res.json();
+    },
+  });
+  const serverChoices = data?.choices ?? {};
+
+  const [draft, setDraft] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setDraft(serverChoices);
+    // Effect intentionally re-runs only when server state shifts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (choices: Record<string, number>) => {
+      const res = await apiRequest("PATCH", "/api/tracking-label-choices", { choices });
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/tracking-label-choices"] });
+      toast({ title: "Patient-facing labels saved" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't save labels", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const dirty = useMemo(() => {
+    const keys = Array.from(new Set([...Object.keys(draft), ...Object.keys(serverChoices)]));
+    for (const k of keys) {
+      if ((draft[k] ?? 0) !== (serverChoices[k] ?? 0)) return true;
+    }
+    return false;
+  }, [draft, serverChoices]);
+
+  const hasAnyOverride = useMemo(
+    () => Object.values(serverChoices).some((v) => typeof v === "number" && v !== 0),
+    [serverChoices],
+  );
+
+  return (
+    <Collapsible defaultOpen={hasAnyOverride}>
+      <CollapsibleTrigger
+        className="w-full mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[calc(12px*var(--ui-scale))] text-ink-mute hover:bg-paper-2 group"
+        data-testid="tracking-customize-patient-labels-trigger"
+      >
+        <ChevronRight
+          className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90"
+          aria-hidden
+        />
+        <span>Customize patient-facing labels</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-1.5 space-y-2">
+        <p className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute leading-snug m-0 px-0.5">
+          Pick the wording patients see for each step. Choices are from a finite vocabulary — no free text — so the page stays consistent and outside HIPAA scope.
+        </p>
+        <div className="rounded-lg border border-line bg-panel divide-y divide-line-2" data-testid="tracking-label-synonym-picker">
+          {PATIENT_STATUS_VALUES.map((status) => {
+            const synonyms = PATIENT_STATUS_SYNONYMS[status];
+            const chosen = draft[status] ?? 0;
+            return (
+              <div key={status} className="flex items-center gap-2.5 px-3 py-2">
+                <span className="text-[calc(12.5px*var(--ui-scale))] text-ink-2 min-w-[130px] capitalize">
+                  {status.replace(/_/g, " ")}
+                </span>
+                <div className="flex flex-wrap gap-1.5 flex-1">
+                  {synonyms.map((label, idx) => {
+                    const selected = chosen === idx;
+                    return (
+                      <button
+                        key={`${status}-${idx}`}
+                        type="button"
+                        onClick={() => setDraft((prev) => ({ ...prev, [status]: idx }))}
+                        className={cn(
+                          "px-2.5 py-1 rounded-md text-[calc(12px*var(--ui-scale))] border transition-colors",
+                          selected
+                            ? "bg-otto-accent text-white border-otto-accent"
+                            : "bg-white text-ink border-line hover:bg-paper-2",
+                        )}
+                        data-testid={`label-syn-${status}-${idx}`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex items-center justify-end gap-2 pt-1">
+          {dirty && (
+            <button
+              type="button"
+              className="text-[calc(11.5px*var(--ui-scale))] text-ink-mute hover:text-ink"
+              onClick={() => setDraft(serverChoices)}
+            >
+              Discard
+            </button>
+          )}
+          <button
+            type="button"
+            className={cn(
+              "px-2.5 py-1 rounded-md text-[calc(12px*var(--ui-scale))] font-medium",
+              dirty && !saveMutation.isPending
+                ? "bg-otto-accent text-white hover:opacity-95"
+                : "bg-paper-2 text-ink-faint cursor-not-allowed",
+            )}
+            disabled={!dirty || saveMutation.isPending || isLoading}
+            onClick={() => saveMutation.mutate(draft)}
+            data-testid="tracking-label-synonym-save"
+          >
+            {saveMutation.isPending ? "Saving…" : "Save labels"}
+          </button>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }

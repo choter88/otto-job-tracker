@@ -28,6 +28,37 @@ export const PATIENT_STATUS_VALUES: readonly PatientStatus[] = [
   "cancelled",
 ] as const;
 
+// Finite synonyms per status. Mirror of
+// otto-web/server/portal/tracking-status-map.ts → PATIENT_STATUS_SYNONYMS.
+// The office picks ONE index per status in Settings → Tracking Links;
+// the index is sent to the portal and used to render the patient page.
+// Index 0 is the canonical default. Keep this list in sync with the
+// portal — short, changes rarely.
+export const PATIENT_STATUS_SYNONYMS: Record<PatientStatus, readonly string[]> = {
+  received: ["Order received", "We've got your order", "Order placed"],
+  sent_to_lab: ["Sent to lab", "At the lab", "With the lab"],
+  in_progress: ["In production", "Being made", "Crafting your order"],
+  quality_check: ["Final quality check", "Quality check", "Final inspection"],
+  ready_for_pickup: ["Ready for pickup", "Ready to collect", "Ready for you"],
+  completed: ["Picked up", "Order complete", "All done"],
+  delayed: ["Delayed", "Running late", "Held up"],
+  cancelled: ["Cancelled", "Order cancelled", "No longer in progress"],
+};
+
+export function patientLabelForStatus(
+  status: PatientStatus,
+  choices?: Record<string, number> | null,
+): string {
+  const synonyms = PATIENT_STATUS_SYNONYMS[status];
+  if (choices && typeof choices === "object") {
+    const idx = choices[status];
+    if (Number.isInteger(idx) && idx >= 0 && idx < synonyms.length) {
+      return synonyms[idx];
+    }
+  }
+  return synonyms[0];
+}
+
 // Maps every standard Otto status id (and a few common variants) onto
 // the canonical enum. Office-custom status ids are not present here —
 // the desktop's mapStatusToEnum() handles them via the office's
