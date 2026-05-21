@@ -20,6 +20,7 @@ import {
   Check,
   Tablet,
   Share2,
+  Monitor,
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
 import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, DEFAULT_DESTINATION_COLORS, hexToHSL, normalizeToHex } from "@/lib/default-colors";
@@ -28,6 +29,7 @@ import CustomColumnsEditor, { type CustomColumn, cleanColumnsForSave } from "./c
 import IdentifierModeEditor, { type JobIdentifierMode } from "./customization/identifier-mode-editor";
 import TrackingLinkDefaultsEditor, { type TrackingLinkDefaults, DEFAULT_VISIBLE_STATUSES } from "./customization/tracking-link-defaults-editor";
 import SetupWizardCard from "./setup-wizard-card";
+import UninstallClientCard from "./uninstall-client-card";
 import type { Office } from "@shared/schema";
 
 interface SettingsModalProps {
@@ -275,6 +277,28 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
     enabled: !!user?.officeId && open,
   });
 
+  // Desktop config (only present when running inside Electron). Used to
+  // surface the "This Computer" tab only on a Client install — the
+  // uninstall action wipes local creds, which would corrupt a Host.
+  const [desktopMode, setDesktopMode] = useState<string | null>(null);
+  const [desktopHostUrl, setDesktopHostUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!open) return;
+    const bridge = (window as any)?.otto;
+    if (!bridge?.getConfig) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await bridge.getConfig();
+        if (cancelled) return;
+        setDesktopMode(typeof cfg?.mode === "string" ? cfg.mode : null);
+        setDesktopHostUrl(typeof cfg?.hostUrl === "string" ? cfg.hostUrl : undefined);
+      } catch { /* ignore — tab just won't render */ }
+    })();
+    return () => { cancelled = true; };
+  }, [open]);
+  const isClientMode = desktopMode === "client";
+
   const updateOfficeMutation = useMutation({
     mutationFn: async (settings: any) => {
       const res = await apiRequest("PUT", `/api/offices/${user?.officeId}`, {
@@ -460,6 +484,12 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
                   <Tablet className="h-4 w-4" />
                   <span className="truncate">Tablet</span>
                 </TabsTrigger>
+                {isClientMode && (
+                  <TabsTrigger value="thisComputer" className={tabTriggerClass} data-testid="tab-this-computer">
+                    <Monitor className="h-4 w-4" />
+                    <span className="truncate">This Computer</span>
+                  </TabsTrigger>
+                )}
               </TabsList>
             </div>
 
@@ -530,34 +560,55 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
                 <TabsContent value="tablet" className="mt-0">
                   <TabletSettingsContent />
                 </TabsContent>
+
+                {isClientMode && (
+                  <TabsContent value="thisComputer" className="mt-0">
+                    <div className="space-y-5">
+                      <div>
+                        <h3 className="font-display text-[calc(18px*var(--ui-scale))] font-medium tracking-[-0.02em] text-ink m-0">
+                          This Computer
+                        </h3>
+                        <p className="text-[calc(13px*var(--ui-scale))] text-ink-mute mt-1">
+                          Settings that affect only this Otto install, not your whole office.
+                        </p>
+                      </div>
+                      <UninstallClientCard hostUrl={desktopHostUrl} />
+                    </div>
+                  </TabsContent>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Footer */}
-          <div className="flex gap-3 border-t border-line bg-panel-2 px-6 py-3.5">
-            <Button
-              onClick={handleSaveSettings}
-              className="flex-1"
-              disabled={updateOfficeMutation.isPending}
-              data-testid="button-save-settings"
-            >
-              {updateOfficeMutation.isPending ? (
-                <>
-                  <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-primary" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save Changes
-                </>
-              )}
-            </Button>
-            <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-settings">
-              Cancel
-            </Button>
-          </div>
+          {/* Footer. Hidden on the "This Computer" tab — its action
+              (Uninstall) is destructive and lives on its own
+              destructive button, so showing a save/cancel pair next
+              to it would be confusing. */}
+          {activeTab !== "thisComputer" && (
+            <div className="flex gap-3 border-t border-line bg-panel-2 px-6 py-3.5">
+              <Button
+                onClick={handleSaveSettings}
+                className="flex-1"
+                disabled={updateOfficeMutation.isPending}
+                data-testid="button-save-settings"
+              >
+                {updateOfficeMutation.isPending ? (
+                  <>
+                    <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-primary" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" />
+                    Save Changes
+                  </>
+                )}
+              </Button>
+              <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-settings">
+                Cancel
+              </Button>
+            </div>
+          )}
         </Tabs>
       </DialogContent>
 

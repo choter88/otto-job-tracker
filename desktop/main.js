@@ -2038,6 +2038,254 @@ ipcMain.handle("otto:sms:draft:open", async (_event, payload) => {
   return await openSmsDraft(payload || {});
 });
 
+/**
+ * Client-side wipe for "Uninstall and remove from account".
+ *
+ * Called AFTER the Client has already POSTed /api/devices/self/release
+ * to the Host (which frees the seat). This handler removes everything
+ * that ties THIS computer to the office: config file (mode, hostUrl,
+ * pairing code, trusted cert fingerprint), browser session storage
+ * (cookies, localStorage including the deviceId, IndexedDB), and the
+ * TLS / outbox / session-secret blobs under userData.
+ *
+ * Doesn't try to delete the Otto.app binary itself — Electron can't
+ * remove its own /Applications entry while running. The Client UI
+ * shows OS-specific "drag to Trash" instructions, then this handler
+ * quits the app. On next launch (if any), Otto goes through setup
+ * fresh.
+ */
+/**
+ * Persist a recovery token the Client just received over WS from
+ * its Host. The token never lives in the renderer's localStorage —
+ * the main process holds it in the Electron config so renderer XSS
+ * can't lift it. Idempotent: a Client that already has a token gets
+ * the new one (Host re-issuance is rare but harmless).
+ */
+ipcMain.handle("otto:client:recovery:store", async (_event, payload) => {
+  try {
+    const cfg = _readConfig();
+    if (!cfg || cfg.mode !== "client") {
+      return { ok: false, error: "Only Clients can store a recovery token." };
+    }
+    const token = typeof payload?.recoveryToken === "string" ? payload.recoveryToken : "";
+    if (!token || token.length > 256) {
+      return { ok: false, error: "Invalid recovery token." };
+    }
+    const next = { ...cfg, clientRecoveryToken: token };
+    _writeConfig(next);
+    return { ok: true };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
+});
+
+/**
+ * Ask the portal for the office's CURRENT Host discovery info using
+ * this Client's stored recovery token. The renderer calls this when
+ * its WebSocket reconnects keep failing — usually because the Host
+ * has been replaced and the stored hostUrl/fingerprint are stale.
+ *
+ * Returns the discovery payload (hostUrl, fingerprint256,
+ * hostReplacementPending, updatedAt) and a `changed` boolean
+ * indicating whether the portal's view differs from what this
+ * Client is currently configured with. The renderer uses that to
+ * decide whether to show the "Reconnect to new Host?" banner.
+ *
+ * The recovery token never crosses the IPC boundary — only its
+ * effects do.
+ */
+ipcMain.handle("otto:client:recovery:lookup", async (_event) => {
+  try {
+    const cfg = _readConfig();
+    if (!cfg || cfg.mode !== "client") {
+      return { ok: false, error: "Only Clients have a recovery token." };
+    }
+    const token = cfg.clientRecoveryToken;
+    if (!token) {
+      return { ok: false, error: "No recovery token on this Client. Re-pair via setup if your Host changed." };
+    }
+
+    const base = getPortalBaseUrl();
+    const url = new URL("/license/v1/client-recovery/lookup", base);
+    const body = JSON.stringify({ recoveryToken: token });
+    const result = await new Promise((resolve, reject) => {
+      const mod = url.protocol === "https:" ? https : http;
+      const req = mod.request(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+        timeout: 10000,
+      }, (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          try { resolve({ status: res.statusCode, json: JSON.parse(data) }); }
+          catch { resolve({ status: res.statusCode, json: null }); }
+        });
+      });
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("Portal lookup timed out.")); });
+      req.write(body);
+      req.end();
+    });
+
+    if (result.status === 410) {
+      // Office revoked this token. The Client has been kicked off
+      // the account; renderer should show "contact your office".
+      return { ok: false, code: "REVOKED", error: "This Client was removed from the office. Contact your office to re-pair." };
+    }
+    if (result.status < 200 || result.status >= 300) {
+      return { ok: false, error: result.json?.error || `Portal returned ${result.status}.` };
+    }
+
+    const portalHostUrl = typeof result.json?.hostUrl === "string" ? result.json.hostUrl : null;
+    const portalFingerprint = typeof result.json?.fingerprint256 === "string" ? result.json.fingerprint256 : null;
+    const portalPairingCode = typeof result.json?.pairingCode === "string" ? result.json.pairingCode : null;
+    const changed = (
+      (portalHostUrl && portalHostUrl !== cfg.hostUrl) ||
+      (portalFingerprint && portalFingerprint !== cfg.trustedFingerprint256)
+    );
+    return {
+      ok: true,
+      changed: !!changed,
+      hostUrl: portalHostUrl,
+      fingerprint256: portalFingerprint,
+      pairingCode: portalPairingCode,
+      hostReplacementPending: !!result.json?.hostReplacementPending,
+      updatedAt: typeof result.json?.updatedAt === "string" ? result.json.updatedAt : null,
+    };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
+});
+
+/**
+ * Apply a discovered Host change: update the Client's config to point
+ * at the new hostUrl, trust the new fingerprint, and reload the
+ * BrowserWindow so the session reconnects fresh against the new
+ * server. Only runnable in Client mode. The renderer calls this
+ * after the user confirms the "Reconnect to new Host?" banner — the
+ * one-tap path requested by spec.
+ */
+ipcMain.handle("otto:client:recovery:apply", async (_event, payload) => {
+  try {
+    const cfg = _readConfig();
+    if (!cfg || cfg.mode !== "client") {
+      return { ok: false, error: "Only Clients can apply a recovery." };
+    }
+    const newHostUrl = typeof payload?.hostUrl === "string" ? payload.hostUrl.trim() : "";
+    const newFingerprint = typeof payload?.fingerprint256 === "string" ? payload.fingerprint256.trim() : "";
+    if (!newHostUrl || !newFingerprint) {
+      return { ok: false, error: "Missing new host URL or fingerprint." };
+    }
+
+    try { new URL(newHostUrl); }
+    catch { return { ok: false, error: "Portal returned an invalid host URL." }; }
+
+    const next = {
+      ...cfg,
+      hostUrl: newHostUrl,
+      trustedFingerprint256: newFingerprint,
+    };
+    _writeConfig(next);
+
+    // Reload the BrowserWindow so the renderer reconnects to the new
+    // origin. We don't restart the whole Electron process — the
+    // config write + reload is enough, and avoids a jarring full
+    // relaunch flicker.
+    try {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win) win.webContents.reload();
+    } catch { /* ignore */ }
+
+    return { ok: true };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
+});
+
+ipcMain.handle("otto:client:release", async (_event) => {
+  try {
+    const cfg = _readConfig();
+    // Fail CLOSED on anything that isn't a confirmed Client install:
+    //   - missing config (could be a half-set-up Host)
+    //   - mode field missing (older versions before mode was tracked)
+    //   - mode === "host" (the very thing we're protecting against)
+    // Wiping a live Host's userData would destroy the office's
+    // SQLite + certs irrecoverably. Host removal must go through the
+    // portal's Replace Host flow, which deactivates the host token
+    // server-side and issues a single-use claim code to the
+    // replacement computer.
+    if (!cfg || cfg.mode !== "client") {
+      return { ok: false, error: "Host removal must go through the portal — use Replace Host." };
+    }
+
+    // Belt-and-braces: if the local SQLite file exists and has data,
+    // this machine has hosted office data at some point. Refuse to
+    // wipe even if mode somehow flipped to "client" by mistake.
+    try {
+      const sqlitePath = _getSqlitePath();
+      if (fs.existsSync(sqlitePath)) {
+        const stat = fs.statSync(sqlitePath);
+        // 64 KB threshold — SQLite header alone is well under this;
+        // a real office with even a handful of jobs is far larger.
+        if (stat.size > 64 * 1024) {
+          return { ok: false, error: "This computer holds office data. Use the portal's Replace Host flow instead — uninstalling here would destroy that data." };
+        }
+      }
+    } catch { /* if we can't stat it, fall through — the mode check above is the primary gate */ }
+
+    // 1. Wipe browser session state for the BrowserWindow so the
+    //    deviceId, auth cookies, and any cached data are gone before
+    //    the app quits.
+    try {
+      const win = BrowserWindow.getAllWindows()[0];
+      const ses = win?.webContents?.session;
+      if (ses) {
+        await ses.clearStorageData({
+          storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers", "cachestorage", "shadercache"],
+        });
+        await ses.clearCache();
+      }
+    } catch { /* non-critical */ }
+
+    // 2. Wipe local files: config (mode, hostUrl, pairing code,
+    //    cert fingerprint), TLS dir, outbox, session-secret. Keep
+    //    the userData folder itself so logs can still be flushed
+    //    before exit; everything inside it is fair game.
+    try {
+      const userData = app.getPath("userData");
+      const entries = fs.readdirSync(userData);
+      for (const name of entries) {
+        // Leave the auto-updater's pending cache alone — if there's
+        // a downloaded update mid-install, deleting it would leave
+        // the user with a half-installed binary on next launch.
+        if (name === "pending") continue;
+        const p = path.join(userData, name);
+        try {
+          const stat = fs.lstatSync(p);
+          if (stat.isDirectory()) fs.rmSync(p, { recursive: true, force: true });
+          else fs.unlinkSync(p);
+        } catch { /* skip locked files; the rest of the wipe still proceeds */ }
+      }
+    } catch { /* non-critical */ }
+
+    // 3. Quit after a short delay so the renderer has time to show
+    //    its "Otto removed — drag to Trash" final screen before the
+    //    window vanishes.
+    setTimeout(() => {
+      try { app.quit(); } catch { /* ignore */ }
+    }, 1200);
+
+    return { ok: true, platform: process.platform };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
+});
+
 ipcMain.handle("otto:portal:find-host", async (_event, payload) => {
   return await portalFindHost(payload);
 });

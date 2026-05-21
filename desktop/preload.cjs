@@ -24,4 +24,8 @@ contextBridge.exposeInMainWorld("otto", {
   showDiagnostics: () => ipcRenderer.invoke("otto:diagnostics:show"),
   exportSupportBundle: () => ipcRenderer.invoke("otto:supportBundle:export"),
   importPickCsv: () => ipcRenderer.invoke("otto:import:pick-csv"),
+  releaseClient: () => ipcRenderer.invoke("otto:client:release"),
+  storeRecoveryToken: (payload) => ipcRenderer.invoke("otto:client:recovery:store", payload),
+  lookupRecovery: () => ipcRenderer.invoke("otto:client:recovery:lookup"),
+  applyRecovery: (payload) => ipcRenderer.invoke("otto:client:recovery:apply", payload),
 });

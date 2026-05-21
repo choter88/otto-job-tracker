@@ -53,6 +53,7 @@ import {
   portalAppendTrackingEvent,
   portalGetTrackingLabelChoices,
   portalUpdateTrackingLabelChoices,
+  portalRevokeClientRecovery,
   portalGetFeatureFlags,
   getLicenseBaseUrl,
   type TrackingLinkRecord,
@@ -4235,6 +4236,101 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(403).json({ error: "Not authorized" });
       }
       db.update(clientDevicesTable).set({ blocked: false }).where(eq(clientDevicesTable.id, req.params.id)).run();
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Client uninstall: the Client computer is announcing that it's
+   * about to remove itself. We:
+   *   1. Delete its client_devices row so the seat is FREED on the
+   *      Host immediately (the live count derived by
+   *      getRegisteredDeviceCount drops by one).
+   *   2. Audit-log the release with the user identity that initiated
+   *      it, so it shows up in the office's activity feed.
+   *
+   * The Client follows up locally by wiping its userData (config,
+   * deviceId, certs) via the Electron IPC handler and showing the
+   * "drag Otto to Trash" final screen.
+   *
+   * Auth: any authenticated session can release the device it's
+   * connected from. Staff don't need admin to take their own
+   * computer off the account.
+   */
+  app.post("/api/devices/self/release", async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      if (!user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      // Refuse releases from localhost. The Host's own browser
+      // session connects via 127.0.0.1; Client browsers connect over
+      // the LAN. A localhost POST here means someone is trying to
+      // release a seat from the Host's own UI, which (a) is never
+      // a legitimate flow (Host doesn't sit on a clientSlots seat),
+      // and (b) would be the second half of a Host-wipe attempt.
+      // Defense in depth — the Electron IPC primarily blocks this,
+      // but the server should refuse independently.
+      const ip = (req.ip || "").toString();
+      const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1" || ip === "localhost";
+      if (isLocal) {
+        return res.status(403).json({
+          error: "This action is only available from a Client computer. To replace the Host, use the portal's Replace Host flow.",
+          code: "HOST_CANNOT_SELF_RELEASE",
+        });
+      }
+
+      const deviceId = typeof req.body?.deviceId === "string" ? req.body.deviceId.trim() : "";
+      if (!deviceId || deviceId.length > 128) {
+        return res.status(400).json({ error: "deviceId required" });
+      }
+
+      const existing = db.select().from(clientDevicesTable).where(eq(clientDevicesTable.id, deviceId)).get();
+      if (!existing) {
+        // Already gone — return success so the Client can finish
+        // the local wipe without surfacing a confusing error.
+        return res.json({ ok: true, alreadyReleased: true });
+      }
+
+      // Revoke the portal-side recovery token first so this Client
+      // can't auto-discover a new Host after wiping. Fire-and-forget:
+      // if the portal is unreachable, we still delete the local row
+      // — leaving the recovery row alive is the lesser evil (the
+      // office admin can revoke from the device list later).
+      if (existing.recoveryId) {
+        const hostToken = getHostToken();
+        if (hostToken) {
+          portalRevokeClientRecovery({ hostToken, recoveryId: existing.recoveryId })
+            .catch((err) => console.error("[devices] recovery revoke failed:", err?.message || err));
+        }
+      }
+
+      db.delete(clientDevicesTable).where(eq(clientDevicesTable.id, deviceId)).run();
+
+      try {
+        await logPhiAccess(req, "delete", "patient_list", `device:${deviceId}`, undefined, {
+          event: "client_seat_released",
+          deviceLabel: existing.label ?? null,
+        });
+      } catch { /* non-critical */ }
+
+      trackEvent({
+        userId: user.id,
+        officeId: (user as any).officeId,
+        eventType: "client_seat_released",
+        metadata: { deviceLabel: existing.label ?? null },
+      });
+
+      // Notify connected clients so an admin watching the device
+      // list sees the row disappear in real time.
+      const officeId = (user as any).officeId;
+      if (officeId) {
+        broadcastToOffice(officeId, { type: "office_updated", ts: Date.now(), source: "client_seat_released" });
+      }
+
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
