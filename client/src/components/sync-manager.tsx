@@ -2,7 +2,16 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useTrackPage } from "@/hooks/use-track-page";
-import { WifiOff } from "lucide-react";
+import { WifiOff, ServerCog, Loader2 } from "lucide-react";
+
+// Reconnect failures before we ask the portal "did this office's
+// Host change?". 3 consecutive failed reconnect attempts ≈ a few
+// seconds of unsuccessful retries; the WS already does exponential
+// backoff between attempts. Lower numbers risk noisy lookups during
+// transient LAN blips; higher numbers leave staff staring at the
+// offline banner longer than necessary after a real Host
+// replacement.
+const RECOVERY_LOOKUP_THRESHOLD = 3;
 
 function buildSyncWsUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -27,10 +36,33 @@ export default function SyncManager() {
   const [licenseSnapshot, setLicenseSnapshot] = useState<any | null>(null);
   const [overLimitInfo, setOverLimitInfo] = useState<{ allowed: number; connected: number; graceEndsAt: number | null } | null>(null);
   const [deviceBlocked, setDeviceBlocked] = useState(false);
+  // Host-replacement recovery banner state. `pending` means we've
+  // confirmed via the portal that the office's Host moved; `applying`
+  // means the user tapped "Reconnect" and we're swapping config.
+  const [hostRecovery, setHostRecovery] = useState<
+    | { pending: true; hostUrl: string; fingerprint256: string; updatedAt: string | null }
+    | null
+  >(null);
+  const [recoveryRevoked, setRecoveryRevoked] = useState(false);
+  const [applyingRecovery, setApplyingRecovery] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const connectRef = useRef<(() => void) | null>(null);
+  // Guards repeated lookups while a single reconnect storm runs.
+  const recoveryLookupInFlightRef = useRef(false);
+  const recoveryLookupAttemptedRef = useRef(false);
+  // Mirror state into refs so the WS close handler (a closure that
+  // captures values at definition time) reads the latest values
+  // instead of stale ones from the initial render.
+  const hostRecoveryRef = useRef(hostRecovery);
+  const recoveryRevokedRef = useRef(recoveryRevoked);
+  const modeIsClientRef = useRef(false);
+  useEffect(() => { hostRecoveryRef.current = hostRecovery; }, [hostRecovery]);
+  useEffect(() => { recoveryRevokedRef.current = recoveryRevoked; }, [recoveryRevoked]);
+  useEffect(() => {
+    modeIsClientRef.current = String(desktopConfig?.mode || "").toLowerCase() === "client";
+  }, [desktopConfig?.mode]);
 
   // Load desktop config (mode, backup info)
   useEffect(() => {
@@ -90,6 +122,11 @@ export default function SyncManager() {
 
         ws.onopen = () => {
           retryRef.current = 0;
+          // Successful reconnect — let the next outage trigger a fresh
+          // portal lookup if needed (most outages are LAN blips and
+          // never reach the threshold; this just resets the guard so
+          // the NEXT real outage can lookup once).
+          recoveryLookupAttemptedRef.current = false;
           setConnected(true);
           try {
             ws.send(JSON.stringify({
@@ -112,6 +149,16 @@ export default function SyncManager() {
               setOverLimitInfo(null);
             } else if (data?.type === "device_blocked") {
               setDeviceBlocked(true);
+            } else if (data?.type === "recovery_token_issued" && typeof data.recoveryToken === "string") {
+              // Host just issued us a recovery token (first WS
+              // register, or re-issued because we never had one).
+              // Persist via Electron — the renderer never holds the
+              // plaintext token.
+              const bridge = (window as any)?.otto;
+              if (bridge?.storeRecoveryToken) {
+                bridge.storeRecoveryToken({ recoveryToken: data.recoveryToken })
+                  .catch(() => { /* non-critical */ });
+              }
             }
           } catch { /* ignore */ }
         };
@@ -120,6 +167,45 @@ export default function SyncManager() {
           if (disposed) return;
           setConnected(false);
           retryRef.current += 1;
+
+          // After a few failed reconnects, ask the portal whether
+          // the office's Host has moved. We only ever fire this ONCE
+          // per offline-streak (the attempted ref clears on a
+          // successful onopen) so a long outage doesn't pound the
+          // portal. Client-mode only — Host's own renderer talks to
+          // localhost and never needs recovery.
+          if (
+            modeIsClientRef.current
+            && retryRef.current >= RECOVERY_LOOKUP_THRESHOLD
+            && !recoveryLookupInFlightRef.current
+            && !recoveryLookupAttemptedRef.current
+            && !hostRecoveryRef.current
+            && !recoveryRevokedRef.current
+          ) {
+            recoveryLookupInFlightRef.current = true;
+            recoveryLookupAttemptedRef.current = true;
+            const bridge = (window as any)?.otto;
+            if (bridge?.lookupRecovery) {
+              bridge.lookupRecovery()
+                .then((result: any) => {
+                  if (result?.ok && result.changed && result.hostUrl && result.fingerprint256) {
+                    setHostRecovery({
+                      pending: true,
+                      hostUrl: result.hostUrl,
+                      fingerprint256: result.fingerprint256,
+                      updatedAt: result.updatedAt ?? null,
+                    });
+                  } else if (!result?.ok && result?.code === "REVOKED") {
+                    setRecoveryRevoked(true);
+                  }
+                })
+                .catch(() => { /* non-critical */ })
+                .finally(() => { recoveryLookupInFlightRef.current = false; });
+            } else {
+              recoveryLookupInFlightRef.current = false;
+            }
+          }
+
           const backoffMs = Math.min(10_000, 500 * Math.pow(2, Math.min(5, retryRef.current)));
           reconnectTimerRef.current = window.setTimeout(connect, backoffMs);
         };
@@ -238,8 +324,69 @@ export default function SyncManager() {
         </div>
       )}
 
+      {/* Host-replacement recovery banner. Shown when portal lookup
+          confirmed this office's Host moved to a new URL/fingerprint
+          while we were offline. One-tap "Reconnect" applies the new
+          discovery info to Electron config and reloads. */}
+      {modeIsClient && hostRecovery && (
+        <div className="fixed top-0 left-0 right-0 z-50">
+          <div className="flex items-center gap-3 bg-otto-accent-soft border-b border-otto-accent/30 px-4 py-3 text-sm text-otto-accent-ink">
+            <ServerCog className="h-4 w-4 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="font-medium">Your office's Host computer changed.</div>
+              <div className="text-xs opacity-80 mt-0.5">
+                Reconnect this Client to keep working. Your data stays on the new Host computer.
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={applyingRecovery}
+              onClick={async () => {
+                if (!hostRecovery) return;
+                setApplyingRecovery(true);
+                try {
+                  const bridge = (window as any)?.otto;
+                  if (!bridge?.applyRecovery) {
+                    setApplyingRecovery(false);
+                    return;
+                  }
+                  const result = await bridge.applyRecovery({
+                    hostUrl: hostRecovery.hostUrl,
+                    fingerprint256: hostRecovery.fingerprint256,
+                  });
+                  if (!result?.ok) {
+                    setApplyingRecovery(false);
+                  }
+                  // On success, Electron reloads the BrowserWindow,
+                  // so this component unmounts before reset is needed.
+                } catch {
+                  setApplyingRecovery(false);
+                }
+              }}
+              className="shrink-0 px-3 py-1.5 bg-otto-accent text-white text-xs font-medium rounded hover:opacity-95 disabled:opacity-60 inline-flex items-center gap-1.5"
+              data-testid="button-host-recovery-reconnect"
+            >
+              {applyingRecovery && <Loader2 className="h-3 w-3 animate-spin" />}
+              {applyingRecovery ? "Reconnecting…" : "Reconnect"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Recovery token revoked — this Client was removed from the
+          office. They need staff action to re-pair. */}
+      {modeIsClient && recoveryRevoked && (
+        <div className="fixed top-0 left-0 right-0 z-50">
+          <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+            <span className="flex-1 font-medium">
+              This Client was removed from your office. Contact your office to re-pair this computer.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Offline banner for Client mode */}
-      {modeIsClient && !connected && (
+      {modeIsClient && !connected && !hostRecovery && !recoveryRevoked && (
         <div className="fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-t border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
             <WifiOff className="h-4 w-4 shrink-0" />

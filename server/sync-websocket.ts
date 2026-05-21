@@ -6,6 +6,8 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { clientDevices } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { getHostToken } from "./license";
+import { portalIssueClientRecovery } from "./license-client";
 
 type OttoWs = WebSocket & { ottoOfficeId?: string; ottoUserId?: string; ottoIsLocal?: boolean; ottoDeviceId?: string };
 
@@ -75,14 +77,53 @@ export function setupSyncWebSocket(httpServer: HTTPServer, sessionMiddleware: Re
           ws.ottoDeviceId = msg.deviceId;
           try {
             const existing = db.select().from(clientDevices).where(eq(clientDevices.id, msg.deviceId)).get();
+            let needsRecoveryIssuance = false;
             if (existing) {
               if (existing.blocked) {
                 ws.send(JSON.stringify({ type: "device_blocked" }));
                 return;
               }
               db.update(clientDevices).set({ lastSeenAt: new Date(), label: msg.label || existing.label }).where(eq(clientDevices.id, msg.deviceId)).run();
+              // Existing row, but never got a recovery token — issue
+              // one now (covers Clients that paired before the
+              // recovery system shipped).
+              if (!existing.recoveryId) needsRecoveryIssuance = true;
             } else {
               db.insert(clientDevices).values({ id: msg.deviceId, officeId, label: msg.label || null }).run();
+              needsRecoveryIssuance = true;
+            }
+
+            if (needsRecoveryIssuance) {
+              // Issue a recovery token via the portal, then forward
+              // the plaintext to this Client over the same WS so it
+              // can persist it to its Electron config. Fire-and-forget:
+              // a failure here doesn't block the Client from working,
+              // it just means the Client won't auto-recover from a
+              // future Host replacement until the next register.
+              const hostToken = getHostToken();
+              if (hostToken) {
+                const labelForToken = (msg.label && typeof msg.label === "string")
+                  ? String(msg.label).slice(0, 120)
+                  : `Client ${String(msg.deviceId).slice(0, 8)}`;
+                portalIssueClientRecovery({ hostToken, label: labelForToken })
+                  .then((result) => {
+                    if (!result.ok) return;
+                    try {
+                      db.update(clientDevices)
+                        .set({ recoveryId: result.recoveryId })
+                        .where(eq(clientDevices.id, msg.deviceId))
+                        .run();
+                    } catch { /* non-critical */ }
+                    try {
+                      ws.send(JSON.stringify({
+                        type: "recovery_token_issued",
+                        recoveryToken: result.recoveryToken,
+                        recoveryId: result.recoveryId,
+                      }));
+                    } catch { /* socket may be closed */ }
+                  })
+                  .catch(() => { /* non-critical */ });
+              }
             }
           } catch { /* non-critical */ }
         } else if (msg?.type === "device_disconnect" && typeof msg.deviceId === "string") {

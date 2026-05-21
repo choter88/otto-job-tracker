@@ -83,6 +83,12 @@ export function getDefaultConfig() {
     hostUrl: "https://127.0.0.1:5150",
     pairingCode: "",
     trustedFingerprint256: "",
+    // Long-lived opaque recovery token (Client-mode only). Issued by
+    // the Host via the portal during pairing and used by the Client
+    // to look up the office's CURRENT Host discovery info from the
+    // portal when reconnects to the stored hostUrl fail repeatedly.
+    // Plaintext — protect like a credential. Not part of any backup.
+    clientRecoveryToken: "",
     backupDir: "",
     backupEnabled: true,
     backupRetention: 14,

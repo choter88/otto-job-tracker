@@ -446,6 +446,11 @@ export const clientDevices = sqliteTable("client_devices", {
   firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
   blocked: integer("blocked", { mode: "boolean" }).default(false).notNull(),
+  // Portal-side id of the recovery token this Client holds. Lets the
+  // Host revoke the token when an admin removes the device or when
+  // the Client signals "uninstall and remove from account". The
+  // plaintext token never lives here — only the public id.
+  recoveryId: text("recovery_id"),
 });
 
 export type ClientDevice = typeof clientDevices.$inferSelect;

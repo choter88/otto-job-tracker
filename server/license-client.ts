@@ -628,6 +628,85 @@ export async function portalUpdateTrackingLabelChoices(payload: {
   return { ok: true, choices };
 }
 
+// --- Client recovery tokens ---
+//
+// A long-lived opaque token issued by the Host (via the portal) to
+// each Client computer at pairing time. The Client stores it locally
+// and uses it to look up its office's CURRENT Host discovery info
+// from the portal when its stored hostUrl/fingerprint goes stale
+// (typically after a Replace Host flow on a different machine).
+//
+// Three flows in the desktop server:
+//   - Host calls `portalIssueClientRecovery` during pairing, then
+//     forwards the plaintext token back to the new Client.
+//   - Client calls `portalLookupClientRecovery` (no host-token,
+//     recovery token IS the credential) when reconnecting fails N
+//     times in a row.
+//   - Host calls `portalRevokeClientRecovery` when an admin removes
+//     a device from the worklist, or when the Client itself signals
+//     "uninstall and remove from account".
+
+export interface ClientRecoveryDiscovery {
+  hostUrl: string | null;
+  fingerprint256: string | null;
+  pairingCode: string | null;
+  hostReplacementPending: boolean;
+  updatedAt: string | null;
+}
+
+export async function portalIssueClientRecovery(payload: {
+  hostToken: string;
+  label?: string;
+}): Promise<
+  | { ok: true; recoveryId: string; recoveryToken: string }
+  | { ok: false; error: LicenseRequestError }
+> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/client-recovery/issue", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  if (typeof json?.recoveryId !== "string" || typeof json?.recoveryToken !== "string") {
+    return { ok: false, error: { statusCode: 502, code: "BAD_PORTAL_RESPONSE", message: "Recovery issue response was malformed." } };
+  }
+  return { ok: true, recoveryId: json.recoveryId, recoveryToken: json.recoveryToken };
+}
+
+export async function portalLookupClientRecovery(payload: {
+  recoveryToken: string;
+}): Promise<
+  | { ok: true; discovery: ClientRecoveryDiscovery }
+  | { ok: false; error: LicenseRequestError }
+> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/client-recovery/lookup", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return {
+    ok: true,
+    discovery: {
+      hostUrl: typeof json?.hostUrl === "string" ? json.hostUrl : null,
+      fingerprint256: typeof json?.fingerprint256 === "string" ? json.fingerprint256 : null,
+      pairingCode: typeof json?.pairingCode === "string" ? json.pairingCode : null,
+      hostReplacementPending: !!json?.hostReplacementPending,
+      updatedAt: typeof json?.updatedAt === "string" ? json.updatedAt : null,
+    },
+  };
+}
+
+export async function portalRevokeClientRecovery(payload: {
+  hostToken: string;
+  recoveryId: string;
+}): Promise<{ ok: true } | { ok: false; error: LicenseRequestError }> {
+  const base = getLicenseBaseUrl();
+  const url = new URL("/license/v1/client-recovery/revoke", base);
+  const { status, json, networkError } = await fetchJson(url, payload);
+  if (networkError) return { ok: false, error: networkError };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  return { ok: true };
+}
+
 export async function portalAppendTrackingEvent(payload: {
   hostToken: string;
   status: PatientStatus;
