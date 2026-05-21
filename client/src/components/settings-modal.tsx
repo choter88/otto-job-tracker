@@ -21,6 +21,7 @@ import {
   Tablet,
   Share2,
   Monitor,
+  Network,
 } from "lucide-react";
 import NotificationRules from "./notification-rules";
 import { DEFAULT_STATUS_COLORS, DEFAULT_JOB_TYPE_COLORS, DEFAULT_DESTINATION_COLORS, hexToHSL, normalizeToHex } from "@/lib/default-colors";
@@ -30,6 +31,7 @@ import IdentifierModeEditor, { type JobIdentifierMode } from "./customization/id
 import TrackingLinkDefaultsEditor, { type TrackingLinkDefaults, DEFAULT_VISIBLE_STATUSES } from "./customization/tracking-link-defaults-editor";
 import SetupWizardCard from "./setup-wizard-card";
 import UninstallClientCard from "./uninstall-client-card";
+import ComputersTab from "./computers-tab";
 import type { Office } from "@shared/schema";
 
 interface SettingsModalProps {
@@ -298,6 +300,13 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
     return () => { cancelled = true; };
   }, [open]);
   const isClientMode = desktopMode === "client";
+  // The Host's own renderer reports mode = "host". On a Client
+  // install we don't show the Computers tab — that's an admin
+  // surface for managing the Host's roster of paired Clients.
+  // Restrict further to owner/manager since rename/remove are
+  // privileged actions.
+  const role = String((user as any)?.role || "");
+  const isHostAdmin = desktopMode === "host" && (role === "owner" || role === "manager");
 
   const updateOfficeMutation = useMutation({
     mutationFn: async (settings: any) => {
@@ -484,6 +493,12 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
                   <Tablet className="h-4 w-4" />
                   <span className="truncate">Tablet</span>
                 </TabsTrigger>
+                {isHostAdmin && (
+                  <TabsTrigger value="computers" className={tabTriggerClass} data-testid="tab-computers">
+                    <Network className="h-4 w-4" />
+                    <span className="truncate">Computers</span>
+                  </TabsTrigger>
+                )}
                 {isClientMode && (
                   <TabsTrigger value="thisComputer" className={tabTriggerClass} data-testid="tab-this-computer">
                     <Monitor className="h-4 w-4" />
@@ -561,6 +576,12 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
                   <TabletSettingsContent />
                 </TabsContent>
 
+                {isHostAdmin && (
+                  <TabsContent value="computers" className="mt-0">
+                    <ComputersTab />
+                  </TabsContent>
+                )}
+
                 {isClientMode && (
                   <TabsContent value="thisComputer" className="mt-0">
                     <div className="space-y-5">
@@ -580,11 +601,9 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
             </div>
           </div>
 
-          {/* Footer. Hidden on the "This Computer" tab — its action
-              (Uninstall) is destructive and lives on its own
-              destructive button, so showing a save/cancel pair next
-              to it would be confusing. */}
-          {activeTab !== "thisComputer" && (
+          {/* Footer. Hidden on tabs that don't use form save/cancel
+              (their actions are inline). */}
+          {activeTab !== "thisComputer" && activeTab !== "computers" && (
             <div className="flex gap-3 border-t border-line bg-panel-2 px-6 py-3.5">
               <Button
                 onClick={handleSaveSettings}

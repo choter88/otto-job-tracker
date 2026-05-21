@@ -8,6 +8,7 @@ import { clientDevices } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { getHostToken } from "./license";
 import { portalIssueClientRecovery } from "./license-client";
+import { deriveDeviceAutoLabel } from "./device-label";
 
 type OttoWs = WebSocket & { ottoOfficeId?: string; ottoUserId?: string; ottoIsLocal?: boolean; ottoDeviceId?: string };
 
@@ -76,22 +77,53 @@ export function setupSyncWebSocket(httpServer: HTTPServer, sessionMiddleware: Re
         if (msg?.type === "device_register" && typeof msg.deviceId === "string" && !ws.ottoIsLocal) {
           ws.ottoDeviceId = msg.deviceId;
           try {
+            // Parse the UA into a friendly auto-label. The Client
+            // sends its raw UA in `msg.label` (legacy field name);
+            // we run it through the parser server-side so the rule
+            // is in one place and stays consistent across clients
+            // that report slightly different UA shapes.
+            const autoLabel = deriveDeviceAutoLabel(typeof msg.label === "string" ? msg.label : null);
             const existing = db.select().from(clientDevices).where(eq(clientDevices.id, msg.deviceId)).get();
             let needsRecoveryIssuance = false;
+            let isNewDevice = false;
             if (existing) {
               if (existing.blocked) {
                 ws.send(JSON.stringify({ type: "device_blocked" }));
                 return;
               }
-              db.update(clientDevices).set({ lastSeenAt: new Date(), label: msg.label || existing.label }).where(eq(clientDevices.id, msg.deviceId)).run();
-              // Existing row, but never got a recovery token — issue
-              // one now (covers Clients that paired before the
-              // recovery system shipped).
+              // Refresh autoLabel each time so a browser update on
+              // the Client (e.g. Chrome major bump) reflects right
+              // away. The user-set `name` is left alone.
+              db.update(clientDevices)
+                .set({ lastSeenAt: new Date(), autoLabel })
+                .where(eq(clientDevices.id, msg.deviceId))
+                .run();
               if (!existing.recoveryId) needsRecoveryIssuance = true;
             } else {
-              db.insert(clientDevices).values({ id: msg.deviceId, officeId, label: msg.label || null }).run();
+              db.insert(clientDevices).values({ id: msg.deviceId, officeId, autoLabel }).run();
               needsRecoveryIssuance = true;
+              isNewDevice = true;
             }
+
+            // Broadcast presence so the Host's Computers tab
+            // refreshes the moment a Client comes online — without
+            // this, the panel would only update on user action.
+            try {
+              const set = officeConnections.get(officeId);
+              if (set) {
+                for (const other of Array.from(set)) {
+                  if (other === ws) continue;
+                  if (other.readyState !== WebSocket.OPEN) continue;
+                  try {
+                    other.send(JSON.stringify({
+                      type: "office_updated",
+                      ts: Date.now(),
+                      source: isNewDevice ? "device_paired" : "device_connected",
+                    }));
+                  } catch { /* socket may be closing */ }
+                }
+              }
+            } catch { /* non-critical */ }
 
             if (needsRecoveryIssuance) {
               // Issue a recovery token via the portal, then forward
@@ -140,6 +172,24 @@ export function setupSyncWebSocket(httpServer: HTTPServer, sessionMiddleware: Re
       if (!set) return;
       set.delete(ws);
       if (set.size === 0) officeConnections.delete(officeId);
+      // Tell the rest of this office's connected sockets that the
+      // connected-device count just changed, so any Computers panel
+      // open on the Host can flip the disconnecting row's pill from
+      // "Connected" to "Last seen now". Only emit if it was an
+      // actual remote Client closing — local Host renderer
+      // disconnects shouldn't ripple.
+      if (!ws.ottoIsLocal && ws.ottoDeviceId) {
+        for (const other of Array.from(set)) {
+          if (other.readyState !== WebSocket.OPEN) continue;
+          try {
+            other.send(JSON.stringify({
+              type: "office_updated",
+              ts: Date.now(),
+              source: "device_disconnected",
+            }));
+          } catch { /* socket may be closing */ }
+        }
+      }
     });
 
     ws.on("error", () => {
@@ -163,6 +213,33 @@ export function getRegisteredDeviceCount(): number {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Snapshot of which remote Clients are currently connected to a
+ * given office, keyed by their deviceId. Each entry carries the
+ * userId of the staff member logged in on that Client right now —
+ * the Computers tab uses this to show "Connected · Jane Doe" so an
+ * admin can identify which physical machine is which.
+ *
+ * Local Host connections (renderer talking to its own server) are
+ * excluded since the Host doesn't sit on a Client seat and showing
+ * it as a connected Client would be confusing.
+ */
+export function getOfficeClientPresence(officeId: string): Map<string, { userId: string | null; connectedAt: number }> {
+  const out = new Map<string, { userId: string | null; connectedAt: number }>();
+  const set = officeConnections.get(officeId);
+  if (!set) return out;
+  for (const ws of Array.from(set)) {
+    if (ws.ottoIsLocal) continue;
+    if (!ws.ottoDeviceId) continue;
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    out.set(ws.ottoDeviceId, {
+      userId: ws.ottoUserId ?? null,
+      connectedAt: Date.now(),
+    });
+  }
+  return out;
 }
 
 /** Count remote (non-localhost) WebSocket connections — i.e. actual Client machines. */

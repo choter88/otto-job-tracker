@@ -69,7 +69,7 @@ import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults"
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
 import { getDefaultOfficeSettings } from "@shared/office-defaults";
 import { sortVisibleStatusesByOffice } from "@shared/tracking-link-defaults";
-import { broadcastToOffice, getConnectedClientCount } from "./sync-websocket";
+import { broadcastToOffice, getConnectedClientCount, getOfficeClientPresence } from "./sync-websocket";
 import { trackEvent, CLIENT_TRACKABLE_EVENTS, getAggregatedDailyStats, getRawEventsSince } from "./usage-tracker";
 import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLoginId } from "./auth-identifiers";
 import { registerTabletRoutes } from "./tablet-routes";
@@ -4216,14 +4216,71 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
   // ── Client device management ───────────────────────────────────────
 
+  /**
+   * Devices list with live presence + logged-in user. Used by the
+   * Host's Settings → Computers tab. Owner/manager only.
+   *
+   * Live status comes from sync-websocket's officeConnections map
+   * (which tracks open WS sockets per office) — no extra timer or
+   * heartbeat needed. Disconnects ripple via the office_updated
+   * broadcast in sync-websocket.ts so the tab auto-refreshes.
+   */
   app.get("/api/devices", async (req, res) => {
     try {
       const user = getAuthUser(req);
       if (!user || !["owner", "manager"].includes(user.role || "")) {
         return res.status(403).json({ error: "Not authorized" });
       }
+      const officeId = (user as any).officeId;
       const devices = db.select().from(clientDevicesTable).all();
-      res.json(devices);
+      const presence = officeId ? getOfficeClientPresence(officeId) : new Map<string, { userId: string | null }>();
+
+      // Resolve logged-in user names for every device that's
+      // currently connected. Batch-fetch unique userIds rather than
+      // N lookups in the loop below.
+      const userIds = Array.from(new Set(
+        Array.from(presence.values())
+          .map((p) => p.userId)
+          .filter((u): u is string => typeof u === "string" && u.length > 0),
+      ));
+      const userById = new Map<string, { id: string; firstName: string; lastName: string }>();
+      for (const uid of userIds) {
+        const u = await storage.getUser(uid);
+        if (u) userById.set(u.id, { id: u.id, firstName: u.firstName, lastName: u.lastName });
+      }
+
+      const enriched = devices.map((d) => {
+        const p = presence.get(d.id);
+        const connected = !!p;
+        const loggedInUser = p?.userId ? userById.get(p.userId) ?? null : null;
+        // Display name precedence: user-set `name` > parsed
+        // `auto_label` > "Unknown computer".
+        const displayName = (d.name && d.name.trim().length > 0)
+          ? d.name.trim()
+          : (d.autoLabel && d.autoLabel.trim().length > 0 ? d.autoLabel.trim() : "Unknown computer");
+        return {
+          id: d.id,
+          displayName,
+          name: d.name ?? null,
+          autoLabel: d.autoLabel ?? null,
+          connected,
+          loggedInUser: loggedInUser
+            ? { id: loggedInUser.id, firstName: loggedInUser.firstName, lastName: loggedInUser.lastName }
+            : null,
+          firstSeenAt: d.firstSeenAt instanceof Date ? d.firstSeenAt.toISOString() : new Date(d.firstSeenAt as any).toISOString(),
+          lastSeenAt: d.lastSeenAt instanceof Date ? d.lastSeenAt.toISOString() : new Date(d.lastSeenAt as any).toISOString(),
+          blocked: !!d.blocked,
+        };
+      });
+
+      // Sort: currently-connected first, then by lastSeenAt desc so
+      // recently-active machines stay near the top of the list.
+      enriched.sort((a, b) => {
+        if (a.connected !== b.connected) return a.connected ? -1 : 1;
+        return new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime();
+      });
+
+      res.json({ devices: enriched, connectedCount: presence.size });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -4236,6 +4293,83 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         return res.status(403).json({ error: "Not authorized" });
       }
       db.update(clientDevicesTable).set({ blocked: false }).where(eq(clientDevicesTable.id, req.params.id)).run();
+      const officeId = (user as any).officeId;
+      if (officeId) broadcastToOffice(officeId, { type: "office_updated", ts: Date.now(), source: "device_unblocked" });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Rename a Client computer. Owner/manager only. The user-set `name`
+   * takes precedence over the auto-derived `autoLabel` for display.
+   * Setting an empty string clears the override back to auto.
+   */
+  app.patch("/api/devices/:id", async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      if (!user || !["owner", "manager"].includes(user.role || "")) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      const raw = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+      // Cap at 60 chars — longer names break the table layout and
+      // there's no real reason to need more for "Lab Mac mini" etc.
+      const name = raw.length === 0 ? null : raw.slice(0, 60);
+      const existing = db.select().from(clientDevicesTable).where(eq(clientDevicesTable.id, req.params.id)).get();
+      if (!existing) return res.status(404).json({ error: "Device not found" });
+      db.update(clientDevicesTable).set({ name }).where(eq(clientDevicesTable.id, req.params.id)).run();
+      const officeId = (user as any).officeId;
+      if (officeId) broadcastToOffice(officeId, { type: "office_updated", ts: Date.now(), source: "device_renamed" });
+      res.json({ ok: true, name });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * Force-remove a Client computer. Owner/manager only. Same effect
+   * as the Client self-release: deletes the local row (frees the
+   * seat) and revokes the portal-side recovery token so the kicked
+   * Client can't auto-recover via portal lookup. The kicked Client's
+   * next WS reconnect will fail; it'll see the "removed from office"
+   * banner on its next portal lookup attempt.
+   */
+  app.delete("/api/devices/:id", async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      if (!user || !["owner", "manager"].includes(user.role || "")) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      const existing = db.select().from(clientDevicesTable).where(eq(clientDevicesTable.id, req.params.id)).get();
+      if (!existing) return res.status(404).json({ error: "Device not found" });
+
+      if (existing.recoveryId) {
+        const hostToken = getHostToken();
+        if (hostToken) {
+          portalRevokeClientRecovery({ hostToken, recoveryId: existing.recoveryId })
+            .catch((err) => console.error("[devices] recovery revoke failed:", err?.message || err));
+        }
+      }
+
+      db.delete(clientDevicesTable).where(eq(clientDevicesTable.id, req.params.id)).run();
+
+      try {
+        await logPhiAccess(req, "delete", "patient_list", `device:${req.params.id}`, undefined, {
+          event: "client_device_removed_by_admin",
+          deviceName: existing.name ?? existing.autoLabel ?? null,
+        });
+      } catch { /* non-critical */ }
+
+      trackEvent({
+        userId: user.id,
+        officeId: (user as any).officeId,
+        eventType: "client_device_removed_by_admin",
+        metadata: { deviceName: existing.name ?? existing.autoLabel ?? null },
+      });
+
+      const officeId = (user as any).officeId;
+      if (officeId) broadcastToOffice(officeId, { type: "office_updated", ts: Date.now(), source: "device_removed" });
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -4313,7 +4447,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       try {
         await logPhiAccess(req, "delete", "patient_list", `device:${deviceId}`, undefined, {
           event: "client_seat_released",
-          deviceLabel: existing.label ?? null,
+          deviceLabel: existing.name ?? existing.autoLabel ?? null,
         });
       } catch { /* non-critical */ }
 
@@ -4321,7 +4455,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         userId: user.id,
         officeId: (user as any).officeId,
         eventType: "client_seat_released",
-        metadata: { deviceLabel: existing.label ?? null },
+        metadata: { deviceLabel: existing.name ?? existing.autoLabel ?? null },
       });
 
       // Notify connected clients so an admin watching the device
