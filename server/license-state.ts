@@ -107,6 +107,9 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
   const activationGraceEndsAtLocal =
     typeof state.firstRunAt === "number" && state.firstRunAt > 0 ? state.firstRunAt + ACTIVATION_GRACE_MS : null;
 
+  const lastError = typeof state.lastError === "string" && state.lastError.trim() ? state.lastError.trim() : null;
+  const checkinOverdue = typeof nextCheckinDueAt === "number" && nowServerTime > nextCheckinDueAt;
+
   let mode: LicenseMode = "UNACTIVATED";
   let writeAllowed = true;
   let message = "Activation required";
@@ -117,9 +120,22 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
     writeAllowed = false;
     message = "License is no longer valid. Please re-activate this Host.";
   } else if (officeStatus === "DISABLED") {
-    mode = "DISABLED";
+    // A cached DISABLED is only authoritative while our check-in is current. A
+    // failed check-in can't refresh officeStatus (see license.ts), so if check-ins
+    // are overdue — portal unreachable, wrong portal URL, etc. — the office may have
+    // been re-enabled since and we just can't see it. Surface the connectivity
+    // failure instead of wrongly asserting the office is disabled, but stay
+    // read-only: never grant write access off a stale status.
     writeAllowed = false;
-    message = "Office is disabled. Otto Tracker is in read-only mode.";
+    if (checkinOverdue) {
+      mode = "READ_ONLY";
+      message = lastError
+        ? `Can't reach the licensing server (${lastError}). Otto Tracker is read-only until it reconnects.`
+        : "Can't reach the licensing server to confirm your subscription. Otto Tracker is read-only until it reconnects.";
+    } else {
+      mode = "DISABLED";
+      message = "Office is disabled. Otto Tracker is in read-only mode.";
+    }
   } else if (!hostTokenPresent) {
     graceEndsAt = activationGraceEndsAtLocal;
     if (activationGraceEndsAtLocal && Date.now() > activationGraceEndsAtLocal) {
@@ -195,8 +211,6 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
       message = "Subscription renewal pending. Otto Tracker will become read-only if not renewed.";
     }
   }
-
-  const lastError = typeof state.lastError === "string" && state.lastError.trim() ? state.lastError.trim() : null;
 
   return {
     mode,
