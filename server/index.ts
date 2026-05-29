@@ -137,6 +137,7 @@ app.use((req, res, next) => {
   // Always allow authentication + licensing + initial bootstrap.
   const allowlist = new Set([
     "/api/login",
+    "/api/login/pin",
     "/api/logout",
     "/api/license/activate",
     "/api/license/checkin",
@@ -165,7 +166,7 @@ app.use((req, res, next) => {
   if (!isMutating) return next();
   if (!req.path.startsWith("/api")) return next();
   if (req.path.startsWith("/api/license")) return next();
-  if (req.path === "/api/login" || req.path === "/api/logout") return next();
+  if (req.path === "/api/login" || req.path === "/api/login/pin" || req.path === "/api/logout") return next();
   if (req.path.startsWith("/api/setup")) return next();
 
   res.on("finish", () => {
