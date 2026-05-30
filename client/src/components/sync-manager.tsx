@@ -341,6 +341,20 @@ export default function SyncManager() {
         </div>
       )}
 
+      {/* Read-only not tied to billing — e.g. check-in overdue or the licensing
+          server is unreachable. Surface the real message + a way to retry. */}
+      {isDisabled && !paymentRequired && !deviceBlocked && (
+        <div className="fixed top-0 left-0 right-0 z-50">
+          <div className="bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <div className="flex items-center gap-2">
+              <span className="flex-1">{licenseSnapshot?.message || "Otto is in read-only mode while it reconnects to the licensing server."}</span>
+              {renderRecheckButton("amber")}
+            </div>
+            {recheckMsg && <p className="mt-1 text-xs opacity-90">{recheckMsg}</p>}
+          </div>
+        </div>
+      )}
+
       {/* Device blocked — permanently disconnected */}
       {deviceBlocked && (
         <div className="fixed top-0 left-0 right-0 z-50">
