@@ -222,6 +222,37 @@ export function enforceBackupRetention(dirPath, _retentionCount) {
   }
 }
 
+// Prune old backups independently of a backup write. enforceBackupRetention
+// otherwise only runs right after a successful backup, so if backups pause
+// (Host closed for a while) or are disabled, stale files never get cleaned.
+// This sweep — run on startup and on each schedule tick — keeps the 30-day
+// window honored for both the local and network backup folders.
+export function runBackupRetentionSweep({ readConfig, getLocalBackupDir }) {
+  let config;
+  try {
+    config = readConfig();
+  } catch {
+    return;
+  }
+  if (!config || config.mode !== "host") return;
+
+  if (config.localBackupEnabled !== false && typeof getLocalBackupDir === "function") {
+    try {
+      enforceBackupRetention(getLocalBackupDir());
+    } catch {
+      // ignore — best-effort cleanup
+    }
+  }
+
+  if (config.backupDir && isAllowedNetworkBackupDir(config.backupDir)) {
+    try {
+      if (fs.existsSync(config.backupDir)) enforceBackupRetention(config.backupDir);
+    } catch {
+      // ignore — network folder may be unmounted
+    }
+  }
+}
+
 export async function runBackupToLocalFolder({ interactive, reason }, { dialog, readConfig, writeConfig, getSqlitePath, getLocalBackupDir }) {
   const sqlitePath = getSqlitePath();
   if (!fs.existsSync(sqlitePath)) {
@@ -436,7 +467,7 @@ export async function restoreDatabase({ app, dialog, readConfig, getLocalBackupD
   app.exit(0);
 }
 
-export function scheduleAutomaticBackups({ readConfig, runLocalBackup, runNetworkBackup, getIntervalRef, setIntervalRef }) {
+export function scheduleAutomaticBackups({ readConfig, runLocalBackup, runNetworkBackup, getLocalBackupDir, getIntervalRef, setIntervalRef }) {
   const current = getIntervalRef();
   if (current) {
     clearInterval(current);
@@ -445,6 +476,10 @@ export function scheduleAutomaticBackups({ readConfig, runLocalBackup, runNetwor
 
   const config = readConfig();
   if (config.mode !== "host") return;
+
+  // Prune stale backups now (e.g. after the Host was closed for days) so the
+  // 30-day window is honored even before/independent of the next backup write.
+  runBackupRetentionSweep({ readConfig, getLocalBackupDir });
 
   const now = Date.now();
   const localEnabled = config.localBackupEnabled !== false;
@@ -473,6 +508,8 @@ export function scheduleAutomaticBackups({ readConfig, runLocalBackup, runNetwor
   setIntervalRef(setInterval(() => {
     runLocalBackup({ interactive: false, reason: "scheduled" }).catch(() => {});
     runNetworkBackup({ interactive: false, reason: "scheduled" }).catch(() => {});
+    // Sweep again on each tick so disabled/paused folders still get pruned.
+    runBackupRetentionSweep({ readConfig, getLocalBackupDir });
   }, BACKUP_INTERVAL_MS));
 }
 

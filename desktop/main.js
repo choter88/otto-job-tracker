@@ -354,11 +354,63 @@ async function _resetHost() {
   app.exit(0);
 }
 
+// Non-destructive recovery: clears the cached license *status* that can get
+// stuck (e.g. a stale "disabled"/"trial expired" left over after a portal-side
+// change, or after a stretch of failed check-ins) without touching the host
+// token, identity, or any jobs/users/settings. The Host then restarts and the
+// startup check-in re-evaluates the license from scratch.
+async function _repairLicense() {
+  const confirm = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["Repair License", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    message: "Repair this Host's license?",
+    detail:
+      "This re-checks your subscription with the Otto portal. Your data — jobs, " +
+      "users, and settings — is NOT touched.\n\n" +
+      "Use this if Otto is stuck showing read-only or \"trial expired\" after your " +
+      "subscription or trial was updated.\n\n" +
+      "Otto will restart to reconnect.",
+  });
+
+  if (confirm.response !== 0) return;
+
+  try {
+    const dataDir = process.env.OTTO_DATA_DIR || path.join(app.getPath("home"), ".otto-job-tracker");
+    const licensePath = path.join(dataDir, "license.json");
+
+    if (fs.existsSync(licensePath)) {
+      const state = JSON.parse(fs.readFileSync(licensePath, "utf-8"));
+      // Clear only the cached status flags that can strand a Host. Keep the host
+      // token, installation identity, check-in timing, and office id so this
+      // stays non-destructive and does not require re-activation.
+      delete state.officeStatus;
+      delete state.paymentRequired;
+      state.lastError = "";
+      state.tokenInvalid = false;
+      fs.writeFileSync(licensePath, JSON.stringify(state, null, 2), { mode: 0o600 });
+    }
+  } catch (error) {
+    await dialog.showMessageBox({
+      type: "error",
+      message: "Repair failed",
+      detail: `${error?.message || error}\n\nTry Diagnostics, or contact support.`,
+    });
+    return;
+  }
+
+  // Relaunch so the startup check-in re-evaluates the license from scratch.
+  app.relaunch();
+  app.exit(0);
+}
+
 function _scheduleAutomaticBackups() {
   scheduleAutomaticBackupsRaw({
     readConfig: _readConfig,
     runLocalBackup: _runBackupToLocalFolder,
     runNetworkBackup: _runBackupToNetworkFolder,
+    getLocalBackupDir: _getLocalBackupDir,
     getIntervalRef: () => automaticBackupInterval,
     setIntervalRef: (v) => { automaticBackupInterval = v; },
   });
@@ -480,6 +532,7 @@ function _setAppMenu(config) {
     runBackupToNetworkFolder: _runBackupToNetworkFolder,
     restoreDatabase: _restoreDatabase,
     resetHost: _resetHost,
+    repairLicense: _repairLicense,
     createSetupWindow: _createSetupWindow,
     showDiagnostics: _showDiagnostics,
     exportSupportBundle: _exportSupportBundle,

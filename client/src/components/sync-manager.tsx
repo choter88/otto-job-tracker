@@ -45,6 +45,8 @@ export default function SyncManager() {
   >(null);
   const [recoveryRevoked, setRecoveryRevoked] = useState(false);
   const [applyingRecovery, setApplyingRecovery] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckMsg, setRecheckMsg] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -248,22 +250,71 @@ export default function SyncManager() {
     }
   };
 
+  // Force an immediate license check-in (instead of waiting for the periodic
+  // one) so a portal-side change — e.g. an extended trial or a new
+  // subscription — is reflected right away. Owner-only on the server.
+  const handleRecheck = useCallback(async () => {
+    setRechecking(true);
+    setRecheckMsg(null);
+    try {
+      const res = await fetch("/api/license/checkin", { method: "POST", credentials: "include" });
+      if (res.status === 401 || res.status === 403) {
+        setRecheckMsg("Only the Host owner can re-check the license. Ask them to do this on the Host.");
+        return;
+      }
+      if (!res.ok) {
+        const j = await res.json().catch(() => null);
+        setRecheckMsg(j?.error || "Couldn't reach the licensing server. Check this computer's internet connection, then try again.");
+        return;
+      }
+      // Re-pull the full snapshot (includes portalBillingUrl) so the banner re-evaluates.
+      const statusRes = await fetch("/api/license/status", { credentials: "include" });
+      const snapshot = await statusRes.json().catch(() => null);
+      if (snapshot) setLicenseSnapshot(snapshot);
+    } catch {
+      setRecheckMsg("Couldn't reach the licensing server. Check this computer's internet connection, then try again.");
+    } finally {
+      setRechecking(false);
+    }
+  }, []);
+
+  const renderRecheckButton = (tone: "amber" | "red") => (
+    <button
+      type="button"
+      onClick={handleRecheck}
+      disabled={rechecking}
+      data-testid="button-recheck-license"
+      className={
+        tone === "red"
+          ? "shrink-0 inline-flex items-center gap-1.5 px-3 py-1 border border-red-300 dark:border-red-700 text-red-700 dark:text-red-200 text-xs font-medium rounded hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-50"
+          : "shrink-0 inline-flex items-center gap-1.5 px-3 py-1 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 text-xs font-medium rounded hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50"
+      }
+    >
+      {rechecking && <Loader2 className="w-3 h-3 animate-spin" />}
+      {rechecking ? "Checking…" : "Re-check now"}
+    </button>
+  );
+
   return (
     <>
       {/* Payment required banner — non-blocking, visible on all screens */}
       {paymentRequired && !isDisabled && (
         <div className="fixed top-0 left-0 right-0 z-50">
-          <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
-            <span className="flex-1">Your free trial has ended. Subscribe to keep using Otto.</span>
-            {portalBillingUrl && (
-              <button
-                type="button"
-                onClick={openPortalBilling}
-                className="shrink-0 px-3 py-1 bg-amber-600 text-white text-xs font-medium rounded hover:bg-amber-700"
-              >
-                Subscribe
-              </button>
-            )}
+          <div className="bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <div className="flex items-center gap-2">
+              <span className="flex-1">Your free trial has ended. Subscribe to keep using Otto.</span>
+              {renderRecheckButton("amber")}
+              {portalBillingUrl && (
+                <button
+                  type="button"
+                  onClick={openPortalBilling}
+                  className="shrink-0 px-3 py-1 bg-amber-600 text-white text-xs font-medium rounded hover:bg-amber-700"
+                >
+                  Subscribe
+                </button>
+              )}
+            </div>
+            {recheckMsg && <p className="mt-1 text-xs opacity-90">{recheckMsg}</p>}
           </div>
         </div>
       )}
@@ -271,17 +322,21 @@ export default function SyncManager() {
       {/* Disabled/read-only banner for expired trial + grace */}
       {isDisabled && paymentRequired && (
         <div className="fixed top-0 left-0 right-0 z-50">
-          <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
-            <span className="flex-1 font-medium">Your Otto trial has expired. Subscribe to resume full access. Your data is safe and will be here when you return.</span>
-            {portalBillingUrl && (
-              <button
-                type="button"
-                onClick={openPortalBilling}
-                className="shrink-0 px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700"
-              >
-                Subscribe
-              </button>
-            )}
+          <div className="bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+            <div className="flex items-center gap-2">
+              <span className="flex-1 font-medium">Your Otto trial has expired. Subscribe to resume full access. Your data is safe and will be here when you return.</span>
+              {renderRecheckButton("red")}
+              {portalBillingUrl && (
+                <button
+                  type="button"
+                  onClick={openPortalBilling}
+                  className="shrink-0 px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700"
+                >
+                  Subscribe
+                </button>
+              )}
+            </div>
+            {recheckMsg && <p className="mt-1 text-xs opacity-90">{recheckMsg}</p>}
           </div>
         </div>
       )}
