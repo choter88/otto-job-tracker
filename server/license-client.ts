@@ -45,8 +45,11 @@ export type LicenseRequestError = {
 type PostJsonResult = {
   status: number;
   json: any;
+  rawText?: string;
   networkError: LicenseRequestError | null;
 };
+
+const LICENSE_CLIENT_USER_AGENT = `OttoTracker/${process.env.OTTO_APP_VERSION || process.env.npm_package_version || "desktop"}`;
 
 export function getLicenseBaseUrl(): URL {
   const raw = (process.env.OTTO_LICENSE_BASE_URL || "https://ottojobtracker.com").trim();
@@ -62,7 +65,12 @@ async function fetchJson(url: URL, body: unknown, bearerToken?: string): Promise
   const timeout = setTimeout(() => ctrl.abort(), 8000);
   try {
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        // Identify the desktop so the response is unambiguous in logs and so the
+        // portal's edge (e.g. Cloudflare bot rules) can allowlist by User-Agent.
+        "User-Agent": LICENSE_CLIENT_USER_AGENT,
+      };
       if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
       const res = await fetch(url, {
         method: "POST",
@@ -70,8 +78,12 @@ async function fetchJson(url: URL, body: unknown, bearerToken?: string): Promise
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
-      const json = await res.json().catch(() => null);
-      return { status: res.status, json, networkError: null };
+      // Read the raw body so non-JSON error responses (edge block pages, 5xx
+      // HTML, etc.) are preserved for diagnostics instead of collapsing to null.
+      const rawText = await res.text().catch(() => "");
+      let json: any = null;
+      if (rawText) { try { json = JSON.parse(rawText); } catch { json = null; } }
+      return { status: res.status, json, rawText, networkError: null };
     } catch (error: any) {
       const isTimeout = error?.name === "AbortError";
       return {
@@ -91,7 +103,11 @@ async function fetchJson(url: URL, body: unknown, bearerToken?: string): Promise
   }
 }
 
-function errorFromResponse(status: number, json: any): LicenseRequestError {
+function errorFromResponse(status: number, json: any, rawText?: string): LicenseRequestError {
+  // For non-JSON error responses (edge block pages, 5xx HTML), surface the HTTP
+  // status and a body snippet so lastError is diagnosable instead of a generic
+  // "Request failed" that hides whether it was a 403/429/502/etc.
+  const snippet = rawText ? rawText.replace(/\s+/g, " ").trim().slice(0, 180) : "";
   const message =
     (json && (json.error || json.message)) ||
     (status === 401
@@ -100,7 +116,7 @@ function errorFromResponse(status: number, json: any): LicenseRequestError {
         ? "Not found"
         : status === 409
           ? "Conflict"
-          : "Request failed");
+          : `HTTP ${status}${snippet ? `: ${snippet}` : ""}`);
   const code =
     (json && (json.code || json.errorCode)) ||
     (status === 401
@@ -237,9 +253,9 @@ export async function portalCheckin(payload: {
 }): Promise<LicenseCheckinResult | { ok: false; error: LicenseRequestError }> {
   const base = getLicenseBaseUrl();
   const url = new URL("/license/v1/checkin", base);
-  const { status, json, networkError } = await fetchJson(url, payload);
+  const { status, json, rawText, networkError } = await fetchJson(url, payload);
   if (networkError) return { ok: false, error: networkError };
-  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
+  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json, rawText) };
 
   const serverTime = typeof json?.serverTime === "number" ? json.serverTime : 0;
   const nextCheckinDueAt = typeof json?.nextCheckinDueAt === "number" ? json.nextCheckinDueAt : 0;
