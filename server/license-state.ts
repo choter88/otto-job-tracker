@@ -110,6 +110,17 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
   const lastError = typeof state.lastError === "string" && state.lastError.trim() ? state.lastError.trim() : null;
   const checkinOverdue = typeof nextCheckinDueAt === "number" && nowServerTime > nextCheckinDueAt;
 
+  // The desktop already knows the date the office has PAID THROUGH (currentPeriodEnd,
+  // refreshed on each successful check-in). Licensing enforcement follows that, not
+  // check-in liveness: a transient inability to reach the portal (CDN/bot block,
+  // network blip, edge outage) must never lock a paid, active office. We only fall to
+  // read-only when the paid period has genuinely elapsed (the subscription-grace block
+  // below) or the portal explicitly returned DISABLED on a *successful* check-in.
+  const paidThroughNow =
+    typeof state.currentPeriodEnd === "number" &&
+    state.currentPeriodEnd > 0 &&
+    nowServerTime <= state.currentPeriodEnd;
+
   let mode: LicenseMode = "UNACTIVATED";
   let writeAllowed = true;
   let message = "Activation required";
@@ -156,10 +167,12 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
       const lastOk = lastSuccessfulCheckinAt || nextCheckinDueAt;
       const outageGraceEndsAt = lastOk ? lastOk + CHECKIN_OUTAGE_GRACE_MS : null;
 
-      if (outageGraceEndsAt && nowServerTime <= outageGraceEndsAt) {
+      if (paidThroughNow || (outageGraceEndsAt && nowServerTime <= outageGraceEndsAt)) {
+        // Paid through the current period, or still within the check-in-outage
+        // window — keep working. Edge/network flakiness never locks a paid office.
         mode = "GRACE";
         writeAllowed = true;
-        graceEndsAt = outageGraceEndsAt;
+        graceEndsAt = paidThroughNow ? null : outageGraceEndsAt;
         message = "License check-in overdue. Otto Tracker will keep working while it retries.";
       } else {
         mode = "READ_ONLY";
@@ -176,6 +189,11 @@ export function computeLicenseSnapshot(state: LicenseState): LicenseSnapshot {
       writeAllowed = true;
       graceEndsAt = null;
       message = "License active";
+    } else if (paidThroughNow) {
+      mode = "GRACE";
+      writeAllowed = true;
+      graceEndsAt = null;
+      message = "License check-in overdue. Otto Tracker will keep working while it retries.";
     } else {
       mode = "READ_ONLY";
       writeAllowed = false;
