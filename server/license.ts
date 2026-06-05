@@ -121,13 +121,20 @@ export async function activateHostWithPortalToken(portalToken: string, officeId:
 
 function getLocalAddresses(): string[] {
   const port = process.env.PORT || String(OTTO_DEFAULT_PORT);
-  const protocol = process.env.OTTO_TLS === "true" ? "https" : "http";
   const nets = os.networkInterfaces();
+  // Emit bare `host:port`, NOT `scheme://host:port`. The portal sits behind an
+  // edge WAF (Google Cloud Armor / OWASP RFI/SSRF managed rule) that returns a
+  // 403 for any request body containing a `scheme://<IP-literal>:<port>` URL —
+  // which silently blocked every check-in at the edge before it reached the app.
+  // Consumers re-add the scheme: the portal's buildDiscovery() and the desktop's
+  // normalizeDiscoveryHostUrl() both prepend `https://` for schemeless entries,
+  // and Hosts always run TLS so https is the correct default. Do NOT reintroduce
+  // a `scheme://` prefix here or check-ins will start 403ing again.
   return Object.values(nets)
     .flat()
     .filter((n): n is os.NetworkInterfaceInfo => Boolean(n))
     .filter((n) => n.family === "IPv4" && !n.internal && !n.address.startsWith("169.254."))
-    .map((n) => `${protocol}://${n.address}:${port}`);
+    .map((n) => `${n.address}:${port}`);
 }
 
 function computePairingCode(fingerprint256: string): string {
