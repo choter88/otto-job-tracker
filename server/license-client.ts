@@ -51,6 +51,33 @@ type PostJsonResult = {
 
 const LICENSE_CLIENT_USER_AGENT = `OttoTracker/${process.env.OTTO_APP_VERSION || process.env.npm_package_version || "desktop"}`;
 
+// Prefer Electron's net.fetch (Chromium's network stack) for portal requests.
+// Node/undici presents a non-browser TLS/HTTP fingerprint that the portal's
+// Cloudflare edge bot-management challenges — curl and the browser pass, but the
+// app's undici request gets a non-JSON block page (REQUEST_FAILED) that never
+// reaches the origin. net.fetch routes through Chromium, so the request is
+// indistinguishable from the Chrome that already works. Falls back to global
+// fetch outside Electron (dev/tests/non-Electron hosts).
+let _licenseFetch: typeof fetch | null | undefined;
+async function getLicenseFetch(): Promise<typeof fetch> {
+  if (_licenseFetch === undefined) {
+    _licenseFetch = null;
+    try {
+      if ((process as any)?.versions?.electron) {
+        const mod = "electron"; // indirect so tsc/esbuild don't statically resolve it
+        const electron: any = await import(mod);
+        const netFetch = electron?.net?.fetch;
+        if (typeof netFetch === "function") {
+          _licenseFetch = ((input: any, init?: any) => netFetch.call(electron.net, input, init)) as typeof fetch;
+        }
+      }
+    } catch {
+      _licenseFetch = null; // not in an Electron main process — use global fetch
+    }
+  }
+  return _licenseFetch || fetch;
+}
+
 export function getLicenseBaseUrl(): URL {
   const raw = (process.env.OTTO_LICENSE_BASE_URL || "https://ottojobtracker.com").trim();
   try {
@@ -72,7 +99,8 @@ async function fetchJson(url: URL, body: unknown, bearerToken?: string): Promise
         "User-Agent": LICENSE_CLIENT_USER_AGENT,
       };
       if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
-      const res = await fetch(url, {
+      const doFetch = await getLicenseFetch();
+      const res = await doFetch(url.toString(), {
         method: "POST",
         headers,
         body: JSON.stringify(body),
@@ -750,9 +778,10 @@ async function patchJson(url: URL, body: unknown): Promise<PostJsonResult> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const res = await fetch(url, {
+    const doFetch = await getLicenseFetch();
+    const res = await doFetch(url.toString(), {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "User-Agent": LICENSE_CLIENT_USER_AGENT },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
