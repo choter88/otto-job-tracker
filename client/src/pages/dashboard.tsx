@@ -89,7 +89,26 @@ export default function Dashboard() {
     }
   };
 
+  // Fetch jobs data. These hooks must run unconditionally — before any early
+  // return — so the hook order is stable across renders (rules-of-hooks /
+  // React #310). They no-op without an office via `enabled`.
+  const { data: jobs = [], isLoading: jobsLoading } = useQuery<Job[]>({
+    queryKey: ["/api/jobs"],
+    enabled: !!user?.officeId,
+  });
+
+  const { data: overdueJobs = [] } = useQuery<any[]>({
+    queryKey: ["/api/jobs/overdue"],
+    enabled: !!user?.officeId,
+  });
+
+  const { data: office } = useQuery<Office>({
+    queryKey: ["/api/offices", user?.officeId],
+    enabled: !!user?.officeId,
+  });
+
   // A user without an office can't use the desktop app. This can happen if they were removed by the owner.
+  // (Early return lives AFTER the hooks above so hook order stays stable.)
   if (user && !user.officeId) {
     return (
       <div className="min-h-screen flex items-center justify-center p-8 bg-background">
@@ -113,23 +132,6 @@ export default function Dashboard() {
       </div>
     );
   }
-
-  // Fetch jobs data
-  const { data: jobs = [], isLoading: jobsLoading } = useQuery<Job[]>({
-    queryKey: ["/api/jobs"],
-    enabled: !!user?.officeId,
-  });
-
-
-  const { data: overdueJobs = [] } = useQuery<any[]>({
-    queryKey: ["/api/jobs/overdue"],
-    enabled: !!user?.officeId,
-  });
-
-  const { data: office } = useQuery<Office>({
-    queryKey: ["/api/offices", user?.officeId],
-    enabled: !!user?.officeId,
-  });
 
   const renderTabContent = () => {
     switch (activeTab) {
