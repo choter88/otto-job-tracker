@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useTrackPage } from "@/hooks/use-track-page";
@@ -253,7 +253,9 @@ export default function SyncManager() {
   // Force an immediate license check-in (instead of waiting for the periodic
   // one) so a portal-side change — e.g. an extended trial or a new
   // subscription — is reflected right away. Owner-only on the server.
-  const handleRecheck = useCallback(async () => {
+  // NOTE: plain function, not useCallback — this lives below the `if (!user)`
+  // early return, so a hook here would violate the Rules of Hooks (React #310).
+  const handleRecheck = async () => {
     setRechecking(true);
     setRecheckMsg(null);
     try {
@@ -276,7 +278,7 @@ export default function SyncManager() {
     } finally {
       setRechecking(false);
     }
-  }, []);
+  };
 
   const renderRecheckButton = (tone: "amber" | "red") => (
     <button
