@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getOrCreateDeviceId } from "@/components/sync-manager";
 
 export interface OrderSheetDesktopConfig {
   enabled: boolean;
@@ -68,6 +69,11 @@ export function getOrderSheetsBridge(): OrderSheetsBridge | null {
 }
 
 const RETRY_DELAY_MS = 30_000;
+
+// Watcher-presence heartbeat cadence. The panel treats anything quiet for
+// ~3 intervals as "not reporting", so keep these two numbers in step.
+export const HEARTBEAT_INTERVAL_MS = 60_000;
+export const WATCHER_STALE_AFTER_MS = 3 * HEARTBEAT_INTERVAL_MS;
 
 export function useOrderSheetIngestion() {
   const { user } = useAuth();
@@ -210,6 +216,49 @@ export function useOrderSheetIngestion() {
     };
     // `toast` is a stable dispatch; re-subscribing on user change only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.officeId, user?.role]);
+
+  // ── Watcher presence heartbeat ───────────────────────────────────────
+  // Report this machine's watcher status to the office so the "Watching
+  // from" panel on the Order Sheets page is accurate from any computer.
+  // Same guard as ingestion: a view-only session can't import, so it
+  // shouldn't claim to be watching either.
+  useEffect(() => {
+    const bridge = getOrderSheetsBridge();
+    if (!bridge || !user?.officeId || user.role === "view_only") return;
+
+    let disposed = false;
+
+    const sendHeartbeat = async () => {
+      if (disposed) return;
+      try {
+        const snapshot = await bridge.orderSheetsGet();
+        await apiRequest("POST", "/api/order-sheets/watcher-heartbeat", {
+          deviceId: getOrCreateDeviceId(),
+          folderPath: snapshot.config?.folder || undefined,
+          enabled: !!snapshot.config?.enabled,
+          state: snapshot.status?.state || "stopped",
+          error: snapshot.status?.error || undefined,
+        });
+      } catch {
+        // Host offline or signed out — the next beat will catch up. A
+        // missed heartbeat is exactly what the panel's staleness shows.
+      }
+    };
+
+    void sendHeartbeat();
+    const interval = window.setInterval(() => void sendHeartbeat(), HEARTBEAT_INTERVAL_MS);
+    // Status changes (folder picked, toggled off, folder vanished) beat
+    // immediately instead of waiting out the interval.
+    const unsubscribe = bridge.onOrderSheetsEvent((payload) => {
+      if (payload?.kind === "status") void sendHeartbeat();
+    });
+
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      unsubscribe();
+    };
   }, [user?.id, user?.officeId, user?.role]);
 }
 

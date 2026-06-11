@@ -542,6 +542,35 @@ export const orderSheetImports = sqliteTable(
   }),
 );
 
+// Order-sheet watcher presence. One row per computer that has the folder
+// automation configured, refreshed by a heartbeat from that machine's
+// renderer. Powers the office-wide "Watching from" panel: any computer
+// can see which machines are actually watching, which folder, and when
+// each was last heard from — so "why did sheets stop importing?" is
+// answerable from any desk. Telemetry only; never consulted by ingest.
+export const orderSheetWatchers = sqliteTable(
+  "order_sheet_watchers",
+  {
+    // Same per-machine id the sync websocket registers with
+    // (localStorage "otto.deviceId"), so user-set names from the
+    // Computers tab can be joined in.
+    deviceId: text("device_id").primaryKey(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    deviceLabel: text("device_label"),
+    // Display only — paths are meaningless off the owning machine.
+    folderPath: text("folder_path"),
+    enabled: integer("enabled", { mode: "boolean" }).default(false).notNull(),
+    // watching | error | stopped (mirrors the desktop watcher's status)
+    state: text("state").notNull(),
+    error: text("error"),
+    lastHeartbeatAt: integer("last_heartbeat_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    officeIdx: index("order_sheet_watchers_office_idx").on(table.officeId),
+  }),
+);
+
 // Relations
 export const userRelations = relations(users, ({ one, many }) => ({
   office: one(offices, {
@@ -732,6 +761,7 @@ export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
 export type InsertPhiAccessLog = z.infer<typeof insertPhiAccessLogSchema>;
 export type OrderSheetImport = typeof orderSheetImports.$inferSelect;
 export type InsertOrderSheetImport = z.infer<typeof insertOrderSheetImportSchema>;
+export type OrderSheetWatcher = typeof orderSheetWatchers.$inferSelect;
 export type PinResetRequest = typeof pinResetRequests.$inferSelect;
 
 // Custom type for PIN reset request with user details (returned by API)

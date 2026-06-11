@@ -18,6 +18,8 @@ import {
   phiAccessLogs,
   pinResetRequests,
   orderSheetImports,
+  orderSheetWatchers,
+  clientDevices,
   type User,
   type InsertUser,
   type Office,
@@ -49,6 +51,7 @@ import {
   type PinResetRequestWithUser,
   type OrderSheetImport,
   type InsertOrderSheetImport,
+  type OrderSheetWatcher,
 } from "@shared/schema";
 import { db } from "./db";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
@@ -201,6 +204,19 @@ export interface IStorage {
   getKnownOrderSheetHashes(officeId: string, hashes: string[]): Promise<string[]>;
   createOrderSheetImport(record: InsertOrderSheetImport): Promise<OrderSheetImport>;
   updateOrderSheetImport(id: string, updates: Partial<OrderSheetImport>): Promise<OrderSheetImport>;
+
+  // Order-sheet watcher presence (heartbeats from each watching computer)
+  upsertOrderSheetWatcher(record: {
+    deviceId: string;
+    officeId: string;
+    deviceLabel?: string | null;
+    folderPath?: string | null;
+    enabled: boolean;
+    state: string;
+    error?: string | null;
+  }): Promise<OrderSheetWatcher>;
+  getOrderSheetWatchersByOffice(officeId: string): Promise<Array<OrderSheetWatcher & { customName: string | null }>>;
+  deleteOrderSheetWatcher(officeId: string, deviceId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1899,6 +1915,67 @@ export class DatabaseStorage implements IStorage {
       .returning();
     if (!updated) throw new Error("Order sheet import not found");
     return updated;
+  }
+
+  // ── Order-sheet watcher presence ───────────────────────────────────
+
+  async upsertOrderSheetWatcher(record: {
+    deviceId: string;
+    officeId: string;
+    deviceLabel?: string | null;
+    folderPath?: string | null;
+    enabled: boolean;
+    state: string;
+    error?: string | null;
+  }): Promise<OrderSheetWatcher> {
+    const values = {
+      deviceId: record.deviceId,
+      officeId: record.officeId,
+      deviceLabel: record.deviceLabel ?? null,
+      folderPath: record.folderPath ?? null,
+      enabled: record.enabled,
+      state: record.state,
+      error: record.error ?? null,
+      lastHeartbeatAt: new Date(),
+    };
+    const [watcher] = await db
+      .insert(orderSheetWatchers)
+      .values(values)
+      .onConflictDoUpdate({ target: orderSheetWatchers.deviceId, set: values })
+      .returning();
+    return watcher;
+  }
+
+  async getOrderSheetWatchersByOffice(
+    officeId: string,
+  ): Promise<Array<OrderSheetWatcher & { customName: string | null }>> {
+    // Join the Computers-tab registry so a device an admin renamed
+    // ("Front Desk") shows that name instead of the UA-derived label.
+    const rows = await db
+      .select({
+        watcher: orderSheetWatchers,
+        customName: clientDevices.name,
+      })
+      .from(orderSheetWatchers)
+      .leftJoin(clientDevices, eq(clientDevices.id, orderSheetWatchers.deviceId))
+      .where(eq(orderSheetWatchers.officeId, officeId))
+      .orderBy(desc(orderSheetWatchers.lastHeartbeatAt));
+
+    // Self-clean display: a watcher that was switched OFF and hasn't been
+    // heard from in a week is just noise (machine reconfigured or gone).
+    // Rows that were last seen ENABLED stay visible however stale they
+    // are — "your front desk stopped reporting" is exactly the news this
+    // panel exists to deliver.
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return rows
+      .filter((row) => row.watcher.enabled || new Date(row.watcher.lastHeartbeatAt).getTime() >= weekAgo)
+      .map((row) => ({ ...row.watcher, customName: row.customName ?? null }));
+  }
+
+  async deleteOrderSheetWatcher(officeId: string, deviceId: string): Promise<void> {
+    await db
+      .delete(orderSheetWatchers)
+      .where(and(eq(orderSheetWatchers.officeId, officeId), eq(orderSheetWatchers.deviceId, deviceId)));
   }
 }
 

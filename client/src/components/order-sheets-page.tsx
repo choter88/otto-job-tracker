@@ -13,6 +13,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { HEARTBEAT_INTERVAL_MS, WATCHER_STALE_AFTER_MS } from "@/hooks/use-order-sheets";
+import { getOrCreateDeviceId } from "@/components/sync-manager";
 import JobDialog from "@/components/job-dialog";
 import OrderSheetFolderSetup from "@/components/order-sheet-folder-setup";
 import { Button } from "@/components/ui/button";
@@ -22,7 +24,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { openJobDetails } from "@/components/spotlight/feature-spotlight-host";
 import { formatPatientDisplayName } from "@shared/name-format";
-import type { Office, OrderSheetImport } from "@shared/schema";
+import type { Office, OrderSheetImport, OrderSheetWatcher } from "@shared/schema";
 import { format, formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 import {
@@ -32,6 +34,7 @@ import {
   Loader2,
   MonitorSmartphone,
   ScanLine,
+  X,
   XCircle,
 } from "lucide-react";
 
@@ -95,6 +98,36 @@ export default function OrderSheetsPage() {
     queryKey: ["/api/order-sheets"],
     enabled: !!user?.officeId,
   });
+
+  // Office-wide watcher presence — which computers are watching folders.
+  // Polled (no websocket broadcast for heartbeats) on the same cadence
+  // the machines report on.
+  type WatcherRow = OrderSheetWatcher & { customName: string | null };
+  const { data: watchers = [] } = useQuery<WatcherRow[]>({
+    queryKey: ["/api/order-sheets/watchers"],
+    enabled: !!user?.officeId,
+    refetchInterval: HEARTBEAT_INTERVAL_MS,
+  });
+
+  const removeWatcherMutation = useMutation({
+    mutationFn: async (deviceId: string) => {
+      const res = await apiRequest("DELETE", `/api/order-sheets/watchers/${deviceId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/order-sheets/watchers"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't remove", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const myDeviceId = useMemo(() => getOrCreateDeviceId(), []);
+  // The list only earns its space when it says something the controls
+  // above don't: another computer exists, or a watcher went quiet. A
+  // single fresh row for THIS machine is pure repetition — hide it.
+  const showWatchers =
+    watchers.length > 0 && !(watchers.length === 1 && watchers[0].deviceId === myDeviceId);
 
   const officeSettings = (office?.settings || {}) as Record<string, any>;
   const jobTypeLabel = (record: OrderSheetImport) => {
@@ -164,6 +197,94 @@ export default function OrderSheetsPage() {
         </CardHeader>
         <CardContent>
           <OrderSheetFolderSetup description="Save each printed frame order sheet (PDF or text file) into one folder, and Otto turns it into a job automatically. Sheets it can't fully read land in “Needs attention” below." />
+
+          {/* ── Office-wide watcher presence ── */}
+          {showWatchers && (
+            <div className="mt-4 pt-4 border-t border-line-2 space-y-2" data-testid="panel-order-sheet-watchers">
+              <p className="text-[calc(11px*var(--ui-scale))] font-medium uppercase tracking-wide text-ink-mute">
+                Watching from
+              </p>
+              {watchers.map((watcher) => {
+                const heartbeatAge = Date.now() - new Date(watcher.lastHeartbeatAt).getTime();
+                const fresh = heartbeatAge < WATCHER_STALE_AFTER_MS;
+                const isWatching = fresh && watcher.enabled && watcher.state === "watching";
+                const hasProblem = fresh && watcher.state === "error";
+                const label = isWatching
+                  ? "Watching"
+                  : hasProblem
+                    ? "Problem with folder"
+                    : fresh
+                      ? watcher.enabled
+                        ? "Not watching"
+                        : "Off"
+                      : `Not reporting · last seen ${formatDistanceToNow(new Date(watcher.lastHeartbeatAt), { addSuffix: true })}`;
+                return (
+                  <div
+                    key={watcher.deviceId}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1"
+                    data-testid={`row-order-sheet-watcher-${watcher.deviceId}`}
+                  >
+                    <span
+                      className={cn(
+                        "w-1.5 h-1.5 rounded-full shrink-0",
+                        isWatching && "bg-brand-emerald animate-[ottoPulseDot_2.4s_ease-out_infinite]",
+                        hasProblem && "bg-danger",
+                        !isWatching && !hasProblem && "bg-ink-mute",
+                      )}
+                    />
+                    <span className="text-sm font-medium text-ink">
+                      {watcher.customName || watcher.deviceLabel || "Unknown computer"}
+                    </span>
+                    {watcher.deviceId === myDeviceId && (
+                      <Badge className="bg-line-2 text-ink-mute border-0 text-[calc(10px*var(--ui-scale))]">
+                        This computer
+                      </Badge>
+                    )}
+                    {watcher.folderPath && (
+                      <span
+                        className="text-xs text-ink-mute font-mono truncate max-w-[280px]"
+                        title={watcher.folderPath}
+                      >
+                        {watcher.folderPath}
+                      </span>
+                    )}
+                    <span className="flex-1" />
+                    <span
+                      className={cn(
+                        "text-xs whitespace-nowrap",
+                        isWatching && "text-brand-emerald",
+                        hasProblem && "text-danger",
+                        !isWatching && !hasProblem && "text-ink-mute",
+                      )}
+                      title={hasProblem ? watcher.error || undefined : undefined}
+                    >
+                      {label}
+                    </span>
+                    {!fresh && canEdit && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => removeWatcherMutation.mutate(watcher.deviceId)}
+                            disabled={removeWatcherMutation.isPending}
+                            className="shrink-0 grid place-items-center w-5 h-5 rounded text-ink-mute hover:text-ink hover:bg-line-2"
+                            aria-label="Remove this computer from the list"
+                            data-testid={`button-remove-watcher-${watcher.deviceId}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Remove from this list. If the computer is still watching, it will reappear on its
+                          next check-in.
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
 

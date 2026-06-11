@@ -4507,6 +4507,58 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  // ── Order-sheet watcher presence ────────────────────────────────────
+  // Each watching computer's renderer posts a heartbeat (~60s + on status
+  // change). The panel on the Order Sheets page reads the office-wide list
+  // so any desk can see which machines are actually watching. Telemetry
+  // only — no PHI, no broadcast (the panel polls on its own interval).
+
+  const watcherHeartbeatSchema = z.object({
+    deviceId: z.string().min(8).max(64),
+    folderPath: z.string().max(2000).optional(),
+    enabled: z.boolean(),
+    state: z.enum(["watching", "error", "stopped"]),
+    error: z.string().max(500).optional(),
+  });
+
+  app.post("/api/order-sheets/watcher-heartbeat", requireOffice, async (req, res) => {
+    try {
+      const payload = watcherHeartbeatSchema.parse(req.body || {});
+      const watcher = await storage.upsertOrderSheetWatcher({
+        deviceId: payload.deviceId,
+        officeId: getOfficeUser(req).officeId,
+        deviceLabel: deriveDeviceAutoLabel(req.headers["user-agent"]) || null,
+        folderPath: payload.folderPath || null,
+        enabled: payload.enabled,
+        state: payload.state,
+        error: payload.error || null,
+      });
+      res.json(watcher);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/order-sheets/watchers", requireOffice, async (req, res) => {
+    try {
+      const watchers = await storage.getOrderSheetWatchersByOffice(getOfficeUser(req).officeId);
+      res.json(watchers);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Remove a stale entry (replaced/retired computer). If the machine is
+  // actually still alive, its next heartbeat simply re-creates the row.
+  app.delete("/api/order-sheets/watchers/:deviceId", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      await storage.deleteOrderSheetWatcher(getOfficeUser(req).officeId, req.params.deviceId);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ── Backups: run-now ───────────────────────────────────────────────
   // Recovery insurance for any office user; requireOffice + requireNotViewOnly
   // is intentional — no role gate beyond that.

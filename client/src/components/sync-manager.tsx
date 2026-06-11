@@ -18,7 +18,10 @@ function buildSyncWsUrl(): string {
   return `${protocol}//${window.location.host}/sync-ws`;
 }
 
-function getOrCreateDeviceId(): string {
+// Exported: the order-sheet watcher heartbeat reports under the same
+// per-machine id so the "Watching from" panel can join user-set device
+// names from the Computers tab.
+export function getOrCreateDeviceId(): string {
   const key = "otto.deviceId";
   let id = localStorage.getItem(key);
   if (!id) {
