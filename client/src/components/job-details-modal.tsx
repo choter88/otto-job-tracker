@@ -580,6 +580,12 @@ export default function JobDetailsModal({
     }
   })();
 
+  // Automation-created jobs carry a saved copy of the source order sheet.
+  // When present, the Overview tab grows a third column to host the PDF
+  // viewer (and the modal widens to fit) — manual jobs keep the original
+  // two-column layout.
+  const hasOrderSheet = (job as any).source === "order_sheet" && !!job.orderId;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Fixed height keeps the footer + tabs anchored regardless of which
@@ -588,7 +594,12 @@ export default function JobDetailsModal({
           header). */}
       <DialogContent
         hideClose
-        className="max-w-[1013px] w-[min(1013px,calc(100vw-48px))] h-[min(720px,calc(100vh-64px))] p-0 overflow-hidden flex flex-col gap-0"
+        className={cn(
+          "h-[min(720px,calc(100vh-64px))] p-0 overflow-hidden flex flex-col gap-0",
+          hasOrderSheet
+            ? "max-w-[1280px] w-[min(1280px,calc(100vw-48px))]"
+            : "max-w-[1013px] w-[min(1013px,calc(100vw-48px))]",
+        )}
         data-testid="dialog-job-details"
       >
         {/* Header — patient/tray identifier, status pill, star, close X */}
@@ -723,7 +734,12 @@ export default function JobDetailsModal({
             value="overview"
             className="mt-0 flex-1 min-h-0 overflow-y-scroll px-6 py-5"
           >
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-7">
+            <div
+              className={cn(
+                "grid grid-cols-1 gap-7",
+                hasOrderSheet ? "lg:grid-cols-[1fr_1fr_1.1fr]" : "lg:grid-cols-[1fr_1.15fr]",
+              )}
+            >
               {/* Left column: Patient & Order, Custom fields, Notes */}
               <div>
                 <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
@@ -838,14 +854,6 @@ export default function JobDetailsModal({
                   )}
                 </div>
 
-                {/* Order Sheet — the JPEG render of page 1 captured at
-                    automation ingest. Hidden for manually-created jobs.
-                    Fetched by stable orderId so this also resolves for
-                    jobs that have already been archived. */}
-                {(job as any).source === "order_sheet" && job.orderId && (
-                  <OrderSheetAttachmentSection orderId={job.orderId} />
-                )}
-
               </div>
 
               {/* Right column: Timeline (lifecycle history with actor + timestamp). */}
@@ -918,6 +926,16 @@ export default function JobDetailsModal({
                       we avoid a height shift when the async query resolves. */}
                 </div>
               </div>
+
+              {/* Third column — the saved order sheet (automation-created
+                  jobs only). Promoted to its own column so the source
+                  document is visible at a glance, not buried below
+                  Notes. */}
+              {hasOrderSheet && (
+                <div className="min-w-0">
+                  <OrderSheetAttachmentSection orderId={job.orderId} />
+                </div>
+              )}
             </div>
           </TabsContent>
 
@@ -1366,46 +1384,37 @@ export default function JobDetailsModal({
 // "no preview" fallback because the file is deleted to keep storage
 // bounded by the active worklist.
 //
-// We render the PDF in an iframe (Chromium ships native PDF support, so
-// page nav, zoom, and search just work) instead of an <img>. The server
-// 404s gracefully when no file is saved — older rows, ingest-time render
-// failures, and archived jobs all flow through the same fallback.
+// The iframe points DIRECTLY at the same-origin file endpoint (cookies
+// ride along automatically) rather than at a fetched blob: URL — blob
+// frames are blocked by the app's CSP (frame-src 'self'), which is what
+// made the first version of this component render a blank grey box.
+// Availability is probed with a HEAD request (Express answers HEAD for
+// GET routes with headers only) so the PDF bytes are downloaded exactly
+// once, by the iframe itself. Chromium's built-in viewer provides page
+// nav, zoom, and search; in Electron that viewer is enabled via the
+// `plugins` webPreference on the main window.
 function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
   const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
-  const [fileUrl, setFileUrl] = useState<string>("");
+  const fileUrl = `/api/jobs/by-order-id/${encodeURIComponent(orderId)}/order-sheet-file`;
 
   useEffect(() => {
     let disposed = false;
-    let createdObjectUrl: string | null = null;
     setState("loading");
     (async () => {
       try {
-        const res = await fetch(`/api/jobs/by-order-id/${encodeURIComponent(orderId)}/order-sheet-file`, {
-          credentials: "include",
-        });
-        if (!res.ok) {
-          if (!disposed) setState("missing");
-          return;
-        }
-        const blob = await res.blob();
-        if (disposed) return;
-        createdObjectUrl = URL.createObjectURL(blob);
-        setFileUrl(createdObjectUrl);
-        setState("ready");
+        const res = await fetch(fileUrl, { method: "HEAD", credentials: "include" });
+        if (!disposed) setState(res.ok ? "ready" : "missing");
       } catch {
         if (!disposed) setState("missing");
       }
     })();
     return () => {
       disposed = true;
-      // Revoke the object URL so the underlying Blob can be GC'd.
-      if (createdObjectUrl) URL.revokeObjectURL(createdObjectUrl);
     };
-  }, [orderId]);
+  }, [fileUrl]);
 
   return (
-    <div className="mt-5" data-testid="section-order-sheet-attachment">
-      <div className="border-t border-line my-5" />
+    <div className="flex flex-col h-full min-h-0" data-testid="section-order-sheet-attachment">
       <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
         <ScanLine className="h-3 w-3" aria-hidden />
         Order Sheet
@@ -1440,7 +1449,7 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
         <iframe
           src={fileUrl}
           title="Order sheet"
-          className="block w-full h-[460px] rounded-lg border border-line bg-paper-2"
+          className="block w-full flex-1 min-h-[480px] rounded-lg border border-line bg-paper-2"
           data-testid="iframe-order-sheet"
         />
       )}

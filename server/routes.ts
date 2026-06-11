@@ -4599,6 +4599,14 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.setHeader("Content-Type", mime);
       res.setHeader("Cache-Control", "private, max-age=300");
       res.setHeader("X-Order-Sheet-Page-Count", String(record.attachmentPageCount ?? 1));
+      // The global security middleware stamps X-Frame-Options: DENY and
+      // frame-ancestors 'none' on every response — correct for the app
+      // shell, but this PARTICULAR response exists to be shown inside the
+      // job details modal's same-origin iframe. Relax exactly this
+      // response to same-origin framing; cross-origin embedding stays
+      // blocked.
+      res.setHeader("X-Frame-Options", "SAMEORIGIN");
+      res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
       // Lets the iframe / new tab show the file inline (with the original
       // filename) instead of forcing a download dialog.
       const safeName = record.fileName.replace(/[^A-Za-z0-9._-]/g, "_");

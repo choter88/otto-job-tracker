@@ -146,6 +146,10 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
       sandbox: true,
       spellcheck: false,
       partition: isClient ? "otto-client" : "persist:otto-host",
+      // Chromium's built-in PDF viewer is gated behind the plugins
+      // webPreference. The job details modal renders saved order-sheet
+      // PDFs in an iframe — without this the frame stays blank.
+      plugins: true,
     },
   });
 
@@ -155,7 +159,33 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
   });
   setupContextMenu(win);
   maybeOpenDevTools(win);
-  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // window.open / target=_blank: allow SAME-ORIGIN urls only (used by
+  // "Open in new tab" on the order-sheet PDF — the child window shares
+  // the session partition so the auth cookie rides along, and gets the
+  // plugins pref so the PDF viewer works there too). The child gets no
+  // preload, so it has no otto bridge — it's a plain viewer window.
+  // Everything else stays denied, same as before.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      if (new URL(url).origin === new URL(targetUrl).origin) {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            autoHideMenuBar: true,
+            webPreferences: {
+              contextIsolation: true,
+              sandbox: true,
+              plugins: true,
+              partition: isClient ? "otto-client" : "persist:otto-host",
+            },
+          },
+        };
+      }
+    } catch {
+      // malformed URL — deny below
+    }
+    return { action: "deny" };
+  });
   win.webContents.on("will-navigate", (event, url) => {
     try {
       const target = new URL(url);

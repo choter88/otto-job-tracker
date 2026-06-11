@@ -240,7 +240,11 @@ app.use((_req, res, next) => {
     "Content-Security-Policy",
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: blob:; font-src 'self' data:; " +
-    "connect-src 'self' wss:; frame-ancestors 'none'; " +
+    // frame-src 'self': the job details modal renders the saved order
+    // sheet PDF in a same-origin iframe (/api/jobs/.../order-sheet-file).
+    // Cross-origin frames stay blocked. (The framed RESPONSE also needs
+    // relaxed frame-ancestors — done per-route on the file endpoint.)
+    "connect-src 'self' wss:; frame-src 'self'; frame-ancestors 'none'; " +
     "form-action 'self'; base-uri 'self'; object-src 'none';"
   );
   next();
