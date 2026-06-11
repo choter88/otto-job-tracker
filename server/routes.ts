@@ -40,7 +40,7 @@ import { getRecentErrors, getErrorStats, clearErrors } from "./error-logger";
 import { db, sqlite } from "./db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { hashSecret } from "./secret-hash";
-import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot, getCachedPlan } from "./license";
+import { activateHostWithPortalToken, forceCheckin, getHostToken, getLicenseSnapshot } from "./license";
 import {
   portalGetInviteCode,
   portalRegenerateInviteCode,
@@ -1481,23 +1481,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
       const office = allOffices[0];
 
-      // Enforce Client connection limit from cached plan
-      const plan = getCachedPlan();
-      {
-        const officeUsers = await storage.getUsersInOffice(office.id);
-        // Count non-owner users as Client workstation connections
-        // (the Host owner is created during bootstrap, not via client-register)
-        const clientCount = officeUsers.filter((u) => u.role !== "owner").length;
-        if (clientCount >= plan.clientSlots) {
-          return res.status(403).json({
-            error: "CLIENT_LIMIT_REACHED",
-            message: `This office has reached its workstation limit (${plan.clientSlots} Client workstations). To add more, visit the Otto portal and add a workstation to your subscription.`,
-            clientSlots: plan.clientSlots,
-            maxClients: plan.clientSlots, // backward compat
-            currentClients: clientCount,
-          });
-        }
-      }
+      // No clientSlots check here: workstation seats are consumed by client
+      // DEVICES (client_devices rows, enforced via the over-limit grace +
+      // read-only flow), not by user accounts. Several staff share one
+      // workstation via PIN login, so gating account creation on user count
+      // would wrongly block offices from adding team members.
 
       // Check for existing pending request
       const pendingRequest = await storage.getPendingAccountSignupRequestByLoginId(office.id, normalizedLoginId);
@@ -3223,24 +3211,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
         const requestedRole = role as "manager" | "staff" | "view_only";
 
-        // Enforce Client connection limit before approving.
-        // Note: this check is outside the approval transaction. A theoretical race exists
-        // if two approvals happen simultaneously, but in practice the desktop is a single-user
-        // app with SQLite's single-writer model, making concurrent approvals near-impossible.
-        const plan = getCachedPlan();
-        {
-          const officeUsers = await storage.getUsersInOffice(getOfficeUser(req).officeId);
-          const clientCount = officeUsers.filter((u) => u.role !== "owner").length;
-          if (clientCount >= plan.clientSlots) {
-            return res.status(403).json({
-              error: "CLIENT_LIMIT_REACHED",
-              message: `This office has reached its workstation limit (${plan.clientSlots} Client workstations). To add more, visit the Otto portal and add a workstation to your subscription.`,
-              clientSlots: plan.clientSlots,
-              maxClients: plan.clientSlots, // backward compat
-              currentClients: clientCount,
-            });
-          }
-        }
+        // No clientSlots check here: approving an account adds a USER, not a
+        // workstation. Seats are device-scoped (client_devices + over-limit
+        // grace flow); counting users against clientSlots bricked offices
+        // whose staff share workstations.
 
         const createdUser = await storage.approveAccountSignupRequest(
           req.params.id,
