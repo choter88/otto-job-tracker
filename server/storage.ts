@@ -53,7 +53,9 @@ import {
   type InsertOrderSheetImport,
   type OrderSheetWatcher,
 } from "@shared/schema";
-import { db } from "./db";
+import { db, getDataDir } from "./db";
+import fs from "fs";
+import path from "path";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
@@ -204,6 +206,9 @@ export interface IStorage {
   getKnownOrderSheetHashes(officeId: string, hashes: string[]): Promise<string[]>;
   createOrderSheetImport(record: InsertOrderSheetImport): Promise<OrderSheetImport>;
   updateOrderSheetImport(id: string, updates: Partial<OrderSheetImport>): Promise<OrderSheetImport>;
+  saveOrderSheetAttachment(importId: string, jpegBuffer: Buffer, pageCount: number): Promise<OrderSheetImport>;
+  getOrderSheetImportByJobOrderId(officeId: string, jobOrderId: string): Promise<OrderSheetImport | undefined>;
+  resolveOrderSheetAttachmentPath(record: OrderSheetImport): string | null;
 
   // Order-sheet watcher presence (heartbeats from each watching computer)
   upsertOrderSheetWatcher(record: {
@@ -1915,6 +1920,48 @@ export class DatabaseStorage implements IStorage {
       .returning();
     if (!updated) throw new Error("Order sheet import not found");
     return updated;
+  }
+
+  // Write the JPEG render of page 1 to disk and stamp the ledger row. The
+  // path stored on the row is RELATIVE to the data dir so the same row
+  // works on an installer that moved its data folder (e.g. via env). The
+  // file is written under <data>/order-sheet-attachments/<id>.jpg with
+  // owner-only perms.
+  async saveOrderSheetAttachment(importId: string, jpegBuffer: Buffer, pageCount: number): Promise<OrderSheetImport> {
+    const relPath = path.posix.join("order-sheet-attachments", `${importId}.jpg`);
+    const absPath = path.join(getDataDir(), relPath);
+    fs.mkdirSync(path.dirname(absPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(absPath, jpegBuffer, { mode: 0o600 });
+    return this.updateOrderSheetImport(importId, {
+      attachmentPath: relPath,
+      attachmentSize: jpegBuffer.byteLength,
+      attachmentPageCount: pageCount,
+    });
+  }
+
+  // Lookup by stable orderId so active and ARCHIVED jobs both resolve to
+  // their attachment — order_sheet_imports.jobId points at the active job
+  // UUID, which changes on archive, but jobOrderId mirrors the ORD-…
+  // number that's stable for the life of the order.
+  async getOrderSheetImportByJobOrderId(officeId: string, jobOrderId: string): Promise<OrderSheetImport | undefined> {
+    const [record] = await db
+      .select()
+      .from(orderSheetImports)
+      .where(and(eq(orderSheetImports.officeId, officeId), eq(orderSheetImports.jobOrderId, jobOrderId)));
+    return record || undefined;
+  }
+
+  // Returns the absolute disk path to the attachment, or null if the row
+  // has no attachment OR the file vanished from disk (e.g. user wiped the
+  // data dir). Resolution clamps inside the data dir as a defense against
+  // a malformed relative path.
+  resolveOrderSheetAttachmentPath(record: OrderSheetImport): string | null {
+    if (!record.attachmentPath) return null;
+    const dataDir = getDataDir();
+    const resolved = path.resolve(dataDir, record.attachmentPath);
+    if (!resolved.startsWith(path.resolve(dataDir) + path.sep)) return null;
+    if (!fs.existsSync(resolved)) return null;
+    return resolved;
   }
 
   // ── Order-sheet watcher presence ───────────────────────────────────

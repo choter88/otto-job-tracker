@@ -6,10 +6,14 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "@shared/schema";
 import { bootstrapSqliteSchema } from "./sqlite-bootstrap";
 
+export function getDataDir(): string {
+  if (process.env.OTTO_SQLITE_PATH) return path.dirname(process.env.OTTO_SQLITE_PATH);
+  return process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
+}
+
 function getSqlitePath(): string {
   if (process.env.OTTO_SQLITE_PATH) return process.env.OTTO_SQLITE_PATH;
-  const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
-  return path.join(dataDir, "otto.sqlite");
+  return path.join(getDataDir(), "otto.sqlite");
 }
 
 const sqlitePath = getSqlitePath();

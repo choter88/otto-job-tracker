@@ -533,6 +533,17 @@ export const orderSheetImports = sqliteTable(
     jobId: text("job_id"),
     jobOrderId: text("job_order_id"),
     createdBy: text("created_by").references(() => users.id),
+    // Lightweight viewable copy of the sheet so staff can pull it up
+    // from any computer without hunting in the watched folder. A JPEG
+    // render of page 1 (the renderer encodes it; never the original
+    // bytes) lives on the Host's disk at <data>/order-sheet-attachments/
+    // <id>.jpg with 0o600 perms. Stays in sync with the ledger row's
+    // lifetime — deleting the row also deletes the file.
+    attachmentPath: text("attachment_path"),
+    attachmentSize: integer("attachment_size"),
+    // Pages in the source PDF, so the UI can hint "+N more pages — open
+    // original" when the render is only page 1.
+    attachmentPageCount: integer("attachment_page_count"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
     processedAt: integer("processed_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
   },

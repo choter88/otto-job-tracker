@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("otto", {
   orderSheetsPickFolder: () => ipcRenderer.invoke("otto:orderSheets:pick-folder"),
   orderSheetsConfigure: (payload) => ipcRenderer.invoke("otto:orderSheets:configure", payload),
   orderSheetsExtract: (payload) => ipcRenderer.invoke("otto:orderSheets:extract", payload),
+  orderSheetsReadBytes: (payload) => ipcRenderer.invoke("otto:orderSheets:read-bytes", payload),
   orderSheetsAck: (payload) => ipcRenderer.invoke("otto:orderSheets:ack", payload),
   // Push events from the watcher (new pending file, status change).
   // Returns an unsubscribe function for React effect cleanup.

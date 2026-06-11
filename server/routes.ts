@@ -4264,6 +4264,11 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     fileSize: z.number().int().nonnegative().optional(),
     text: z.string().max(2_000_000).optional(),
     extractError: z.string().max(500).optional(),
+    // Optional viewable copy of page 1 (renderer-encoded JPEG, base64).
+    // 10MB ceiling is well past the renderer's actual output (~150-400KB
+    // typical) and acts as a defensive cap against pathological inputs.
+    attachmentJpegBase64: z.string().max(14_000_000).optional(),
+    attachmentPageCount: z.number().int().min(1).max(50).optional(),
   });
 
   const getOfficeParserOptions = (officeSettings: Record<string, any>) => {
@@ -4433,6 +4438,25 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         }
       }
 
+      // Persist the renderer's JPEG of page 1, if any. Failure here is
+      // non-fatal — the ledger row + auto-created job are already done,
+      // and a missing attachment just means the job dialog won't show
+      // the preview. We never let it block the import response.
+      if (payload.attachmentJpegBase64) {
+        try {
+          const jpegBuffer = Buffer.from(payload.attachmentJpegBase64, "base64");
+          if (jpegBuffer.byteLength > 0 && jpegBuffer.byteLength <= 10 * 1024 * 1024) {
+            record = await storage.saveOrderSheetAttachment(
+              record.id,
+              jpegBuffer,
+              payload.attachmentPageCount ?? 1,
+            );
+          }
+        } catch (attachErr: any) {
+          console.error("[order-sheets] failed to save attachment:", attachErr?.message || attachErr);
+        }
+      }
+
       await logPhiAccess(req, "create", "order_sheet_import", record.id, record.jobOrderId || undefined, {
         fileName: record.fileName,
         status: record.status,
@@ -4502,6 +4526,37 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const updated = await storage.updateOrderSheetImport(record.id, { status: "dismissed" });
       broadcastToOffice(getOfficeUser(req).officeId, { type: "office_updated", ts: Date.now(), source: "order_sheet_automation" });
       res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Stream the saved page-1 JPEG for an automation-created job. Keyed on
+  // the stable orderId (ORD-…) instead of jobs.id so it works for both
+  // active jobs and ones already archived — the active job UUID changes
+  // when a job moves to archived_jobs, but orderId is the durable handle.
+  app.get("/api/jobs/by-order-id/:orderId/order-sheet-image", requireOffice, async (req, res) => {
+    try {
+      const orderId = String(req.params.orderId || "").trim();
+      if (!orderId) return res.status(400).json({ error: "orderId is required" });
+
+      const record = await storage.getOrderSheetImportByJobOrderId(
+        getOfficeUser(req).officeId,
+        orderId,
+      );
+      if (!record) return res.status(404).json({ error: "No attached order sheet for this job" });
+
+      const absolutePath = storage.resolveOrderSheetAttachmentPath(record);
+      if (!absolutePath) return res.status(404).json({ error: "Attachment file is missing" });
+
+      await logPhiAccess(req, "view", "order_sheet_import", record.id, record.jobOrderId || undefined, {
+        fileName: record.fileName,
+      });
+
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("X-Order-Sheet-Page-Count", String(record.attachmentPageCount ?? 1));
+      res.sendFile(absolutePath);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

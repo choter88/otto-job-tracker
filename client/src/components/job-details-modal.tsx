@@ -10,7 +10,9 @@ import {
   Link2,
   MessageSquare,
   Phone,
+  Loader2,
   Save,
+  ScanLine,
   Send,
   Share2,
   Star,
@@ -836,6 +838,14 @@ export default function JobDetailsModal({
                   )}
                 </div>
 
+                {/* Order Sheet — the JPEG render of page 1 captured at
+                    automation ingest. Hidden for manually-created jobs.
+                    Fetched by stable orderId so this also resolves for
+                    jobs that have already been archived. */}
+                {(job as any).source === "order_sheet" && job.orderId && (
+                  <OrderSheetAttachmentSection orderId={job.orderId} />
+                )}
+
               </div>
 
               {/* Right column: Timeline (lifecycle history with actor + timestamp). */}
@@ -1346,5 +1356,96 @@ export default function JobDetailsModal({
         }}
       />
     </Dialog>
+  );
+}
+
+// Page-1 JPEG preview of the original order sheet, attached to a job
+// during automation ingest. Lookup is by stable orderId so this also
+// resolves for jobs already in Past Jobs (the active jobs.id changes
+// when a job moves to archived_jobs, but orderId is durable). The
+// server 404s gracefully — older auto-created jobs and ones where
+// rendering failed at ingest just show the inline fallback message
+// instead of breaking the modal.
+function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
+  const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
+  const [imageUrl, setImageUrl] = useState<string>("");
+  const [pageCount, setPageCount] = useState<number>(1);
+
+  useEffect(() => {
+    let disposed = false;
+    let createdObjectUrl: string | null = null;
+    setState("loading");
+    (async () => {
+      try {
+        const res = await fetch(`/api/jobs/by-order-id/${encodeURIComponent(orderId)}/order-sheet-image`, {
+          credentials: "include",
+        });
+        if (!res.ok) {
+          if (!disposed) setState("missing");
+          return;
+        }
+        const pageCountHeader = Number(res.headers.get("X-Order-Sheet-Page-Count") || "1");
+        const blob = await res.blob();
+        if (disposed) return;
+        createdObjectUrl = URL.createObjectURL(blob);
+        setImageUrl(createdObjectUrl);
+        setPageCount(Number.isFinite(pageCountHeader) ? pageCountHeader : 1);
+        setState("ready");
+      } catch {
+        if (!disposed) setState("missing");
+      }
+    })();
+    return () => {
+      disposed = true;
+      // Revoke the object URL so the underlying Blob can be GC'd.
+      if (createdObjectUrl) URL.revokeObjectURL(createdObjectUrl);
+    };
+  }, [orderId]);
+
+  return (
+    <div className="mt-5" data-testid="section-order-sheet-attachment">
+      <div className="border-t border-line my-5" />
+      <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
+        <ScanLine className="h-3 w-3" aria-hidden />
+        Order Sheet
+        {state === "ready" && pageCount > 1 && (
+          <span className="ml-auto text-[calc(10px*var(--ui-scale))] normal-case tracking-normal text-ink-faint">
+            +{pageCount - 1} more page{pageCount > 2 ? "s" : ""}
+          </span>
+        )}
+      </h4>
+
+      {state === "loading" && (
+        <div className="flex items-center gap-2 text-[calc(12.5px*var(--ui-scale))] text-ink-mute">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading preview…
+        </div>
+      )}
+
+      {state === "missing" && (
+        <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute m-0">
+          No preview was saved for this sheet. The original file is in the watched folder on the
+          computer that imported it.
+        </p>
+      )}
+
+      {state === "ready" && (
+        <a
+          href={imageUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="block rounded-lg border border-line overflow-hidden bg-paper-2 hover:border-otto-accent-line transition-colors"
+          title="Open full size"
+          data-testid="link-order-sheet-image"
+        >
+          <img
+            src={imageUrl}
+            alt="Order sheet page 1"
+            className="w-full h-auto max-h-[420px] object-contain"
+            data-testid="img-order-sheet"
+          />
+        </a>
+      )}
+    </div>
   );
 }

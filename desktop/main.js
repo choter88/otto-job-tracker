@@ -1872,6 +1872,30 @@ ipcMain.handle("otto:orderSheets:extract", async (_event, payload) => {
   }
 });
 
+// Hand the renderer the raw bytes of a pending file so it can render
+// page 1 to a JPEG via pdf.js + canvas (which only exist on the renderer
+// side). Same guard as extract: the path must be one the watcher itself
+// discovered, so this channel never doubles as generic filesystem read.
+// Capped at 25MB (same as MAX_ORDER_SHEET_BYTES in the watcher).
+ipcMain.handle("otto:orderSheets:read-bytes", async (_event, payload) => {
+  const requestedPath = typeof payload?.path === "string" ? payload.path : "";
+  const watcher = ensureOrderSheetWatcher();
+  const entry = watcher.getPending().find((candidate) => candidate.path === requestedPath);
+  if (!entry) return { error: "File is no longer pending." };
+  try {
+    const fs = await import("fs/promises");
+    const buffer = await fs.readFile(requestedPath);
+    if (buffer.byteLength > 25 * 1024 * 1024) {
+      return { error: "File too large for preview." };
+    }
+    // Uint8Array marshals cleanly over IPC and the renderer handles it
+    // as a plain typed-array.
+    return { bytes: new Uint8Array(buffer) };
+  } catch (error) {
+    return { error: `Couldn't read the file (${error?.message || "unknown error"}).` };
+  }
+});
+
 ipcMain.handle("otto:orderSheets:ack", async (_event, payload) => {
   const hash = typeof payload?.hash === "string" ? payload.hash : "";
   if (hash) ensureOrderSheetWatcher().ack(hash);
