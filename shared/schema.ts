@@ -4,7 +4,7 @@ import { z } from "zod";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const userRoleValues = ["owner", "manager", "staff", "view_only", "super_admin"] as const;
-const notificationTypeValues = ["status_change", "comment", "overdue_alert", "team_update", "pin_reset"] as const;
+const notificationTypeValues = ["status_change", "comment", "overdue_alert", "team_update", "pin_reset", "job_auto_created"] as const;
 
 function tsMsNowSql() {
   return sql`(unixepoch() * 1000)`;

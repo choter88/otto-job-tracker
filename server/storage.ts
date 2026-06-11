@@ -96,6 +96,7 @@ export interface IStorage {
 
   // Comment reads
   getUnreadCommentJobIds(userId: string, officeId: string): Promise<string[]>;
+  getUnreadAutoCreatedJobIds(userId: string, officeId: string): Promise<string[]>;
   updateCommentRead(userId: string, jobId: string): Promise<CommentRead>;
   getJobCommentCounts(officeId: string): Promise<Record<string, number>>;
 
@@ -746,6 +747,28 @@ export class DatabaseStorage implements IStorage {
       );
 
     return results.map(r => r.jobId);
+  }
+
+  // Jobs in this office that the order-sheet automation auto-created AND
+  // this user hasn't read the notification for yet. The "New" badge on
+  // the worklist row is exactly this set; clearing the notification (via
+  // the bell or by opening the job) removes the badge naturally because
+  // it removes the row from this query.
+  async getUnreadAutoCreatedJobIds(userId: string, officeId: string): Promise<string[]> {
+    const results = await db
+      .selectDistinct({ jobId: jobs.id })
+      .from(jobs)
+      .innerJoin(notifications, eq(jobs.id, notifications.jobId))
+      .where(
+        and(
+          eq(jobs.officeId, officeId),
+          eq(notifications.userId, userId),
+          eq(notifications.type, "job_auto_created"),
+          isNull(notifications.readAt),
+        ),
+      );
+
+    return results.map((r) => r.jobId);
   }
 
   async updateCommentRead(userId: string, jobId: string): Promise<CommentRead> {

@@ -311,6 +311,17 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
     enabled: !!user?.id,
   });
 
+  // "New" badge on auto-created jobs — the set is the user's UNREAD
+  // job_auto_created notifications, so the same gesture that clears the
+  // notification (bell → click, "Mark all read", or opening the job)
+  // also drops the badge from the worklist row. No separate read-state
+  // bookkeeping.
+  const { data: unreadAutoCreatedJobIds = [] } = useQuery<string[]>({
+    queryKey: ["/api/jobs/new-auto-created"],
+    enabled: !!user?.id,
+  });
+  const newAutoCreatedJobIdSet = useMemo(() => new Set(unreadAutoCreatedJobIds), [unreadAutoCreatedJobIds]);
+
   const { data: commentCounts = {} } = useQuery<Record<string, number>>({
     queryKey: ["/api/jobs/comment-counts"],
     enabled: !!user?.officeId,
@@ -1750,6 +1761,15 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                               >
                                 <title>Created automatically from an order sheet</title>
                               </Zap>
+                            )}
+                            {newAutoCreatedJobIdSet.has(job.id) && (
+                              <span
+                                className="shrink-0 inline-flex items-center px-1.5 py-px rounded-full text-[calc(9.5px*var(--ui-scale))] font-semibold uppercase tracking-wider bg-otto-accent text-white"
+                                data-testid={`indicator-new-${job.id}`}
+                                title="Created since you last opened Otto"
+                              >
+                                New
+                              </span>
                             )}
                           </div>
                           {/* Row 2 — overdue, starred, group hint */}

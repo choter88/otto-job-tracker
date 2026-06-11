@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bell, CheckCheck, MessageCircle, AlertTriangle, TrendingUp, User } from "lucide-react";
+import { Bell, CheckCheck, MessageCircle, AlertTriangle, TrendingUp, User, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -56,6 +56,9 @@ export default function NotificationBell() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notifications", "recent"] });
+      // Clearing a job_auto_created notification also clears the "New"
+      // badge from the worklist row — same data, refetch in lockstep.
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/new-auto-created"] });
     },
   });
 
@@ -67,6 +70,7 @@ export default function NotificationBell() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
       queryClient.invalidateQueries({ queryKey: ["/api/notifications", "recent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/new-auto-created"] });
     },
   });
 
@@ -80,6 +84,8 @@ export default function NotificationBell() {
         return <AlertTriangle className="h-4 w-4 text-orange-500" />;
       case "team_update":
         return <User className="h-4 w-4 text-purple-500" />;
+      case "job_auto_created":
+        return <ScanLine className="h-4 w-4 text-otto-accent-ink" />;
       default:
         return <Bell className="h-4 w-4 text-gray-500" />;
     }

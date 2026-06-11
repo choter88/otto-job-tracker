@@ -30,7 +30,7 @@ import {
 } from "@shared/schema";
 import { sendSMS } from "./twilioClient";
 import { requireAdmin, requireAuth, requireNotViewOnly, requireOffice, requireRole, requireSameOfficeParam } from "./middleware";
-import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob, notifyJobStarred } from "./notification-service";
+import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob, notifyJobStarred, notifyJobAutoCreated } from "./notification-service";
 import {
   generateJobSummary,
   checkAndRegenerateSummary,
@@ -2727,6 +2727,20 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  // Drives the "New" badge on order-sheet-automation-created jobs. One
+  // entry per job for which THIS user still has an unread
+  // job_auto_created notification; clearing the notification (via the
+  // bell, "Mark all read", or clicking into the job) removes the entry
+  // and the badge.
+  app.get("/api/jobs/new-auto-created", requireOffice, async (req, res) => {
+    try {
+      const jobIds = await storage.getUnreadAutoCreatedJobIds(getOfficeUser(req).id, getOfficeUser(req).officeId);
+      res.json(jobIds);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/jobs/comment-counts", requireOffice, async (req, res) => {
     try {
       const commentCounts = await storage.getJobCommentCounts(getOfficeUser(req).officeId);
@@ -4477,6 +4491,17 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         metadata: { status: record.status },
       });
       broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "order_sheet_automation" });
+
+      // Office-wide "New" notification per auto-created job so every
+      // user sees a badge the next time they open Otto, independent of
+      // the worklist's own websocket-driven refresh. Fire-and-forget
+      // because notification delivery never blocks ingest.
+      if (createdJob) {
+        const jobForNotice = createdJob;
+        notifyJobAutoCreated(jobForNotice, record.fileName, storage).catch((err) =>
+          console.error("[order-sheets] notifyJobAutoCreated failed:", err?.message || err),
+        );
+      }
 
       // Auto-created jobs get the same tracking-link treatment as manual
       // and CSV-imported ones — fire-and-forget so ingest stays fast.

@@ -174,6 +174,49 @@ export async function notifyJobStarred(
   }
 }
 
+// Auto-created jobs from the order-sheet folder watcher. Fan out one
+// notification per office member — including the "createdBy" user,
+// since auto-imports aren't a deliberate action they took, they just
+// happened in the background. The notification's unread state is what
+// drives the "New" badge on the worklist row; clearing it (open the
+// bell, hit "Mark all read", or click into the job) removes the badge.
+export async function notifyJobAutoCreated(
+  job: Job,
+  fileName: string,
+  storage: IStorage,
+): Promise<void> {
+  try {
+    const officeUsers = await storage.getUsersInOffice(job.officeId);
+    if (officeUsers.length === 0) return;
+
+    const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim()
+      || job.trayNumber
+      || "Unnamed patient";
+    const safeFileName = fileName.length > 80 ? `${fileName.slice(0, 77)}…` : fileName;
+
+    const created = await Promise.all(
+      officeUsers.map((user) =>
+        storage.createNotification({
+          userId: user.id,
+          type: "job_auto_created",
+          title: `New job: ${patientName}`,
+          message: `Created automatically from ${safeFileName}`,
+          jobId: job.id,
+          linkTo: `/jobs/${job.id}`,
+          actorId: null,
+          metadata: { orderId: job.orderId, fileName },
+        }),
+      ),
+    );
+
+    if (created.length > 0) {
+      broadcastToOffice(job.officeId, { type: "office_updated", ts: Date.now(), source: "order_sheet_automation" });
+    }
+  } catch (error) {
+    console.error("Error sending auto-created job notifications:", error);
+  }
+}
+
 export async function notifyOverdueJob(
   job: Job,
   rule: NotificationRule,
