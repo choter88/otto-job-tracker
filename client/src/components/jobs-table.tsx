@@ -220,6 +220,10 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [destinationFilter, setDestinationFilter] = useState("all");
+  // "New comments" filter — restricts the list to jobs the SIGNED-IN
+  // user hasn't read the latest comments on. Per-user (not office-wide),
+  // so it answers "which jobs have something I haven't seen yet?".
+  const [unreadCommentsOnly, setUnreadCommentsOnly] = useState(false);
   // Mockup's All / Active / Redos toggle. "active" hides completed+cancelled; "redos" filters to redo jobs.
   const [tabFilter, setTabFilter] = useState<"all" | "active" | "redos">("all");
   const [customColumnFilters, setCustomColumnFilters] = useState<Record<string, any>>({});
@@ -590,11 +594,13 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const useTrayNumber = jobIdentifierMode === "trayNumber";
 
   // Memoize filtered and sorted jobs
+  const unreadJobIdSet = useMemo(() => new Set(unreadCommentJobIds), [unreadCommentJobIds]);
   const filteredJobs = useMemo(() => {
     return jobs.filter(job => {
       // Tab filter — All / Active / Redos
       if (tabFilter === "active" && (job.status === "completed" || job.status === "cancelled")) return false;
       if (tabFilter === "redos" && !job.isRedoJob) return false;
+      if (unreadCommentsOnly && !unreadJobIdSet.has(job.id)) return false;
       // Search by tray number or patient name based on identifier mode
       const matchesSearch = searchQuery === "" ||
         (useTrayNumber 
@@ -694,7 +700,7 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
         return aValue < bValue ? 1 : -1;
       }
     });
-  }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, tabFilter, customColumnFilters, sortBy, sortOrder, customColumns, customStatuses]);
+  }, [jobs, searchQuery, statusFilter, typeFilter, destinationFilter, tabFilter, customColumnFilters, unreadCommentsOnly, unreadJobIdSet, sortBy, sortOrder, customColumns, customStatuses]);
 
   // Count jobs per patient for the "related" indicator
   const patientJobCounts = useMemo(() => {
@@ -1178,12 +1184,14 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
               (statusFilter !== "all" ? 1 : 0) +
               (typeFilter !== "all" ? 1 : 0) +
               (destinationFilter !== "all" ? 1 : 0) +
+              (unreadCommentsOnly ? 1 : 0) +
               Object.values(customColumnFilters).filter((v) => v != null && v !== "").length;
             const filterLabelClass = "text-[calc(11px*var(--ui-scale))] uppercase tracking-wider text-ink-mute font-semibold mb-1.5 block";
             const clearAllFilters = () => {
               setStatusFilter("all");
               setTypeFilter("all");
               setDestinationFilter("all");
+              setUnreadCommentsOnly(false);
               setCustomColumnFilters({});
             };
             return (
@@ -1220,6 +1228,35 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                       <h4 className="font-display text-[calc(15px*var(--ui-scale))] font-medium tracking-[-0.01em] text-ink m-0">
                         Filter jobs
                       </h4>
+
+                      {/* "New comments" goes first because it answers a
+                          personal question ("what hasn't anyone shown me
+                          yet?"); Status / Type / Lab are the property
+                          filters that follow. Per-user — the unread set
+                          depends on who's signed in. */}
+                      <label
+                        htmlFor="filter-unread-comments"
+                        className="flex items-center justify-between gap-2 px-1 py-1.5 rounded-md hover:bg-line-2 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2 text-sm text-ink">
+                          <MessageSquare className="h-3.5 w-3.5 text-ink-mute" />
+                          New comments
+                          {unreadCommentJobIds.length > 0 && (
+                            <span
+                              className="inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-otto-accent-soft text-otto-accent-ink text-[calc(10px*var(--ui-scale))] px-1 font-semibold tabular-nums"
+                              data-testid="badge-unread-count"
+                            >
+                              {unreadCommentJobIds.length}
+                            </span>
+                          )}
+                        </span>
+                        <Checkbox
+                          id="filter-unread-comments"
+                          checked={unreadCommentsOnly}
+                          onCheckedChange={(checked) => setUnreadCommentsOnly(checked === true)}
+                          data-testid="checkbox-unread-comments-filter"
+                        />
+                      </label>
 
                       <div>
                       <Label className={filterLabelClass}>Status</Label>
