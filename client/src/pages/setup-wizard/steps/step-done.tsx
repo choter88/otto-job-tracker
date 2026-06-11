@@ -20,7 +20,7 @@ export default function StepDone() {
         <ul className="space-y-1 list-disc list-inside">
           <li>Open the dashboard and create your first job.</li>
           <li>Invite team members from Office Settings → Invite Code.</li>
-          <li>Set up the Tablet Lab Board if your lab uses one.</li>
+          <li>Drop a PDF into your order-sheet folder to see automation create a job.</li>
         </ul>
       </div>
     </div>

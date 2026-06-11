@@ -489,10 +489,10 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
                   <Bell className="h-4 w-4" />
                   <span className="truncate">Overdue Rules</span>
                 </TabsTrigger>
-                <TabsTrigger value="tablet" className={tabTriggerClass} data-testid="tab-tablet">
-                  <Tablet className="h-4 w-4" />
-                  <span className="truncate">Tablet</span>
-                </TabsTrigger>
+                {/* Tablet tab hidden — feature not pulling user interest.
+                    TabletSettingsContent + the /tablet routes are intact;
+                    re-add this trigger and the TabsContent below to bring
+                    it back. */}
                 {isHostAdmin && (
                   <TabsTrigger value="computers" className={tabTriggerClass} data-testid="tab-computers">
                     <Network className="h-4 w-4" />
@@ -572,9 +572,7 @@ export default function SettingsModal({ open, onOpenChange, initialTab }: Settin
                   <NotificationRules />
                 </TabsContent>
 
-                <TabsContent value="tablet" className="mt-0">
-                  <TabletSettingsContent />
-                </TabsContent>
+                {/* Tablet TabsContent hidden alongside the trigger above. */}
 
                 {isHostAdmin && (
                   <TabsContent value="computers" className="mt-0">
