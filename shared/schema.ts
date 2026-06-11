@@ -69,6 +69,10 @@ export const jobs = sqliteTable(
     isRedoJob: integer("is_redo_job", { mode: "boolean" }).default(false).notNull(),
     originalJobId: text("original_job_id"), // self-reference FK handled at query level
     notes: text("notes"),
+    // How the job entered Otto. NULL = created by hand in the UI;
+    // "order_sheet" = created by the order-sheet folder automation.
+    // Drives the "Auto" badge in the worklist.
+    source: text("source").$type<"order_sheet" | null>(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
   },
@@ -100,6 +104,9 @@ export const archivedJobs = sqliteTable("archived_jobs", {
   isRedoJob: integer("is_redo_job", { mode: "boolean" }).default(false).notNull(),
   originalJobId: text("original_job_id"),
   notes: text("notes"),
+  // Carried over from jobs.source on archive so the "Auto" badge
+  // survives into Past Jobs.
+  source: text("source").$type<"order_sheet" | null>(),
 });
 
 // Join requests table
@@ -484,6 +491,57 @@ export const tabletSessions = sqliteTable(
 
 export type TabletSession = typeof tabletSessions.$inferSelect;
 
+// Order-sheet automation ledger. One row per file the folder watcher has
+// seen, keyed by content hash so the same sheet is never imported twice —
+// not across restarts, not when a file is renamed or re-saved, not when
+// two computers watch overlapping folders. This table is the office-wide
+// source of truth for "what has the automation done", so any computer can
+// review activity regardless of which machine ingested the file.
+//
+// Status lifecycle:
+//   imported      → parsed confidently; a job was auto-created
+//   needs_review  → parsed partially; staff completes it from the
+//                   Order Sheets page (→ imported once linked to a job)
+//   failed        → unreadable (scanned image, encrypted, unsupported type)
+//   dismissed     → staff chose to ignore the file
+export const orderSheetImportStatusValues = ["imported", "needs_review", "failed", "dismissed"] as const;
+export type OrderSheetImportStatus = (typeof orderSheetImportStatusValues)[number];
+
+export const orderSheetImports = sqliteTable(
+  "order_sheet_imports",
+  {
+    id: text("id").primaryKey(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    fileName: text("file_name").notNull(),
+    // Absolute path on the watching computer — only meaningful there;
+    // other machines show deviceLabel instead.
+    sourcePath: text("source_path"),
+    deviceLabel: text("device_label"),
+    // sha256 of the file bytes (hex).
+    contentHash: text("content_hash").notNull(),
+    fileSize: integer("file_size"),
+    status: text("status", { enum: orderSheetImportStatusValues }).notNull(),
+    // { fields: ParsedOrderSheetFields, missing: string[] } from the
+    // shared parser. We persist only the extracted fields, never the
+    // full sheet text (PHI minimization).
+    parsed: text("parsed", { mode: "json" }).$type<Record<string, any> | null>(),
+    failureReason: text("failure_reason"),
+    // Soft link to the created job. Deliberately NOT a foreign key:
+    // archiving moves a job to archived_jobs under a new id, and the
+    // ledger must keep its history either way. jobOrderId snapshots the
+    // human-readable ORD-… number for display after archive/delete.
+    jobId: text("job_id"),
+    jobOrderId: text("job_order_id"),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+    processedAt: integer("processed_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    officeHashIdx: uniqueIndex("order_sheet_imports_office_hash_unique").on(table.officeId, table.contentHash),
+    officeCreatedIdx: index("order_sheet_imports_office_created_idx").on(table.officeId, table.createdAt),
+  }),
+);
+
 // Relations
 export const userRelations = relations(users, ({ one, many }) => ({
   office: one(offices, {
@@ -554,6 +612,9 @@ export const insertJobSchema = createInsertSchema(jobs)
     jobType: z.string().min(1, "Job type is required"),
     status: z.string().min(1, "Status is required"),
     statusChangedAt: z.date().or(z.string().transform((str) => new Date(str))).optional(),
+    // Only the values the app itself stamps — arbitrary client-supplied
+    // strings are rejected so the badge logic stays trustworthy.
+    source: z.enum(["order_sheet"]).nullable().optional(),
   });
 
 export const insertJobCommentSchema = createInsertSchema(jobComments)
@@ -623,6 +684,18 @@ export const insertPhiAccessLogSchema = createInsertSchema(phiAccessLogs).omit({
   createdAt: true,
 });
 
+export const insertOrderSheetImportSchema = createInsertSchema(orderSheetImports)
+  .omit({
+    id: true,
+    createdAt: true,
+    processedAt: true,
+  })
+  .extend({
+    // drizzle-zod widens JSON columns to its own Json type, which doesn't
+    // line up with the column's Record<string, any> $type — pin it here.
+    parsed: z.record(z.any()).nullable().optional(),
+  });
+
 // Type exports
 export type User = typeof users.$inferSelect;
 export type PublicUser = Omit<User, "password" | "pinHash">;
@@ -657,6 +730,8 @@ export type AccountSignupRequest = typeof accountSignupRequests.$inferSelect;
 export type InsertAccountSignupRequest = z.infer<typeof insertAccountSignupRequestSchema>;
 export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
 export type InsertPhiAccessLog = z.infer<typeof insertPhiAccessLogSchema>;
+export type OrderSheetImport = typeof orderSheetImports.$inferSelect;
+export type InsertOrderSheetImport = z.infer<typeof insertOrderSheetImportSchema>;
 export type PinResetRequest = typeof pinResetRequests.$inferSelect;
 
 // Custom type for PIN reset request with user details (returned by API)

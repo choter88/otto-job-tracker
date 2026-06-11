@@ -20,6 +20,7 @@ export type OnboardingStepId =
   | "notification_rules"
   | "tracking_links"
   | "ehr_import"
+  | "order_sheets"
   | "done";
 
 export interface OnboardingState {
@@ -44,6 +45,7 @@ export const ONBOARDING_STEP_ORDER: OnboardingStepId[] = [
   "notification_rules",
   "tracking_links",
   "ehr_import",
+  "order_sheets",
   "done",
 ];
 

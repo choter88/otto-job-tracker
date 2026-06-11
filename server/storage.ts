@@ -17,6 +17,7 @@ import {
   adminAuditLogs,
   phiAccessLogs,
   pinResetRequests,
+  orderSheetImports,
   type User,
   type InsertUser,
   type Office,
@@ -46,6 +47,8 @@ import {
   type PhiAccessLog,
   type InsertPhiAccessLog,
   type PinResetRequestWithUser,
+  type OrderSheetImport,
+  type InsertOrderSheetImport,
 } from "@shared/schema";
 import { db } from "./db";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
@@ -190,6 +193,14 @@ export interface IStorage {
   // PHI access logging for HIPAA compliance
   createPhiAccessLog(log: InsertPhiAccessLog): Promise<PhiAccessLog>;
   getPhiAccessLogs(options?: { userId?: string; officeId?: string; entityType?: string; startDate?: Date; endDate?: Date; limit?: number }): Promise<PhiAccessLog[]>;
+
+  // Order-sheet automation ledger
+  getOrderSheetImportsByOffice(officeId: string, limit?: number): Promise<OrderSheetImport[]>;
+  getOrderSheetImport(id: string): Promise<OrderSheetImport | undefined>;
+  getOrderSheetImportByHash(officeId: string, contentHash: string): Promise<OrderSheetImport | undefined>;
+  getKnownOrderSheetHashes(officeId: string, hashes: string[]): Promise<string[]>;
+  createOrderSheetImport(record: InsertOrderSheetImport): Promise<OrderSheetImport>;
+  updateOrderSheetImport(id: string, updates: Partial<OrderSheetImport>): Promise<OrderSheetImport>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -491,6 +502,7 @@ export class DatabaseStorage implements IStorage {
         isRedoJob: job.isRedoJob,
         originalJobId: job.originalJobId,
         notes: job.notes,
+        source: job.source,
       })
       .returning();
     return archived;
@@ -1823,6 +1835,57 @@ export class DatabaseStorage implements IStorage {
       return query.where(and(...conditions));
     }
     return query;
+  }
+
+  // ── Order-sheet automation ledger ──────────────────────────────────
+
+  async getOrderSheetImportsByOffice(officeId: string, limit = 200): Promise<OrderSheetImport[]> {
+    return db
+      .select()
+      .from(orderSheetImports)
+      .where(eq(orderSheetImports.officeId, officeId))
+      .orderBy(desc(orderSheetImports.createdAt))
+      .limit(limit);
+  }
+
+  async getOrderSheetImport(id: string): Promise<OrderSheetImport | undefined> {
+    const [record] = await db.select().from(orderSheetImports).where(eq(orderSheetImports.id, id));
+    return record || undefined;
+  }
+
+  async getOrderSheetImportByHash(officeId: string, contentHash: string): Promise<OrderSheetImport | undefined> {
+    const [record] = await db
+      .select()
+      .from(orderSheetImports)
+      .where(and(eq(orderSheetImports.officeId, officeId), eq(orderSheetImports.contentHash, contentHash)));
+    return record || undefined;
+  }
+
+  async getKnownOrderSheetHashes(officeId: string, hashes: string[]): Promise<string[]> {
+    if (!hashes.length) return [];
+    const rows = await db
+      .select({ contentHash: orderSheetImports.contentHash })
+      .from(orderSheetImports)
+      .where(and(eq(orderSheetImports.officeId, officeId), inArray(orderSheetImports.contentHash, hashes)));
+    return rows.map((row) => row.contentHash);
+  }
+
+  async createOrderSheetImport(record: InsertOrderSheetImport): Promise<OrderSheetImport> {
+    const [created] = await db
+      .insert(orderSheetImports)
+      .values({ id: randomUUID(), ...record })
+      .returning();
+    return created;
+  }
+
+  async updateOrderSheetImport(id: string, updates: Partial<OrderSheetImport>): Promise<OrderSheetImport> {
+    const [updated] = await db
+      .update(orderSheetImports)
+      .set({ ...updates, processedAt: new Date() })
+      .where(eq(orderSheetImports.id, id))
+      .returning();
+    if (!updated) throw new Error("Order sheet import not found");
+    return updated;
   }
 }
 

@@ -100,6 +100,15 @@ export function getDefaultConfig() {
     localBackupLastAt: 0,
     localBackupLastPath: "",
     localBackupLastError: "",
+    // Order-sheet folder automation (per-machine: the folder lives on
+    // THIS computer's disk). enabledAt is the "new files only" cutoff,
+    // stamped when the automation is switched on.
+    orderSheets: {
+      enabled: false,
+      folder: "",
+      includeExisting: false,
+      enabledAt: 0,
+    },
   };
 }
 

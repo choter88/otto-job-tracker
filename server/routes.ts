@@ -65,6 +65,9 @@ import { importSnapshotV1 } from "./migration-import";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
 import { parseCsvFile, executeImport } from "./import-csv";
+import { z } from "zod";
+import { parseOrderSheet, type OrderSheetOption } from "@shared/order-sheet-parser";
+import { deriveDeviceAutoLabel } from "./device-label";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
 import { getDefaultOfficeSettings } from "@shared/office-defaults";
@@ -95,7 +98,7 @@ function getOfficeUser(req: Request): OfficeUser {
 async function logPhiAccess(
   req: Request,
   action: 'view' | 'create' | 'update' | 'delete' | 'export',
-  entityType: 'job' | 'comment' | 'archived_job' | 'patient_list',
+  entityType: 'job' | 'comment' | 'archived_job' | 'patient_list' | 'order_sheet_import',
   entityId: string,
   orderId?: string,
   details?: Record<string, any>
@@ -124,6 +127,27 @@ async function logPhiAccess(
   } catch (error) {
     console.error('Failed to log PHI access:', error);
     // Don't throw - logging failure shouldn't break the request
+  }
+}
+
+// Insert an order-sheet ledger row, treating the (office, hash) unique
+// index as a claim: when two computers ingest the same file at the same
+// moment, exactly one insert wins; the loser gets the winner's row back
+// with claimed=false and must not create a job.
+async function claimOrderSheetRecord(
+  officeId: string,
+  contentHash: string,
+  record: Parameters<typeof storage.createOrderSheetImport>[0],
+): Promise<{ claimed: boolean; record: Awaited<ReturnType<typeof storage.createOrderSheetImport>> }> {
+  try {
+    return { claimed: true, record: await storage.createOrderSheetImport(record) };
+  } catch (error: any) {
+    const msg = String(error?.message || "");
+    if (msg.includes("order_sheet_imports_office_hash_unique") || msg.includes("UNIQUE constraint failed: order_sheet_imports")) {
+      const existing = await storage.getOrderSheetImportByHash(officeId, contentHash);
+      if (existing) return { claimed: false, record: existing };
+    }
+    throw error;
   }
 }
 
@@ -1798,6 +1822,34 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
 
       trackEvent({ userId: getAuthUser(req)?.id, officeId: getOfficeUser(req)?.officeId, eventType: "job_created" });
+
+      // Review flow for the order-sheet automation: when the dialog was
+      // opened from a needs-review sheet, it sends the ledger row id so
+      // the new job gets linked back and the row flips to "imported".
+      // Non-fatal — a failed link leaves the row in review, where staff
+      // can dismiss it.
+      const orderSheetImportId =
+        typeof req.body?.orderSheetImportId === "string" ? req.body.orderSheetImportId.trim() : "";
+      if (orderSheetImportId) {
+        try {
+          const sheetRecord = await storage.getOrderSheetImport(orderSheetImportId);
+          if (sheetRecord && sheetRecord.officeId === getAuthUser(req).officeId && sheetRecord.status !== "imported") {
+            await storage.updateOrderSheetImport(sheetRecord.id, {
+              status: "imported",
+              jobId: job.id,
+              jobOrderId: job.orderId,
+              failureReason: null,
+            });
+            broadcastToOffice(getOfficeUser(req).officeId, {
+              type: "office_updated",
+              ts: Date.now(),
+              source: "order_sheet_automation",
+            });
+          }
+        } catch (linkError: any) {
+          console.error("[order-sheets] failed to link job to ledger row:", linkError?.message || linkError);
+        }
+      }
 
       // Auto-generate a tracking link if the office has it on (or the
       // request explicitly opts in). Centralizing this on the server
@@ -4189,6 +4241,267 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       res.json(publicResult);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Order-sheet folder automation
+  //
+  // The desktop watcher (Host or Client machine) hashes + extracts text from
+  // files saved into the watched folder; the renderer ships them here under
+  // the signed-in user's session. The server is the single source of truth:
+  // it dedups by content hash, parses, auto-creates confident jobs, and
+  // records every file in the ledger so all computers see what happened.
+  // ---------------------------------------------------------------------------
+
+  const orderSheetIngestSchema = z.object({
+    fileName: z.string().min(1).max(300),
+    sourcePath: z.string().max(2000).optional(),
+    deviceLabel: z.string().max(120).optional(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/i, "contentHash must be a sha256 hex digest"),
+    fileSize: z.number().int().nonnegative().optional(),
+    text: z.string().max(2_000_000).optional(),
+    extractError: z.string().max(500).optional(),
+  });
+
+  const getOfficeParserOptions = (officeSettings: Record<string, any>) => {
+    const toOptions = (list: unknown): OrderSheetOption[] =>
+      Array.isArray(list)
+        ? list
+            .map((item: any) => ({ id: String(item?.id || ""), label: String(item?.label || "") }))
+            .filter((option) => option.id && option.label)
+        : [];
+    return {
+      jobTypes: toOptions(officeSettings.customJobTypes),
+      destinations: toOptions(officeSettings.customOrderDestinations),
+      identifierMode: (officeSettings.jobIdentifierMode === "trayNumber" ? "trayNumber" : "patientName") as
+        | "trayNumber"
+        | "patientName",
+    };
+  };
+
+  // Hash pre-check: lets the watcher skip text extraction for files the
+  // office has already processed. Chunked client-side; cap defensively.
+  app.post("/api/order-sheets/check", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const raw = Array.isArray(req.body?.hashes) ? req.body.hashes : null;
+      if (!raw) return res.status(400).json({ error: "hashes array is required" });
+      const hashes = raw
+        .filter((h: unknown): h is string => typeof h === "string" && /^[a-f0-9]{64}$/i.test(h))
+        .slice(0, 2000);
+
+      const known: string[] = [];
+      for (let i = 0; i < hashes.length; i += 400) {
+        known.push(...(await storage.getKnownOrderSheetHashes(getOfficeUser(req).officeId, hashes.slice(i, i + 400))));
+      }
+      res.json({ known });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/order-sheets/ingest", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const payload = orderSheetIngestSchema.parse(req.body || {});
+      const user = getOfficeUser(req);
+      const contentHash = payload.contentHash.toLowerCase();
+
+      // Dedup before any parsing — the unique index is the real guarantee,
+      // this is just the fast path.
+      const existing = await storage.getOrderSheetImportByHash(user.officeId, contentHash);
+      if (existing) {
+        return res.json({ record: existing, created: false, alreadyKnown: true });
+      }
+
+      const office = await storage.getOffice(user.officeId);
+      const officeSettings = (office?.settings || {}) as Record<string, any>;
+      const parserOptions = getOfficeParserOptions(officeSettings);
+
+      const base = {
+        officeId: user.officeId,
+        fileName: payload.fileName,
+        sourcePath: payload.sourcePath || null,
+        // "Which computer ingested this" — explicit label wins, otherwise
+        // a friendly one ("Mac · Chrome") derived from the request UA.
+        deviceLabel: payload.deviceLabel || deriveDeviceAutoLabel(req.headers["user-agent"]) || null,
+        contentHash,
+        fileSize: payload.fileSize ?? null,
+        createdBy: user.id,
+      };
+
+      let record;
+      let createdJob = null;
+
+      const text = (payload.text || "").trim();
+      if (payload.extractError || !text) {
+        const claim = await claimOrderSheetRecord(user.officeId, contentHash, {
+          ...base,
+          status: "failed" as const,
+          parsed: null,
+          failureReason:
+            payload.extractError ||
+            "No readable text found — the file may be a scanned image. Open it and create the job manually.",
+        });
+        if (!claim.claimed) {
+          return res.json({ record: claim.record, created: false, alreadyKnown: true });
+        }
+        record = claim.record;
+      } else {
+        const parsed = parseOrderSheet(text, parserOptions);
+        let reviewReason: string | null = null;
+        let confident = parsed.confident;
+
+        // Same guard the manual path has: a tray number that's already in
+        // use must never silently create a second job.
+        if (confident && parserOptions.identifierMode === "trayNumber" && parsed.fields.trayNumber) {
+          const dup = await storage.getJobByTrayNumber(user.officeId, parsed.fields.trayNumber);
+          if (dup) {
+            confident = false;
+            reviewReason = `Tray number ${parsed.fields.trayNumber} is already in use (${dup.orderId}).`;
+          }
+        }
+
+        // Same-patient sheets within a few days are usually reprints, not
+        // second orders — bounce to review instead of double-creating.
+        if (confident && parserOptions.identifierMode === "patientName") {
+          const recentCutoff = Date.now() - 3 * 24 * 60 * 60 * 1000;
+          const officeJobs = await storage.getJobsByOffice(user.officeId);
+          const dup = officeJobs.find(
+            (job) =>
+              job.patientFirstName.toLowerCase() === parsed.fields.patientFirstName.toLowerCase() &&
+              job.patientLastName.toLowerCase() === parsed.fields.patientLastName.toLowerCase() &&
+              new Date(job.createdAt).getTime() >= recentCutoff,
+          );
+          if (dup) {
+            confident = false;
+            reviewReason = `Looks like a possible duplicate of ${dup.orderId} (same patient in the last 3 days).`;
+          }
+        }
+
+        // Claim the hash in the ledger BEFORE creating any job — if two
+        // computers ingest the same file at once, exactly one wins the
+        // unique index and only the winner proceeds to job creation.
+        const claim = await claimOrderSheetRecord(user.officeId, contentHash, {
+          ...base,
+          status: "needs_review" as const,
+          parsed: { fields: parsed.fields, missing: parsed.missing },
+          failureReason: reviewReason,
+        });
+        if (!claim.claimed) {
+          return res.json({ record: claim.record, created: false, alreadyKnown: true });
+        }
+        record = claim.record;
+
+        if (confident) {
+          try {
+            const useTray = parserOptions.identifierMode === "trayNumber";
+            const orderDate = parsed.fields.orderDate ? new Date(parsed.fields.orderDate) : null;
+            const jobData = insertJobSchema.parse({
+              patientFirstName: useTray ? "" : normalizePatientNamePart(parsed.fields.patientFirstName),
+              patientLastName: useTray ? "" : normalizePatientNamePart(parsed.fields.patientLastName),
+              trayNumber: parsed.fields.trayNumber || null,
+              phone: parsed.fields.phone || null,
+              jobType: parsed.fields.jobTypeId,
+              status: "job_created",
+              orderDestination: parsed.fields.destinationId,
+              notes: parsed.fields.notes || null,
+              source: "order_sheet",
+              ...(orderDate ? { statusChangedAt: orderDate } : {}),
+              officeId: user.officeId,
+              createdBy: user.id,
+            });
+            // insertJobSchema strips createdAt (manual creates are always
+            // "now"), but the sheet carries the real order date — thread
+            // it through the same way the CSV importer does, so a Friday
+            // order processed on Monday ages correctly for overdue rules.
+            const jobValues = orderDate ? ({ ...jobData, createdAt: orderDate } as typeof jobData) : jobData;
+            createdJob = await storage.createJob(jobValues);
+            record = await storage.updateOrderSheetImport(record.id, {
+              status: "imported",
+              jobId: createdJob.id,
+              jobOrderId: createdJob.orderId,
+              failureReason: null,
+            });
+          } catch (jobError: any) {
+            // The claim stays as needs_review so staff can finish by hand.
+            record = await storage.updateOrderSheetImport(record.id, {
+              failureReason: `Couldn't create the job automatically: ${jobError?.message || "unknown error"}`,
+            });
+          }
+        }
+      }
+
+      await logPhiAccess(req, "create", "order_sheet_import", record.id, record.jobOrderId || undefined, {
+        fileName: record.fileName,
+        status: record.status,
+        autoCreated: !!createdJob,
+      });
+      trackEvent({
+        userId: user.id,
+        officeId: user.officeId,
+        eventType: "order_sheet_ingested",
+        metadata: { status: record.status },
+      });
+      broadcastToOffice(user.officeId, { type: "office_updated", ts: Date.now(), source: "order_sheet_automation" });
+
+      // Auto-created jobs get the same tracking-link treatment as manual
+      // and CSV-imported ones — fire-and-forget so ingest stays fast.
+      if (createdJob && officeSettings.trackingLinkDefaults?.autoGenerateTrackingLinks) {
+        const hostToken = getHostToken();
+        if (hostToken) {
+          const jobForLink = createdJob;
+          (async () => {
+            const auto = await autoGenerateOrMergeTrackingLinkForJob(jobForLink, hostToken);
+            if (auto.url) {
+              trackEvent({
+                userId: user.id,
+                officeId: user.officeId,
+                eventType: "tracking_link_created",
+                metadata: { source: "order_sheet", merged: auto.merged ? 1 : 0 },
+              });
+            }
+          })().catch((err) =>
+            console.error("[order-sheets] tracking-link auto-gen failed:", err?.message || err),
+          );
+        }
+      }
+
+      res.status(201).json({ record, created: !!createdJob, alreadyKnown: false });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/order-sheets", requireOffice, async (req, res) => {
+    try {
+      const limitRaw = Number(req.query.limit);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500) : 200;
+      const records = await storage.getOrderSheetImportsByOffice(getOfficeUser(req).officeId, limit);
+
+      await logPhiAccess(req, "view", "order_sheet_import", getOfficeUser(req).officeId, undefined, {
+        recordCount: records.length,
+      });
+
+      res.json(records);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/order-sheets/:id/dismiss", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const record = await storage.getOrderSheetImport(req.params.id);
+      if (!record || record.officeId !== getOfficeUser(req).officeId) {
+        return res.status(404).json({ error: "Order sheet record not found" });
+      }
+      if (record.status === "imported") {
+        return res.status(400).json({ error: "This sheet already created a job and can't be dismissed" });
+      }
+      const updated = await storage.updateOrderSheetImport(record.id, { status: "dismissed" });
+      broadcastToOffice(getOfficeUser(req).officeId, { type: "office_updated", ts: Date.now(), source: "order_sheet_automation" });
+      res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

@@ -28,6 +28,12 @@ export const WIZARD_STEPS: WizardStepDefinition[] = [
     optional: true,
   },
   { id: "ehr_import", title: "Import from EHR", shortTitle: "EHR Import", optional: true },
+  {
+    id: "order_sheets",
+    title: "Automate order sheets (optional)",
+    shortTitle: "Order Sheets",
+    optional: true,
+  },
   { id: "done", title: "All set", shortTitle: "Done" },
 ];
 

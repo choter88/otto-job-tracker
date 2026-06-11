@@ -10,6 +10,7 @@ import TeamPage from "@/components/team-page";
 import NotificationRules from "@/components/notification-rules";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
 import ImportantJobs from "@/pages/important-jobs";
+import OrderSheetsPage from "@/components/order-sheets-page";
 import SettingsModal from "@/components/settings-modal";
 import HealthModal from "@/components/health-modal";
 import UserSettingsModal, { applyUserPreferences } from "@/components/user-settings-modal";
@@ -19,10 +20,17 @@ import { OPEN_OFFICE_SETTINGS_EVENT } from "@/components/spotlight/feature-spotl
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
+import { useOrderSheetIngestion } from "@/hooks/use-order-sheets";
 import type { Job, Office } from "@shared/schema";
 
 export default function Dashboard() {
   const { user, logoutMutation } = useAuth();
+
+  // App-wide order-sheet worker: ships files discovered by the desktop
+  // watcher to the server no matter which tab is open. No-op outside
+  // Electron. Mounted here (not App) so it only runs for signed-in,
+  // office-attached users.
+  useOrderSheetIngestion();
   const [location, setLocation] = useLocation();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>(undefined);
@@ -141,6 +149,8 @@ export default function Dashboard() {
         return <JobsTable jobs={jobs} loading={jobsLoading} />;
       case "past":
         return <PastJobs />;
+      case "orderSheets":
+        return <OrderSheetsPage />;
       case "overdue":
         return <OverdueJobs jobs={overdueJobs} />;
       case "analytics":

@@ -59,9 +59,24 @@ interface JobDialogProps {
   job?: Job;
   archivedJob?: ArchivedJob;
   readOnly?: boolean;
+  /**
+   * Create-mode initial values, used by the order-sheet review flow to
+   * open this dialog with whatever the parser could read. Parent must
+   * keep the object referentially stable (useMemo) — it participates in
+   * the form-reset effect.
+   */
+  prefill?: Partial<JobFormData>;
+  /**
+   * When set, the created job is linked back to this order-sheet ledger
+   * row server-side (row flips to "imported") and the job is stamped
+   * source: "order_sheet".
+   */
+  orderSheetImportId?: string;
+  /** Fired after a successful create (not on edits). */
+  onCreated?: () => void;
 }
 
-export default function JobDialog({ open, onOpenChange, job, archivedJob, readOnly }: JobDialogProps) {
+export default function JobDialog({ open, onOpenChange, job, archivedJob, readOnly, prefill, orderSheetImportId, onCreated }: JobDialogProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -106,20 +121,26 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
     catch { return ""; }
   }, []);
 
+  // Create-mode prefill (order-sheet review flow). Ignored entirely when
+  // editing or viewing an existing job.
+  const createPrefill = source ? undefined : prefill;
+
   // Memoize form default values to prevent unnecessary re-creation
   const defaultValues = useMemo(() => ({
-    patientFirstName: source?.patientFirstName || "",
-    patientLastName: source?.patientLastName || "",
-    trayNumber: source?.trayNumber || "",
-    phone: source?.phone || "",
-    jobType: source?.jobType || undefined,
+    patientFirstName: source?.patientFirstName || createPrefill?.patientFirstName || "",
+    patientLastName: source?.patientLastName || createPrefill?.patientLastName || "",
+    trayNumber: source?.trayNumber || createPrefill?.trayNumber || "",
+    phone: source?.phone || createPrefill?.phone || "",
+    jobType: source?.jobType || createPrefill?.jobType || undefined,
     status: readOnly && archivedJob ? archivedJob.finalStatus : source?.status || "job_created",
-    orderDestination: source?.orderDestination || (job ? "" : stickyLab),
-    createdAt: sourceCreatedAt ? new Date(sourceCreatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+    orderDestination: source?.orderDestination || (job ? "" : createPrefill?.orderDestination || stickyLab),
+    createdAt: sourceCreatedAt
+      ? new Date(sourceCreatedAt).toISOString().split('T')[0]
+      : createPrefill?.createdAt || new Date().toISOString().split('T')[0],
     isRedoJob: source?.isRedoJob || false,
     originalJobId: source?.originalJobId || undefined,
-    notes: source?.notes || "",
-  }), [source, archivedJob, readOnly, job, stickyLab]);
+    notes: source?.notes || createPrefill?.notes || "",
+  }), [source, archivedJob, readOnly, job, stickyLab, createPrefill]);
 
   const form = useForm<JobFormData>({
     resolver: zodResolver(jobSchema),
@@ -147,24 +168,12 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
     if (open && !job) setGenerateTrackingLink(true);
   }, [open, job]);
 
-  // Reset form when job or open state changes
+  // Reset form when the job, prefill, or open state changes
   useEffect(() => {
     if (open) {
-      form.reset({
-        patientFirstName: source?.patientFirstName || "",
-        patientLastName: source?.patientLastName || "",
-        trayNumber: source?.trayNumber || "",
-        phone: source?.phone || "",
-        jobType: source?.jobType || undefined,
-        status: readOnly && archivedJob ? archivedJob.finalStatus : source?.status || "job_created",
-        orderDestination: source?.orderDestination || (job ? "" : stickyLab),
-        createdAt: sourceCreatedAt ? new Date(sourceCreatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        isRedoJob: source?.isRedoJob || false,
-        originalJobId: source?.originalJobId || undefined,
-        notes: source?.notes || "",
-      });
+      form.reset(defaultValues);
     }
-  }, [job, open, form, stickyLab]);
+  }, [open, form, defaultValues]);
 
   const isRedoJob = form.watch("isRedoJob");
   const selectedOriginalJobId = form.watch("originalJobId");
@@ -206,6 +215,9 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
           status: formattedData.status || "job_created",
           createdAt: effectiveCreatedAt,
           generateTrackingLink: officeAutoGenerate && generateTrackingLink,
+          // Order-sheet review flow: stamp provenance and link the ledger
+          // row to the job server-side in the same request.
+          ...(orderSheetImportId ? { orderSheetImportId, source: "order_sheet" as const } : {}),
         });
         return res.json();
       }
@@ -344,6 +356,8 @@ export default function JobDialog({ open, onOpenChange, job, archivedJob, readOn
           description: job ? "Job has been updated successfully." : "Job has been created successfully.",
         });
       }
+
+      if (!job) onCreated?.();
 
       onOpenChange(false);
       form.reset();

@@ -35,6 +35,7 @@ import StepCustomColumns from "./steps/step-custom-columns";
 import StepNotificationRules from "./steps/step-notification-rules";
 import StepTrackingLinks from "./steps/step-tracking-links";
 import StepEhrImport from "./steps/step-ehr-import";
+import StepOrderSheets from "./steps/step-order-sheets";
 import StepDone from "./steps/step-done";
 import type { TrackingLinkDefaults } from "@/components/customization/tracking-link-defaults-editor";
 import type { OnboardingStepId } from "@shared/onboarding";
@@ -207,6 +208,11 @@ export default function SetupWizardPage() {
       case "ehr_import":
         // Import is optional and writes to jobs, not settings.
         return true;
+      case "order_sheets":
+        // Optional, desktop-only. The watched folder is stored per-machine
+        // in otto-config.json by the step's OrderSheetFolderSetup via the
+        // desktop bridge — nothing to persist to office settings here.
+        return true;
       case "done":
         return true;
     }
@@ -299,6 +305,8 @@ export default function SetupWizardPage() {
         );
       case "ehr_import":
         return <StepEhrImport />;
+      case "order_sheets":
+        return <StepOrderSheets />;
       case "done":
         return <StepDone />;
     }

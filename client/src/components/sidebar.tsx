@@ -25,12 +25,13 @@ import {
   MessageCircleQuestion,
   HelpCircle,
   Sparkles,
+  ScanLine,
 } from "lucide-react";
 import { openSpotlightArchive } from "@/components/spotlight/feature-spotlight-host";
 import logoSymbol from "@/assets/logo-symbol.png";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { Job, Office } from "@shared/schema";
+import type { Job, Office, OrderSheetImport } from "@shared/schema";
 
 interface SidebarProps {
   activeTab: string;
@@ -95,6 +96,13 @@ export default function Sidebar({
     queryKey: ["/api/offices", user?.officeId],
     enabled: !!user?.officeId,
   });
+  const { data: orderSheets = [] } = useQuery<OrderSheetImport[]>({
+    queryKey: ["/api/order-sheets"],
+    enabled: !!user?.officeId,
+  });
+  const orderSheetsNeedingReview = orderSheets.filter(
+    (record) => record.status === "needs_review" || record.status === "failed",
+  ).length;
 
   const initials = `${user?.firstName?.[0] ?? ""}${user?.lastName?.[0] ?? ""}`.toUpperCase() || "??";
   const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "User";
@@ -124,6 +132,13 @@ export default function Sidebar({
       id: "past",
       label: "Past Jobs",
       icon: Archive,
+    },
+    {
+      id: "orderSheets",
+      label: "Order Sheets",
+      icon: ScanLine,
+      badge: orderSheetsNeedingReview || null,
+      badgeStyle: "warn",
     },
   ];
 

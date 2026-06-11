@@ -37,7 +37,10 @@
     "test:labs-copy": "node --import tsx --test tests/labs-copy.test.ts",
     "test:restore-stamp": "node --import tsx --test tests/restore-stamp.test.ts",
     "test:ui-redesign": "npm run test:lifecycle-helpers && npm run test:labs-copy && npm run test:restore-stamp",
-    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:setup-wizard && npm run test:ui-redesign",
+    "test:order-sheet-parser": "node --import tsx --test tests/order-sheet-parser.test.ts",
+    "test:order-sheet-watcher": "node --import tsx --test tests/order-sheet-watcher.test.ts",
+    "test:order-sheets": "npm run test:order-sheet-parser && npm run test:order-sheet-watcher",
+    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets",
     "db:push": "drizzle-kit push"
   },
   "build": {

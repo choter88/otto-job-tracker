@@ -105,6 +105,8 @@ import {
   setAppMenu as setAppMenuRaw,
 } from "./lib/menu.js";
 
+import { createOrderSheetWatcher } from "./lib/order-sheet-watcher.js";
+
 // --- Constants ---
 const APP_DISPLAY_NAME = "Otto Tracker";
 
@@ -131,6 +133,7 @@ let automaticBackupInterval = null;
 let backupWarningShown = false;
 let mainWindow = null;
 let setupWindow = null;
+let orderSheetWatcher = null;
 let appReadyForOpenEvents = false;
 const pendingOpenUrls = [];
 const pendingOpenFiles = [];
@@ -1478,6 +1481,14 @@ async function launchMainWindowForConfig(config, options = {}) {
       _scheduleAutomaticBackups();
     }
 
+    // Order-sheet folder watcher runs in both modes — sheets get saved on
+    // whichever computer sits at the front desk. Failures are non-fatal:
+    // a missing folder surfaces as a status banner in the UI, not a
+    // launch blocker.
+    syncOrderSheetWatcherFromConfig().catch((error) => {
+      _logStartup("[order-sheets] failed to start watcher", error);
+    });
+
     return true;
   } finally {
     if (bootWindow && !bootWindow.isDestroyed()) {
@@ -1751,6 +1762,121 @@ async function portalValidateInviteCodeDesktop(payload) {
     };
   }
 }
+
+// --- Order-sheet folder automation (desktop side) ---
+//
+// The watcher lives in the main process (only it can read the disk); the
+// renderer owns all server communication so ingestion happens under the
+// signed-in user's session. Settings live in otto-config.json under
+// `orderSheets` and are managed through their own IPC handler — NOT
+// otto:config:set, which relaunches the whole app for non-setup changes.
+
+function sendOrderSheetsEvent(payload) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("otto:orderSheets:event", payload);
+    }
+  } catch {
+    // window mid-teardown — ignore
+  }
+}
+
+function getOrderSheetsConfig(config) {
+  const section = config && typeof config.orderSheets === "object" && config.orderSheets ? config.orderSheets : {};
+  return {
+    enabled: !!section.enabled,
+    folder: typeof section.folder === "string" ? section.folder : "",
+    includeExisting: !!section.includeExisting,
+    enabledAt: Number(section.enabledAt) || 0,
+  };
+}
+
+function ensureOrderSheetWatcher() {
+  if (!orderSheetWatcher) {
+    orderSheetWatcher = createOrderSheetWatcher({
+      onPending: (pending) => sendOrderSheetsEvent({ kind: "pending", pending }),
+      onStatus: (status) => sendOrderSheetsEvent({ kind: "status", status }),
+      log: (message, error) => _logStartup(message, error),
+    });
+  }
+  return orderSheetWatcher;
+}
+
+async function syncOrderSheetWatcherFromConfig() {
+  const settings = getOrderSheetsConfig(_readConfig());
+  const watcher = ensureOrderSheetWatcher();
+  if (settings.enabled && settings.folder) {
+    await watcher.start({
+      folder: settings.folder,
+      includeExisting: settings.includeExisting,
+      enabledAt: settings.enabledAt,
+    });
+  } else {
+    await watcher.stop();
+  }
+}
+
+ipcMain.handle("otto:orderSheets:get", async () => {
+  const watcher = ensureOrderSheetWatcher();
+  return {
+    config: getOrderSheetsConfig(_readConfig()),
+    status: watcher.getStatus(),
+    pending: watcher.getPending(),
+  };
+});
+
+ipcMain.handle("otto:orderSheets:pick-folder", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "Choose the folder where order sheets are saved",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths?.[0]) return { ok: false };
+  return { ok: true, folder: result.filePaths[0] };
+});
+
+ipcMain.handle("otto:orderSheets:configure", async (_event, payload) => {
+  const config = _readConfig();
+  const previous = getOrderSheetsConfig(config);
+  const next = {
+    enabled: typeof payload?.enabled === "boolean" ? payload.enabled : previous.enabled,
+    folder: typeof payload?.folder === "string" ? payload.folder.trim() : previous.folder,
+    includeExisting:
+      typeof payload?.includeExisting === "boolean" ? payload.includeExisting : previous.includeExisting,
+    enabledAt: previous.enabledAt,
+  };
+
+  // Stamp the moment the automation turns on (or moves to a new folder) —
+  // that's the cutoff for "new files only".
+  const turningOn = next.enabled && (!previous.enabled || previous.folder !== next.folder);
+  if (turningOn) next.enabledAt = Date.now();
+  if (!next.enabled) next.includeExisting = false;
+
+  _writeConfig({ ...config, orderSheets: next });
+  await syncOrderSheetWatcherFromConfig();
+
+  const watcher = ensureOrderSheetWatcher();
+  return { ok: true, config: next, status: watcher.getStatus(), pending: watcher.getPending() };
+});
+
+ipcMain.handle("otto:orderSheets:extract", async (_event, payload) => {
+  const requestedPath = typeof payload?.path === "string" ? payload.path : "";
+  const watcher = ensureOrderSheetWatcher();
+  // Only files the watcher itself discovered may be read — the renderer
+  // never gets generic filesystem access through this channel.
+  const entry = watcher.getPending().find((candidate) => candidate.path === requestedPath);
+  if (!entry) return { extractError: "File is no longer pending." };
+  try {
+    return await watcher.extract(requestedPath);
+  } catch (error) {
+    return { extractError: `Couldn't read the file (${error?.message || "unknown error"}).` };
+  }
+});
+
+ipcMain.handle("otto:orderSheets:ack", async (_event, payload) => {
+  const hash = typeof payload?.hash === "string" ? payload.hash : "";
+  if (hash) ensureOrderSheetWatcher().ack(hash);
+  return { ok: true };
+});
 
 // --- IPC Handlers ---
 
@@ -2509,6 +2635,14 @@ app.on("window-all-closed", () => {
  * Called from the before-quit handler (both normal path and "Close Anyway").
  */
 function _runShutdown() {
+  // Stop the order-sheet watcher first so chokidar's fs handles don't
+  // keep the process alive.
+  try {
+    if (orderSheetWatcher) void orderSheetWatcher.stop();
+  } catch {
+    // best-effort
+  }
+
   // Force-close the Express server and all open connections so port 5150
   // is freed immediately.  Without this, keep-alive/WebSocket connections
   // linger in TIME_WAIT and the port is unavailable on next launch.

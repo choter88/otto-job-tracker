@@ -28,4 +28,24 @@ contextBridge.exposeInMainWorld("otto", {
   storeRecoveryToken: (payload) => ipcRenderer.invoke("otto:client:recovery:store", payload),
   lookupRecovery: () => ipcRenderer.invoke("otto:client:recovery:lookup"),
   applyRecovery: (payload) => ipcRenderer.invoke("otto:client:recovery:apply", payload),
+
+  // Order-sheet folder automation
+  orderSheetsGet: () => ipcRenderer.invoke("otto:orderSheets:get"),
+  orderSheetsPickFolder: () => ipcRenderer.invoke("otto:orderSheets:pick-folder"),
+  orderSheetsConfigure: (payload) => ipcRenderer.invoke("otto:orderSheets:configure", payload),
+  orderSheetsExtract: (payload) => ipcRenderer.invoke("otto:orderSheets:extract", payload),
+  orderSheetsAck: (payload) => ipcRenderer.invoke("otto:orderSheets:ack", payload),
+  // Push events from the watcher (new pending file, status change).
+  // Returns an unsubscribe function for React effect cleanup.
+  onOrderSheetsEvent: (callback) => {
+    const listener = (_event, payload) => {
+      try {
+        callback(payload);
+      } catch {
+        // never let a renderer callback error break the IPC listener
+      }
+    };
+    ipcRenderer.on("otto:orderSheets:event", listener);
+    return () => ipcRenderer.removeListener("otto:orderSheets:event", listener);
+  },
 });

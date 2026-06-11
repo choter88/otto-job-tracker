@@ -17,6 +17,7 @@ const TAB_LABELS: Record<string, string> = {
   important: "Starred",
   overdue: "Overdue",
   past: "Past Jobs",
+  orderSheets: "Order Sheets",
   analytics: "Analytics",
   team: "Team",
   settings: "Settings",
