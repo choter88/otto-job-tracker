@@ -19,6 +19,7 @@ import {
   pinResetRequests,
   orderSheetImports,
   orderSheetWatchers,
+  orderSheetTemplates,
   clientDevices,
   type User,
   type InsertUser,
@@ -52,7 +53,9 @@ import {
   type OrderSheetImport,
   type InsertOrderSheetImport,
   type OrderSheetWatcher,
+  type OrderSheetTemplate,
 } from "@shared/schema";
+import type { OrderSheetAnchorRule } from "@shared/order-sheet-layout";
 import { db, getDataDir } from "./db";
 import fs from "fs";
 import path from "path";
@@ -2099,6 +2102,60 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(orderSheetWatchers)
       .where(and(eq(orderSheetWatchers.officeId, officeId), eq(orderSheetWatchers.deviceId, deviceId)));
+  }
+
+  // ── Learned order-sheet templates ──────────────────────────────────
+
+  async getOrderSheetTemplates(officeId: string, fingerprint: string): Promise<OrderSheetTemplate[]> {
+    if (!fingerprint) return [];
+    return db
+      .select()
+      .from(orderSheetTemplates)
+      .where(and(eq(orderSheetTemplates.officeId, officeId), eq(orderSheetTemplates.fingerprint, fingerprint)));
+  }
+
+  /**
+   * Save the rules derived from one user correction. Keyed per
+   * (office, fingerprint, field): anchor rules replace the previous one
+   * (the latest correction is the freshest truth about where the field
+   * lives), while option-mapping rules MERGE their valueMaps so earlier
+   * learned spellings survive new ones.
+   */
+  async upsertOrderSheetTemplateRules(
+    officeId: string,
+    fingerprint: string,
+    rules: OrderSheetAnchorRule[],
+    userId?: string | null,
+  ): Promise<void> {
+    if (!fingerprint || rules.length === 0) return;
+    const existing = await this.getOrderSheetTemplates(officeId, fingerprint);
+    const byField = new Map(existing.map((row) => [row.field, row]));
+
+    for (const rule of rules) {
+      const current = byField.get(rule.field);
+      let nextRule: Record<string, any> = { ...rule };
+      if (rule.valueMap && current?.rule && typeof current.rule === "object") {
+        const previousMap = (current.rule as Record<string, any>).valueMap;
+        if (previousMap && typeof previousMap === "object") {
+          nextRule = { ...rule, valueMap: { ...previousMap, ...rule.valueMap } };
+        }
+      }
+      if (current) {
+        await db
+          .update(orderSheetTemplates)
+          .set({ rule: nextRule, updatedAt: new Date() })
+          .where(eq(orderSheetTemplates.id, current.id));
+      } else {
+        await db.insert(orderSheetTemplates).values({
+          id: randomUUID(),
+          officeId,
+          fingerprint,
+          field: rule.field,
+          rule: nextRule,
+          createdBy: userId ?? null,
+        });
+      }
+    }
   }
 }
 

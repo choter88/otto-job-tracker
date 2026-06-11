@@ -84,9 +84,9 @@ const PHONE_LABEL = /^(?:(?:patient\s*)?(?:phone|cell|mobile|telephone|tel|conta
 
 const TRAY_LABEL = /^(?:tray|job\s*tray)(?:\s*(?:#|no\.?|num(?:ber)?|id))?$/i;
 
-const TYPE_LABEL = /^(?:order\s*type|job\s*type|type|product(?:\s*type)?|order)$/i;
+const TYPE_LABEL = /^(?:order\s*type|job\s*(?:type|kind)|type|product(?:\s*type)?|order)$/i;
 
-const DESTINATION_LABEL = /^(?:lab(?:oratory)?(?:\s*name)?|destination|send\s*to|ship\s*to|vendor|supplier|order\s*destination)$/i;
+const DESTINATION_LABEL = /^(?:lab(?:oratory)?(?:\s*name)?|destination|send\s*(?:to|via)|ship\s*(?:to|via)|vendor|supplier|order\s*destination)$/i;
 
 const NOTES_LABEL = /^(?:notes?|comments?|special\s*instructions?|instructions?|remarks?)$/i;
 
@@ -585,14 +585,28 @@ export function parseOrderSheet(text: string, options: ParseOrderSheetOptions): 
     if (fields.orderDate > todayIso) fields.orderDate = "";
   }
 
+  const missing = computeMissingOrderSheetFields(fields, options.identifierMode);
+
+  return { fields, missing, confident: missing.length === 0 };
+}
+
+/**
+ * Which required fields are still unresolved. Exported separately from
+ * parseOrderSheet so callers that post-process the fields (e.g. merging
+ * learned template extractions over the heuristic result) can recompute
+ * missing/confident with the exact same rules.
+ */
+export function computeMissingOrderSheetFields(
+  fields: ParsedOrderSheetFields,
+  identifierMode: "patientName" | "trayNumber",
+): string[] {
   const missing: string[] = [];
-  if (options.identifierMode === "trayNumber") {
+  if (identifierMode === "trayNumber") {
     if (!fields.trayNumber) missing.push("tray number");
   } else {
     if (!fields.patientFirstName || !fields.patientLastName) missing.push("patient name");
   }
   if (!fields.jobTypeId) missing.push("order type");
   if (!fields.destinationId) missing.push("lab");
-
-  return { fields, missing, confident: missing.length === 0 };
+  return missing;
 }

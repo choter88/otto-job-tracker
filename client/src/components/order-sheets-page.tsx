@@ -34,6 +34,7 @@ import {
   Loader2,
   MonitorSmartphone,
   ScanLine,
+  Wand2,
   X,
   XCircle,
 } from "lucide-react";
@@ -59,6 +60,41 @@ function parsedFieldsOf(record: OrderSheetImport): ParsedFields {
 function missingOf(record: OrderSheetImport): string[] {
   const parsed = record.parsed as { missing?: string[] } | null;
   return Array.isArray(parsed?.missing) ? parsed.missing : [];
+}
+
+// Fields filled by rules the office taught through earlier review
+// corrections (server stamps these on the parsed JSON at ingest).
+const LEARNED_FIELD_LABELS: Record<string, string> = {
+  patientName: "patient name",
+  trayNumber: "tray number",
+  phone: "phone",
+  orderDate: "order date",
+  jobType: "order type",
+  destination: "lab",
+};
+
+function learnedFieldsOf(record: OrderSheetImport): string[] {
+  const parsed = record.parsed as { learnedFields?: string[] } | null;
+  if (!Array.isArray(parsed?.learnedFields)) return [];
+  return parsed.learnedFields.map((field) => LEARNED_FIELD_LABELS[field] || field);
+}
+
+function LearnedChip({ record }: { record: OrderSheetImport }) {
+  const learned = learnedFieldsOf(record);
+  if (learned.length === 0) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-brand-emerald">
+          <Wand2 className="h-3 w-3" />
+          Your fixes
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        Filled using corrections this office made before: {learned.join(", ")}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
@@ -325,6 +361,7 @@ export default function OrderSheetsPage() {
                           : ""}
                     </div>
                   </div>
+                  <LearnedChip record={record} />
                   <StatusChip status={record.status} />
                   {canEdit && (
                     <div className="flex items-center gap-2">
@@ -400,9 +437,12 @@ export default function OrderSheetsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-sm text-ink-2">
-                        {[patient, type].filter(Boolean).join(" · ") || (
-                          <span className="text-ink-mute">{record.failureReason || "—"}</span>
-                        )}
+                        <span className="inline-flex items-center gap-2">
+                          {[patient, type].filter(Boolean).join(" · ") || (
+                            <span className="text-ink-mute">{record.failureReason || "—"}</span>
+                          )}
+                          <LearnedChip record={record} />
+                        </span>
                       </TableCell>
                       <TableCell>
                         {record.deviceLabel ? (
@@ -470,6 +510,14 @@ export default function OrderSheetsPage() {
         prefill={reviewPrefill}
         orderSheetImportId={reviewRecord?.id}
         onCreated={() => {
+          // Only claim Otto can learn when there's a stored PDF to learn
+          // from — txt sheets and oversized files have no layout.
+          if (reviewRecord?.attachmentPath?.toLowerCase().endsWith(".pdf")) {
+            toast({
+              title: "Job created",
+              description: "Otto remembers your corrections — the next sheet printed from this form should parse better.",
+            });
+          }
           queryClient.invalidateQueries({ queryKey: ["/api/order-sheets"] });
           setReviewRecord(null);
         }}

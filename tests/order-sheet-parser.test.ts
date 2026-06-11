@@ -188,3 +188,20 @@ test("matchOption tiers: exact, containment, plural-tolerant tokens", () => {
   assert.equal(matchOption("completely unrelated", options), "");
   assert.equal(matchOption("", options), "");
 });
+
+test("'Job Kind' and 'Send Via' label variants are recognized", () => {
+  const text = [
+    "ABC Optical Lab Slip",
+    "Account Holder:\tDoe, Jane",
+    "Job Kind:\tFrame Order",
+    "Send Via:\tVision Lab",
+  ].join("\n");
+  const result = parseOrderSheet(text, OFFICE);
+  // "Frame Order" maps through the office's "Frames" option; the raw
+  // text must be kept either way so the review UI (and the correction
+  // learner) can see what the sheet said under those labels.
+  assert.equal(result.fields.jobTypeText, "Frame Order");
+  assert.equal(result.fields.jobTypeId, "frames");
+  assert.equal(result.fields.destinationText, "Vision Lab");
+  assert.equal(result.fields.destinationId, "vision_lab");
+});

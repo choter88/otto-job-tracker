@@ -583,6 +583,38 @@ export const orderSheetWatchers = sqliteTable(
   }),
 );
 
+// Learned order-sheet parsing rules ("the parser remembers your fixes").
+// When staff corrects a sheet in the review dialog, the server diffs the
+// correction against the original parse and records WHERE on that form
+// the field actually lives (an anchor rule keyed by the form's label-set
+// fingerprint). One row per (office, form, field); office-wide so one
+// person's correction teaches every computer. The rule column is the
+// OrderSheetAnchorRule JSON from shared/order-sheet-layout.ts. Contains
+// no PHI — only printed form labels and option-id mappings.
+export const orderSheetTemplates = sqliteTable(
+  "order_sheet_templates",
+  {
+    id: text("id").primaryKey(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    // computeOrderSheetFingerprint() of the form's static labels.
+    fingerprint: text("fingerprint").notNull(),
+    // OrderSheetLearnableField: patientName | trayNumber | phone |
+    // orderDate | jobType | destination
+    field: text("field").notNull(),
+    rule: text("rule", { mode: "json" }).$type<Record<string, any>>().notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    officeFormFieldIdx: uniqueIndex("order_sheet_templates_office_form_field_unique").on(
+      table.officeId,
+      table.fingerprint,
+      table.field,
+    ),
+  }),
+);
+
 // Relations
 export const userRelations = relations(users, ({ one, many }) => ({
   office: one(offices, {
@@ -774,6 +806,7 @@ export type InsertPhiAccessLog = z.infer<typeof insertPhiAccessLogSchema>;
 export type OrderSheetImport = typeof orderSheetImports.$inferSelect;
 export type InsertOrderSheetImport = z.infer<typeof insertOrderSheetImportSchema>;
 export type OrderSheetWatcher = typeof orderSheetWatchers.$inferSelect;
+export type OrderSheetTemplate = typeof orderSheetTemplates.$inferSelect;
 export type PinResetRequest = typeof pinResetRequests.$inferSelect;
 
 // Custom type for PIN reset request with user details (returned by API)

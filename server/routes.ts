@@ -66,7 +66,13 @@ import { normalizePatientNamePart } from "@shared/name-format";
 import { getAllTemplates, createUserTemplate, updateUserTemplate, deleteUserTemplate } from "./import-templates";
 import { parseCsvFile, executeImport } from "./import-csv";
 import { z } from "zod";
-import { parseOrderSheet, type OrderSheetOption } from "@shared/order-sheet-parser";
+import { computeMissingOrderSheetFields, parseOrderSheet, type OrderSheetOption } from "@shared/order-sheet-parser";
+import { mergeLearnedFields } from "@shared/order-sheet-layout";
+import {
+  applyLearnedOrderSheetTemplates,
+  extractOrderSheetLayoutFromPdf,
+  learnFromOrderSheetCorrection,
+} from "./order-sheet-learning";
 import { deriveDeviceAutoLabel } from "./device-label";
 import { ensureReadyForPickupTemplate } from "@shared/message-template-defaults";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
@@ -1833,6 +1839,33 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               ts: Date.now(),
               source: "order_sheet_automation",
             });
+
+            // The completed review IS the teaching signal: diff what
+            // staff submitted against what the parser extracted and
+            // learn where the corrected fields live on this form, so
+            // the next sheet printed from the same template parses
+            // right. Fire-and-forget — learning never blocks creation.
+            const learnUserId = getAuthUser(req).id;
+            learnFromOrderSheetCorrection({
+              storage,
+              importRecord: sheetRecord,
+              corrected: {
+                patientFirstName: job.patientFirstName || "",
+                patientLastName: job.patientLastName || "",
+                trayNumber: job.trayNumber || "",
+                phone: job.phone || "",
+                jobTypeId: job.jobType || "",
+                destinationId: job.orderDestination || "",
+                orderDate: job.createdAt ? new Date(job.createdAt).toISOString().slice(0, 10) : "",
+              },
+              userId: learnUserId,
+            })
+              .then(({ learnedFields }) => {
+                if (learnedFields.length > 0) {
+                  console.log(`[order-sheets] learned ${learnedFields.join(", ")} from review of ${sheetRecord.fileName}`);
+                }
+              })
+              .catch((err) => console.error("[order-sheets] correction learning failed:", err?.message || err));
           }
         } catch (linkError: any) {
           console.error("[order-sheets] failed to link job to ledger row:", linkError?.message || linkError);
@@ -4314,6 +4347,28 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const officeSettings = (office?.settings || {}) as Record<string, any>;
       const parserOptions = getOfficeParserOptions(officeSettings);
 
+      // Decode the shipped copy of the sheet up front: the same bytes
+      // feed the learned-template extraction during parsing AND the
+      // attachment save at the end. Oversized/garbled payloads simply
+      // leave this null — ingest works without the file.
+      let attachmentBuffer: Buffer | null = null;
+      let attachmentExt = "";
+      if (payload.attachmentBase64) {
+        try {
+          const decoded = Buffer.from(payload.attachmentBase64, "base64");
+          if (decoded.byteLength > 0 && decoded.byteLength <= 25 * 1024 * 1024) {
+            attachmentBuffer = decoded;
+            attachmentExt =
+              (payload.attachmentExtension || (payload.fileName.split(".").pop() ?? "pdf"))
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, "")
+                .slice(0, 6) || "pdf";
+          }
+        } catch {
+          attachmentBuffer = null;
+        }
+      }
+
       const base = {
         officeId: user.officeId,
         fileName: payload.fileName,
@@ -4345,16 +4400,46 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         record = claim.record;
       } else {
         const parsed = parseOrderSheet(text, parserOptions);
+
+        // Learned templates: if this office has corrected sheets printed
+        // from the same form before, extract the taught fields from
+        // their anchored positions and let them OVERRIDE the heuristics
+        // — staff explicitly taught those locations, which beats
+        // vocabulary guessing. Failure anywhere in here degrades to the
+        // plain heuristic result.
+        let fields = parsed.fields;
+        let learnedFields: string[] = [];
+        if (attachmentBuffer && attachmentExt === "pdf") {
+          try {
+            const layout = await extractOrderSheetLayoutFromPdf(attachmentBuffer);
+            if (layout) {
+              const learned = await applyLearnedOrderSheetTemplates({
+                storage,
+                officeId: user.officeId,
+                layout,
+                options: parserOptions,
+              });
+              if (learned.applied.length > 0) {
+                fields = mergeLearnedFields(fields, learned.fields);
+                learnedFields = learned.applied;
+              }
+            }
+          } catch (learnError: any) {
+            console.error("[order-sheets] learned-template apply failed:", learnError?.message || learnError);
+          }
+        }
+
+        const missing = computeMissingOrderSheetFields(fields, parserOptions.identifierMode);
         let reviewReason: string | null = null;
-        let confident = parsed.confident;
+        let confident = missing.length === 0;
 
         // Same guard the manual path has: a tray number that's already in
         // use must never silently create a second job.
-        if (confident && parserOptions.identifierMode === "trayNumber" && parsed.fields.trayNumber) {
-          const dup = await storage.getJobByTrayNumber(user.officeId, parsed.fields.trayNumber);
+        if (confident && parserOptions.identifierMode === "trayNumber" && fields.trayNumber) {
+          const dup = await storage.getJobByTrayNumber(user.officeId, fields.trayNumber);
           if (dup) {
             confident = false;
-            reviewReason = `Tray number ${parsed.fields.trayNumber} is already in use (${dup.orderId}).`;
+            reviewReason = `Tray number ${fields.trayNumber} is already in use (${dup.orderId}).`;
           }
         }
 
@@ -4365,8 +4450,8 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           const officeJobs = await storage.getJobsByOffice(user.officeId);
           const dup = officeJobs.find(
             (job) =>
-              job.patientFirstName.toLowerCase() === parsed.fields.patientFirstName.toLowerCase() &&
-              job.patientLastName.toLowerCase() === parsed.fields.patientLastName.toLowerCase() &&
+              job.patientFirstName.toLowerCase() === fields.patientFirstName.toLowerCase() &&
+              job.patientLastName.toLowerCase() === fields.patientLastName.toLowerCase() &&
               new Date(job.createdAt).getTime() >= recentCutoff,
           );
           if (dup) {
@@ -4381,7 +4466,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         const claim = await claimOrderSheetRecord(user.officeId, contentHash, {
           ...base,
           status: "needs_review" as const,
-          parsed: { fields: parsed.fields, missing: parsed.missing },
+          parsed: { fields, missing, ...(learnedFields.length > 0 ? { learnedFields } : {}) },
           failureReason: reviewReason,
         });
         if (!claim.claimed) {
@@ -4392,16 +4477,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         if (confident) {
           try {
             const useTray = parserOptions.identifierMode === "trayNumber";
-            const orderDate = parsed.fields.orderDate ? new Date(parsed.fields.orderDate) : null;
+            const orderDate = fields.orderDate ? new Date(fields.orderDate) : null;
             const jobData = insertJobSchema.parse({
-              patientFirstName: useTray ? "" : normalizePatientNamePart(parsed.fields.patientFirstName),
-              patientLastName: useTray ? "" : normalizePatientNamePart(parsed.fields.patientLastName),
-              trayNumber: parsed.fields.trayNumber || null,
-              phone: parsed.fields.phone || null,
-              jobType: parsed.fields.jobTypeId,
+              patientFirstName: useTray ? "" : normalizePatientNamePart(fields.patientFirstName),
+              patientLastName: useTray ? "" : normalizePatientNamePart(fields.patientLastName),
+              trayNumber: fields.trayNumber || null,
+              phone: fields.phone || null,
+              jobType: fields.jobTypeId,
               status: "job_created",
-              orderDestination: parsed.fields.destinationId,
-              notes: parsed.fields.notes || null,
+              orderDestination: fields.destinationId,
+              notes: fields.notes || null,
               source: "order_sheet",
               ...(orderDate ? { statusChangedAt: orderDate } : {}),
               officeId: user.officeId,
@@ -4429,25 +4514,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       }
 
       // Persist the viewable copy of the sheet, if the renderer shipped
-      // one. Failure here is non-fatal — the ledger row + auto-created
-      // job are already done, and a missing attachment just means the
-      // details modal shows its "no preview was saved" fallback.
-      if (payload.attachmentBase64) {
+      // one (decoded once, up top). Failure here is non-fatal — the
+      // ledger row + auto-created job are already done, and a missing
+      // attachment just means the details modal shows its "no preview
+      // was saved" fallback.
+      if (attachmentBuffer) {
         try {
-          const fileBuffer = Buffer.from(payload.attachmentBase64, "base64");
-          if (fileBuffer.byteLength > 0 && fileBuffer.byteLength <= 25 * 1024 * 1024) {
-            const extension =
-              (payload.attachmentExtension || (payload.fileName.split(".").pop() ?? "pdf"))
-                .toLowerCase()
-                .replace(/[^a-z0-9]/g, "")
-                .slice(0, 6) || "pdf";
-            record = await storage.saveOrderSheetAttachment(
-              record.id,
-              fileBuffer,
-              extension,
-              payload.attachmentPageCount,
-            );
-          }
+          record = await storage.saveOrderSheetAttachment(
+            record.id,
+            attachmentBuffer,
+            attachmentExt,
+            payload.attachmentPageCount,
+          );
         } catch (attachErr: any) {
           console.error("[order-sheets] failed to save attachment:", attachErr?.message || attachErr);
         }
