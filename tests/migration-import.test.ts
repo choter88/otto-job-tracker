@@ -100,12 +100,12 @@ test("imports legacy placeholder identities and defaults optional arrays", () =>
   const result = importSnapshotV1({
     snapshot,
     admin: {
-      email: "owner@example.com",
+      loginId: "owner",
       firstName: "Owner",
       lastName: "User",
       passwordHash: "abcd.efgh",
+      pinHash: "pin-hash",
     },
-    staffCodeHash: "staff-hash",
     activationCodeLast4: "1234",
     activationVerifiedAt: NOW,
     now: NOW,
@@ -177,12 +177,12 @@ test("synthesizes legacy non-login users for missing references", () => {
   const result = importSnapshotV1({
     snapshot,
     admin: {
-      email: "owner@example.com",
+      loginId: "owner",
       firstName: "Owner",
       lastName: "User",
       passwordHash: "abcd.efgh",
+      pinHash: "pin-hash",
     },
-    staffCodeHash: "staff-hash",
     activationCodeLast4: "1234",
     activationVerifiedAt: NOW,
     now: NOW,
@@ -193,7 +193,7 @@ test("synthesizes legacy non-login users for missing references", () => {
 
   const synthesizedUsers = sqlite
     .prepare(
-      "SELECT id, email, password, role FROM users WHERE id IN (?, ?, ?) ORDER BY id",
+      "SELECT id, email, login_id, password, role FROM users WHERE id IN (?, ?, ?) ORDER BY id",
     )
     .all("missing-author", "missing-created-by", "missing-status-user") as any[];
 
@@ -203,7 +203,13 @@ test("synthesizes legacy non-login users for missing references", () => {
     assert.ok(String(row.email).endsWith("@otto.local"));
     assert.equal(row.password, "LEGACY_IDENTITY_NO_LOGIN");
     assert.equal(row.role, "view_only");
+    // Synthesized rows are created after the main login-id assignment
+    // pass; regression guard for the "Missing named parameter login_id"
+    // crash — they must still claim a unique login id of their own.
+    assert.ok(String(row.login_id || "").length >= 3, `synthesized user ${row.id} has no login_id`);
   }
+  const loginIds = synthesizedUsers.map((row) => String(row.login_id));
+  assert.equal(new Set(loginIds).size, loginIds.length, "synthesized login ids must be unique");
 });
 
 test("normalizes imported settings for colors and message templates", () => {
@@ -270,12 +276,12 @@ test("normalizes imported settings for colors and message templates", () => {
   importSnapshotV1({
     snapshot,
     admin: {
-      email: "owner@demo.com",
+      loginId: "owner",
       firstName: "Owner",
       lastName: "Demo",
       passwordHash: "abcd.efgh",
+      pinHash: "pin-hash",
     },
-    staffCodeHash: "staff-hash",
     activationCodeLast4: "1234",
     activationVerifiedAt: NOW,
     now: NOW,

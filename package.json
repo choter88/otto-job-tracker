@@ -24,7 +24,7 @@
     "build:mac": "bash scripts/build-mac-local.sh",
     "build:win": "node scripts/build-win-local.js",
     "check": "tsc",
-    "test:local-first": "node --import tsx --test tests/local-first-outbox.test.ts",
+    "test:no-offline-outbox": "node --import tsx --test tests/no-offline-outbox.test.ts",
     "test:migration-import": "node --import tsx --test tests/migration-import.test.ts",
     "test:onboarding-helpers": "node --import tsx --test tests/onboarding-helpers.test.ts",
     "test:settings-merge": "node --import tsx --test tests/settings-merge.test.ts",
@@ -37,7 +37,7 @@
     "test:labs-copy": "node --import tsx --test tests/labs-copy.test.ts",
     "test:restore-stamp": "node --import tsx --test tests/restore-stamp.test.ts",
     "test:ui-redesign": "npm run test:lifecycle-helpers && npm run test:labs-copy && npm run test:restore-stamp",
-    "test:all": "npm run test:local-first && npm run test:migration-import && npm run test:setup-wizard && npm run test:ui-redesign",
+    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:setup-wizard && npm run test:ui-redesign",
     "db:push": "drizzle-kit push"
   },
   "build": {
@@ -145,6 +145,7 @@
     "@types/node-cron": "^3.0.11",
     "better-sqlite3": "^11.10.0",
     "better-sqlite3-session-store": "^0.1.0",
+    "chokidar": "^4.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -178,6 +179,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tw-animate-css": "^1.2.5",
     "twilio": "^5.10.2",
+    "unpdf": "^1.6.2",
     "vaul": "^1.1.2",
     "wouter": "^3.3.5",
     "ws": "^8.18.0",

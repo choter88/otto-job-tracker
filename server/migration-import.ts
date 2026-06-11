@@ -505,9 +505,22 @@ export function importSnapshotV1(params: {
     if (userIdSet.has(normalized)) return;
 
     const email = buildUniqueLegacyEmail(normalized, userEmailSet);
+    // Synthesized rows are added AFTER the login-id assignment pass above,
+    // so they must claim their own unique login_id here — the users INSERT
+    // binds @login_id and better-sqlite3 rejects rows missing the param.
+    const loginCandidates = deriveLoginIdCandidates({
+      email,
+      firstName: "Legacy",
+      lastName: "User",
+      id: normalized,
+    });
+    const loginId = assignUniqueLoginId(
+      loginCandidates.find((candidate) => !usedLoginIds.has(candidate)) || loginCandidates[0] || "user",
+    );
     userRows.push({
       id: normalized,
       email,
+      login_id: loginId,
       password: LEGACY_NO_LOGIN_MARKER,
       pin_hash: null,
       first_name: "Legacy",

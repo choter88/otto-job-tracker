@@ -96,7 +96,7 @@ npm run desktop          # Launch Electron shell (run after dev)
 npm run build            # Bundle web + server for production
 npm run dist:desktop     # Build installers via electron-builder
 npm run check            # TypeScript check (has known errors)
-npm run test:local-first # Offline outbox test
+npm run test:no-offline-outbox # Guards the no-offline-outbox policy (offline = read-only)
 npm run test:migration-import  # Snapshot import test
 ```
 
