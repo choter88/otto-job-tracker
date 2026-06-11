@@ -38,6 +38,54 @@ test.after(() => {
   fs.rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
+test("archiving a job deletes its attachment file (storage stays bounded)", async () => {
+  const office = await storage.createOffice({ name: "Archive Attach Optical" } as any);
+  const user = await storage.createUser({
+    email: "owner@archive.local",
+    loginId: "archive-owner",
+    password: "hash",
+    firstName: "Archive",
+    lastName: "Owner",
+    role: "owner",
+    officeId: office.id,
+  } as any);
+  const job = await storage.createJob({
+    patientFirstName: "Arc",
+    patientLastName: "Test",
+    jobType: "glasses",
+    status: "completed",
+    orderDestination: "hoya",
+    officeId: office.id,
+    createdBy: user.id,
+    source: "order_sheet",
+  } as any);
+  const ledger = await storage.createOrderSheetImport({
+    officeId: office.id,
+    fileName: "arc-test.pdf",
+    contentHash: "a".repeat(64),
+    status: "imported",
+    parsed: { fields: {}, missing: [] },
+    jobId: job.id,
+    jobOrderId: job.orderId,
+    createdBy: user.id,
+  } as any);
+  const pdfBytes = Buffer.from("%PDF-1.4\n%fake\n");
+  const saved = await storage.saveOrderSheetAttachment(ledger.id, pdfBytes, "pdf", 1);
+  const filePath = storage.resolveOrderSheetAttachmentPath(saved);
+  assert.ok(filePath && fs.existsSync(filePath), "file should land on disk before archive");
+
+  await storage.archiveJob(job);
+
+  // File gone from disk, ledger row stays (history of file → job is
+  // preserved on the Order Sheets activity log), attachment columns
+  // nulled out so the serve endpoint 404s cleanly.
+  assert.equal(fs.existsSync(filePath!), false, "archiveJob must unlink the attachment");
+  const refreshed = await storage.getOrderSheetImport(ledger.id);
+  assert.ok(refreshed, "ledger row must survive archive");
+  assert.equal(refreshed!.attachmentPath, null);
+  assert.equal(refreshed!.attachmentSize, null);
+});
+
 test("attachment write/lookup round-trip + path containment + stale detection", async () => {
   const office = await storage.createOffice({ name: "Attachment Optical" } as any);
   const user = await storage.createUser({
@@ -71,16 +119,16 @@ test("attachment write/lookup round-trip + path containment + stale detection", 
     createdBy: user.id,
   } as any);
 
-  const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]); // minimal JPEG header
-  const saved = await storage.saveOrderSheetAttachment(ledger.id, jpegBytes, 3);
+  const pdfBytes = Buffer.from("%PDF-1.4\n%fake\n");
+  const saved = await storage.saveOrderSheetAttachment(ledger.id, pdfBytes, "pdf", 3);
 
-  assert.equal(saved.attachmentPath, `order-sheet-attachments/${ledger.id}.jpg`);
-  assert.equal(saved.attachmentSize, jpegBytes.byteLength);
+  assert.equal(saved.attachmentPath, `order-sheet-attachments/${ledger.id}.pdf`);
+  assert.equal(saved.attachmentSize, pdfBytes.byteLength);
   assert.equal(saved.attachmentPageCount, 3);
 
   const resolved = storage.resolveOrderSheetAttachmentPath(saved);
   assert.ok(resolved, "expected absolute path");
-  assert.equal(fs.readFileSync(resolved!).equals(jpegBytes), true);
+  assert.equal(fs.readFileSync(resolved!).equals(pdfBytes), true);
   // Owner-only perms (skip on platforms where mode bits are unreliable).
   if (process.platform !== "win32") {
     const mode = fs.statSync(resolved!).mode & 0o777;

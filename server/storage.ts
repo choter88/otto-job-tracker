@@ -206,8 +206,10 @@ export interface IStorage {
   getKnownOrderSheetHashes(officeId: string, hashes: string[]): Promise<string[]>;
   createOrderSheetImport(record: InsertOrderSheetImport): Promise<OrderSheetImport>;
   updateOrderSheetImport(id: string, updates: Partial<OrderSheetImport>): Promise<OrderSheetImport>;
-  saveOrderSheetAttachment(importId: string, jpegBuffer: Buffer, pageCount: number): Promise<OrderSheetImport>;
+  saveOrderSheetAttachment(importId: string, fileBuffer: Buffer, extension: string, pageCount?: number): Promise<OrderSheetImport>;
+  deleteOrderSheetAttachmentForJob(jobId: string): Promise<void>;
   getOrderSheetImportByJobOrderId(officeId: string, jobOrderId: string): Promise<OrderSheetImport | undefined>;
+  getOrderSheetImportByJobId(jobId: string): Promise<OrderSheetImport | undefined>;
   resolveOrderSheetAttachmentPath(record: OrderSheetImport): string | null;
 
   // Order-sheet watcher presence (heartbeats from each watching computer)
@@ -485,10 +487,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteJob(id: string): Promise<void> {
+    // The viewable order-sheet copy goes with the job — no point keeping
+    // bytes on disk for a job that no longer exists. Best-effort: if the
+    // ledger row isn't there or the file is already gone, this is a
+    // no-op.
+    await this.deleteOrderSheetAttachmentForJob(id);
     await db.delete(jobs).where(eq(jobs.id, id));
   }
 
   async archiveJob(job: Job): Promise<ArchivedJob> {
+    // Drop the viewable copy as the job archives so storage stays
+    // bounded by the active worklist. The ledger row itself stays (the
+    // Order Sheets activity log keeps its "file → job" history forever),
+    // we just unlink the file and null the path columns.
+    await this.deleteOrderSheetAttachmentForJob(job.id);
+
     // Query job_status_history to find the previous status before completion/cancellation
     const statusHistory = await db
       .select()
@@ -1922,21 +1935,61 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  // Write the JPEG render of page 1 to disk and stamp the ledger row. The
-  // path stored on the row is RELATIVE to the data dir so the same row
-  // works on an installer that moved its data folder (e.g. via env). The
-  // file is written under <data>/order-sheet-attachments/<id>.jpg with
-  // owner-only perms.
-  async saveOrderSheetAttachment(importId: string, jpegBuffer: Buffer, pageCount: number): Promise<OrderSheetImport> {
-    const relPath = path.posix.join("order-sheet-attachments", `${importId}.jpg`);
+  // Write the viewable copy of the sheet to disk and stamp the ledger
+  // row. The path stored on the row is RELATIVE to the data dir so the
+  // same row keeps working if the data dir moves. The file lives under
+  // <data>/order-sheet-attachments/<id>.<ext> with owner-only perms.
+  async saveOrderSheetAttachment(
+    importId: string,
+    fileBuffer: Buffer,
+    extension: string,
+    pageCount?: number,
+  ): Promise<OrderSheetImport> {
+    const safeExt = String(extension || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6) || "bin";
+    const relPath = path.posix.join("order-sheet-attachments", `${importId}.${safeExt}`);
     const absPath = path.join(getDataDir(), relPath);
     fs.mkdirSync(path.dirname(absPath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(absPath, jpegBuffer, { mode: 0o600 });
+    fs.writeFileSync(absPath, fileBuffer, { mode: 0o600 });
     return this.updateOrderSheetImport(importId, {
       attachmentPath: relPath,
-      attachmentSize: jpegBuffer.byteLength,
-      attachmentPageCount: pageCount,
+      attachmentSize: fileBuffer.byteLength,
+      attachmentPageCount: pageCount ?? null,
     });
+  }
+
+  // Reverse of saveOrderSheetAttachment: unlink the file and clear the
+  // path columns on the ledger row. Called when a job archives or is
+  // deleted so per-office storage stays bounded by the ACTIVE worklist.
+  // The ledger row itself stays — the Order Sheets activity log keeps
+  // its "file → job" history forever, just without the file.
+  async deleteOrderSheetAttachmentForJob(jobId: string): Promise<void> {
+    const record = await this.getOrderSheetImportByJobId(jobId);
+    if (!record) return;
+    const absolutePath = this.resolveOrderSheetAttachmentPath(record);
+    if (absolutePath) {
+      try {
+        fs.unlinkSync(absolutePath);
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") {
+          console.error("[order-sheets] failed to unlink attachment:", err?.message || err);
+        }
+      }
+    }
+    if (record.attachmentPath || record.attachmentSize) {
+      await this.updateOrderSheetImport(record.id, {
+        attachmentPath: null,
+        attachmentSize: null,
+        attachmentPageCount: null,
+      });
+    }
+  }
+
+  async getOrderSheetImportByJobId(jobId: string): Promise<OrderSheetImport | undefined> {
+    const [record] = await db
+      .select()
+      .from(orderSheetImports)
+      .where(eq(orderSheetImports.jobId, jobId));
+    return record || undefined;
   }
 
   // Lookup by stable orderId so active and ARCHIVED jobs both resolve to

@@ -533,16 +533,17 @@ export const orderSheetImports = sqliteTable(
     jobId: text("job_id"),
     jobOrderId: text("job_order_id"),
     createdBy: text("created_by").references(() => users.id),
-    // Lightweight viewable copy of the sheet so staff can pull it up
-    // from any computer without hunting in the watched folder. A JPEG
-    // render of page 1 (the renderer encodes it; never the original
-    // bytes) lives on the Host's disk at <data>/order-sheet-attachments/
-    // <id>.jpg with 0o600 perms. Stays in sync with the ledger row's
-    // lifetime — deleting the row also deletes the file.
+    // Viewable copy of the original sheet (the unmodified PDF) so staff
+    // can pull it up from any computer without hunting in the watched
+    // folder. Lives on the Host's disk at <data>/order-sheet-attachments/
+    // <id>.pdf with 0o600 perms; the LEDGER ROW survives archive so the
+    // Order Sheets activity stays intact, but the FILE itself is unlinked
+    // (and attachmentPath nulled) when the job archives — that's the
+    // bounded-storage knob.
     attachmentPath: text("attachment_path"),
     attachmentSize: integer("attachment_size"),
-    // Pages in the source PDF, so the UI can hint "+N more pages — open
-    // original" when the render is only page 1.
+    // Carried for any future "+N pages" hints; the inline iframe viewer
+    // shows the whole PDF, so it's informational rather than load-bearing.
     attachmentPageCount: integer("attachment_page_count"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
     processedAt: integer("processed_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),

@@ -1359,17 +1359,20 @@ export default function JobDetailsModal({
   );
 }
 
-// Page-1 JPEG preview of the original order sheet, attached to a job
-// during automation ingest. Lookup is by stable orderId so this also
-// resolves for jobs already in Past Jobs (the active jobs.id changes
-// when a job moves to archived_jobs, but orderId is durable). The
-// server 404s gracefully — older auto-created jobs and ones where
-// rendering failed at ingest just show the inline fallback message
-// instead of breaking the modal.
+// Inline viewer for the order sheet attached to an automation-created
+// job — the unmodified original PDF, written to disk at ingest time and
+// served back to any computer that asks. Lookup is by stable orderId so
+// this resolves for active jobs; archived jobs intentionally show the
+// "no preview" fallback because the file is deleted to keep storage
+// bounded by the active worklist.
+//
+// We render the PDF in an iframe (Chromium ships native PDF support, so
+// page nav, zoom, and search just work) instead of an <img>. The server
+// 404s gracefully when no file is saved — older rows, ingest-time render
+// failures, and archived jobs all flow through the same fallback.
 function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
   const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
-  const [imageUrl, setImageUrl] = useState<string>("");
-  const [pageCount, setPageCount] = useState<number>(1);
+  const [fileUrl, setFileUrl] = useState<string>("");
 
   useEffect(() => {
     let disposed = false;
@@ -1377,19 +1380,17 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
     setState("loading");
     (async () => {
       try {
-        const res = await fetch(`/api/jobs/by-order-id/${encodeURIComponent(orderId)}/order-sheet-image`, {
+        const res = await fetch(`/api/jobs/by-order-id/${encodeURIComponent(orderId)}/order-sheet-file`, {
           credentials: "include",
         });
         if (!res.ok) {
           if (!disposed) setState("missing");
           return;
         }
-        const pageCountHeader = Number(res.headers.get("X-Order-Sheet-Page-Count") || "1");
         const blob = await res.blob();
         if (disposed) return;
         createdObjectUrl = URL.createObjectURL(blob);
-        setImageUrl(createdObjectUrl);
-        setPageCount(Number.isFinite(pageCountHeader) ? pageCountHeader : 1);
+        setFileUrl(createdObjectUrl);
         setState("ready");
       } catch {
         if (!disposed) setState("missing");
@@ -1408,17 +1409,23 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
       <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
         <ScanLine className="h-3 w-3" aria-hidden />
         Order Sheet
-        {state === "ready" && pageCount > 1 && (
-          <span className="ml-auto text-[calc(10px*var(--ui-scale))] normal-case tracking-normal text-ink-faint">
-            +{pageCount - 1} more page{pageCount > 2 ? "s" : ""}
-          </span>
+        {state === "ready" && (
+          <a
+            href={fileUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto text-[calc(10px*var(--ui-scale))] normal-case tracking-normal text-otto-accent-ink hover:text-otto-accent-strong"
+            data-testid="link-order-sheet-open"
+          >
+            Open in new tab
+          </a>
         )}
       </h4>
 
       {state === "loading" && (
         <div className="flex items-center gap-2 text-[calc(12.5px*var(--ui-scale))] text-ink-mute">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading preview…
+          Loading sheet…
         </div>
       )}
 
@@ -1430,21 +1437,12 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
       )}
 
       {state === "ready" && (
-        <a
-          href={imageUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="block rounded-lg border border-line overflow-hidden bg-paper-2 hover:border-otto-accent-line transition-colors"
-          title="Open full size"
-          data-testid="link-order-sheet-image"
-        >
-          <img
-            src={imageUrl}
-            alt="Order sheet page 1"
-            className="w-full h-auto max-h-[420px] object-contain"
-            data-testid="img-order-sheet"
-          />
-        </a>
+        <iframe
+          src={fileUrl}
+          title="Order sheet"
+          className="block w-full h-[460px] rounded-lg border border-line bg-paper-2"
+          data-testid="iframe-order-sheet"
+        />
       )}
     </div>
   );

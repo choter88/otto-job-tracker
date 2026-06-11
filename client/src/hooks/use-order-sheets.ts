@@ -76,58 +76,21 @@ const RETRY_DELAY_MS = 30_000;
 export const HEARTBEAT_INTERVAL_MS = 60_000;
 export const WATCHER_STALE_AFTER_MS = 3 * HEARTBEAT_INTERVAL_MS;
 
-// Page 1 is what staff glance at to verify what the parser saw — frame
-// model, special instructions, signature. Capping width keeps the JPEG
-// small (~150-400 KB typical at this size and quality) while staying
-// well above DPI for any normal-sized order sheet.
-const ATTACHMENT_MAX_WIDTH = 1400;
-const ATTACHMENT_JPEG_QUALITY = 0.72;
+// Base64 inflates by ~33%, so a 25MB PDF lands around 33MB encoded —
+// comfortably under the server's 35MB cap. Anything bigger we simply
+// skip the attachment for: ingest still runs without it, and the user
+// can open the original from the watched folder.
+const ATTACHMENT_RAW_CAP_BYTES = 25 * 1024 * 1024;
 
-interface RenderedAttachment {
-  jpegBase64: string;
-  pageCount: number;
-}
-
-/**
- * Render page 1 of a PDF buffer to a JPEG data URL via pdf.js + a
- * detached canvas. Returns null (rather than throwing) for any reason
- * — a bad file, the bundled pdf.js failing to read it, the encoder
- * coming up empty — because the attachment is OPTIONAL on the way in.
- * Ingestion still runs without it.
- */
-async function renderOrderSheetAttachment(bytes: Uint8Array): Promise<RenderedAttachment | null> {
-  try {
-    const { getDocumentProxy } = await import("unpdf");
-    const doc = await getDocumentProxy(bytes);
-    if (!doc.numPages) return null;
-    const page = await doc.getPage(1);
-    const unscaledViewport = page.getViewport({ scale: 1 });
-    const scale = Math.min(ATTACHMENT_MAX_WIDTH / unscaledViewport.width, 2);
-    const viewport = page.getViewport({ scale });
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    // Light text on transparent canvas reads poorly when JPEG-encoded;
-    // explicit white background matches what staff see when they open
-    // the original.
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // pdf.js's render() expects either `canvas` or `canvasContext` +
-    // `viewport`; the latter is the long-standing API used in browsers.
-    await (page as any).render({ canvasContext: ctx, viewport }).promise;
-
-    const dataUrl = canvas.toDataURL("image/jpeg", ATTACHMENT_JPEG_QUALITY);
-    if (!dataUrl.startsWith("data:image/jpeg;base64,")) return null;
-    return {
-      jpegBase64: dataUrl.slice("data:image/jpeg;base64,".length),
-      pageCount: doc.numPages,
-    };
-  } catch {
-    return null;
+function uint8ToBase64(bytes: Uint8Array): string {
+  // String.fromCharCode chokes on big arrays via the argument-list cap,
+  // so we chunk through it. ~16K is well under typical engine limits.
+  let binary = "";
+  const chunk = 0x4000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
   }
+  return btoa(binary);
 }
 
 export function useOrderSheetIngestion() {
@@ -187,16 +150,20 @@ export function useOrderSheetIngestion() {
           try {
             const extracted = await bridge.orderSheetsExtract({ path: file.path });
 
-            // Render a small JPEG of page 1 so staff can see the sheet
-            // from any computer. Only for PDFs with readable text — the
-            // text gate avoids rendering broken/encrypted files (extract
-            // already returned an extractError for those).
-            let attachment: RenderedAttachment | null = null;
-            const looksLikePdf = file.fileName.toLowerCase().endsWith(".pdf");
-            if (looksLikePdf && extracted.text && !extracted.extractError) {
+            // Read the raw bytes so the server can store the original
+            // sheet as the viewable copy. The text gate keeps us from
+            // shipping bytes for files that already failed extraction
+            // (encrypted/broken PDFs, scanned-image-only sheets that
+            // the server is going to flag as failed anyway).
+            let attachmentBase64: string | undefined;
+            let attachmentExtension: string | undefined;
+            if (extracted.text && !extracted.extractError) {
               const read = await bridge.orderSheetsReadBytes({ path: file.path });
-              if (read?.bytes) {
-                attachment = await renderOrderSheetAttachment(read.bytes);
+              if (read?.bytes && read.bytes.byteLength > 0 && read.bytes.byteLength <= ATTACHMENT_RAW_CAP_BYTES) {
+                attachmentBase64 = uint8ToBase64(read.bytes);
+                attachmentExtension = file.fileName.includes(".")
+                  ? file.fileName.split(".").pop()!.toLowerCase()
+                  : undefined;
               }
             }
 
@@ -210,8 +177,8 @@ export function useOrderSheetIngestion() {
               // needs and avoids a permanent 400-retry loop.
               text: extracted.text ? extracted.text.slice(0, 1_900_000) : extracted.text,
               extractError: extracted.extractError,
-              attachmentJpegBase64: attachment?.jpegBase64,
-              attachmentPageCount: attachment?.pageCount,
+              attachmentBase64,
+              attachmentExtension,
             });
             const result = (await ingestRes.json()) as {
               record: { status: string; jobId?: string | null };
