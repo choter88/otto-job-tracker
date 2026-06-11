@@ -96,6 +96,55 @@ function normalizeForMatch(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+// Words that mark a string as a document title or section header rather
+// than a person's name. EHRs often print the title in the same band as
+// the "Patient:" label, and a Y-coordinate quirk can land them on the
+// same row — without this guard the parser would happily declare
+// "Contact Lens Order" the patient.
+const PATIENT_NAME_TITLE_BLOCKLIST =
+  /\b(order|sheet|form|invoice|receipt|prescription|rx|lens|frame|sunglass|contact|product|sale|claim)\b/i;
+
+// Common EHR aliases for job-type CATEGORIES. The key is matched against
+// the office's configured option labels (e.g. an office whose glasses
+// option is called "Frames" or "Eyewear" still matches "Frame Order").
+// Each entry: a regex against the office's option LABEL → a regex
+// against the SHEET TEXT that should map to that option.
+const JOB_TYPE_ALIASES: Array<{ optionLabel: RegExp; sheetText: RegExp }> = [
+  // "Frame Order", "Frame Sale", "spectacles" → office's glasses-like option
+  { optionLabel: /\b(glass|frame|spectacle|eyewear)/i, sheetText: /\bframe(?:s|d)?\s*(?:order|sale)?\b/i },
+  // "Contact Lens", "Contact Lens Order" → office's contacts-like option
+  { optionLabel: /\bcontact/i, sheetText: /\bcontact\s*lens(?:es)?\b/i },
+  // "Sunglass Order" → office's sunglasses-like option
+  { optionLabel: /\bsunglass/i, sheetText: /\bsun\s*glass(?:es)?\b/i },
+];
+
+// Common EHR aliases for lab/destination names. Lab abbreviations vary
+// wildly between EHR exports and clinic configurations ("B+L" vs
+// "Bausch & Lomb" vs "Bausch+Lomb"), so we ship a short list of the
+// names that won't survive plain token matching.
+const LAB_ALIASES: Array<{ optionLabel: RegExp; sheetText: RegExp }> = [
+  { optionLabel: /\bb\s*\+?\s*l\b|bausch/i, sheetText: /\bbausch\s*(?:&|and|\+)\s*lomb\b|\bb\s*\+\s*l\b/i },
+  { optionLabel: /\bj\s*&?\s*j|johnson/i, sheetText: /\bj\s*&\s*j\b|\bjohnson\s*&\s*johnson\b/i },
+  { optionLabel: /\bcoopervision|cooper/i, sheetText: /\bcooper\s*vision\b|\bcoopervision\b/i },
+  { optionLabel: /\balcon\b/i, sheetText: /\balcon\b/i },
+];
+
+function findAliasMatch(
+  lines: string[],
+  options: OrderSheetOption[],
+  aliases: typeof JOB_TYPE_ALIASES,
+): { id: string; text: string } {
+  for (const line of lines) {
+    for (const alias of aliases) {
+      if (alias.sheetText.test(line)) {
+        const opt = options.find((o) => alias.optionLabel.test(o.label));
+        if (opt) return { id: opt.id, text: opt.label };
+      }
+    }
+  }
+  return { id: "", text: "" };
+}
+
 // Token equality with light plural tolerance: order sheets say "FRAME
 // ORDER" while offices configure the type as "Frames" — those must meet
 // in the middle without dragging in a stemming library.
@@ -256,23 +305,73 @@ interface LabeledPair {
   value: string;
 }
 
+// A segment that's nothing but "Label:" or "Label" with no value attached.
+// Used to detect the label-tab-value layout where pdf.js gives us the
+// label and value as separate tabular cells.
+const LABEL_ONLY_RE = /^([A-Za-z][A-Za-z./#' ]{0,40}?)\s*[:：]\s*$/;
+// Phone labels often appear without a colon ("Contact # (555) 123-4567"
+// in Crystal PM). The tabular reconstruction now splits these into two
+// segments; we recognize phone-shaped labels for cross-segment pairing.
+const PHONE_LABEL_ONLY_RE = /^(?:patient\s*)?(?:phone|cell|mobile|telephone|tel|contact)\s*#?$/i;
+
 /**
  * Break a line of sheet text into label/value pairs.
  *
- * Sheets routinely put several fields on one printed row
- * ("Patient: Jane Doe    DOB: 01/02/1980"), which the PDF text layer
- * preserves as wide gaps or tabs — so we split on those first, then on
- * a conservative `label: value` regex within each segment.
+ * Real-world forms come in two flavors that this needs to handle:
+ *
+ *  (a) Label and value live in ONE segment, separated by `:` —
+ *      "Patient: Jane Doe    DOB: 01/02/1980". The wide-whitespace
+ *      split breaks each printed field into its own segment; the
+ *      label:value regex then matches.
+ *
+ *  (b) Label and value live in ADJACENT segments separated by a tab,
+ *      with the label segment ending in `:` and no value attached —
+ *      "Patient:" \t "Jane Doe" \t "Order Date:" \t "04/28/2025".
+ *      This is how Crystal PM (and other column-laid-out EHRs) come
+ *      out of pdf.js once the watcher's column-aware line
+ *      reconstruction inserts tabs at real column boundaries. We
+ *      handle this with a label-only check + lookahead at the next
+ *      segment.
+ *
+ * Phone labels often skip the colon entirely ("Contact # (555) …");
+ * we accept that pattern too when the next segment looks like a value.
  */
 function extractPairs(line: string): LabeledPair[] {
   const pairs: LabeledPair[] = [];
   const segments = line.split(/\t+|\s{2,}/).map((segment) => segment.trim()).filter(Boolean);
 
-  for (const segment of segments) {
-    // `label : value` — label is 1-4 words (letters / # / .), value is the rest.
-    const m = segment.match(/^([A-Za-z][A-Za-z./#' ]{0,40}?)\s*[:：]\s*(.+)$/);
-    if (m) {
-      pairs.push({ label: m[1].trim(), value: m[2].trim() });
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+
+    // (a) Label and value inline within the same segment.
+    const inline = segment.match(/^([A-Za-z][A-Za-z./#' ]{0,40}?)\s*[:：]\s*(.+)$/);
+    if (inline) {
+      pairs.push({ label: inline[1].trim(), value: inline[2].trim() });
+      continue;
+    }
+
+    // (b) Label-only segment paired with the next segment as value.
+    //     We skip if the next segment is itself another label, which
+    //     happens when a form's column header line lists labels in a
+    //     row ("Lab Contact # \t Lab Order #").
+    const labelOnly = segment.match(LABEL_ONLY_RE);
+    if (labelOnly && i + 1 < segments.length) {
+      const next = segments[i + 1];
+      if (!LABEL_ONLY_RE.test(next) && !PHONE_LABEL_ONLY_RE.test(next)) {
+        pairs.push({ label: labelOnly[1].trim(), value: next });
+        i += 1; // consume the value segment
+        continue;
+      }
+    }
+
+    // Phone label without a trailing colon ("Contact #").
+    if (PHONE_LABEL_ONLY_RE.test(segment) && i + 1 < segments.length) {
+      const next = segments[i + 1];
+      if (!LABEL_ONLY_RE.test(next) && !PHONE_LABEL_ONLY_RE.test(next)) {
+        pairs.push({ label: segment, value: next });
+        i += 1;
+        continue;
+      }
     }
   }
 
@@ -306,6 +405,15 @@ export function parseOrderSheet(text: string, options: ParseOrderSheetOptions): 
     notes: "",
   };
 
+  // Track the strict "Order Date" specifically so it always wins over
+  // looser date labels (Dispense Date / Expected Date / bare "Date"),
+  // which all match ORDER_DATE_LABEL but represent different concepts.
+  // Without this, the first date label found linearly wins — and
+  // Dispense Date sometimes appears earlier in the extracted text than
+  // Order Date.
+  let strictOrderDate = "";
+  let looseOrderDate = "";
+
   for (const line of lines) {
     for (const { label, value } of extractPairs(line)) {
       if (!value) continue;
@@ -313,7 +421,12 @@ export function parseOrderSheet(text: string, options: ParseOrderSheetOptions): 
       if (
         !fields.patientLastName &&
         PATIENT_LABEL.test(label) &&
-        !PATIENT_LABEL_BLOCKLIST.test(label)
+        !PATIENT_LABEL_BLOCKLIST.test(label) &&
+        // Reject document-title-shaped values that collided with the
+        // Patient: label on the same printed row ("Patient: Contact
+        // Lens Order"). The real patient name lands either as a later
+        // pair or via the standalone-name fallback below.
+        !PATIENT_NAME_TITLE_BLOCKLIST.test(value)
       ) {
         const { first, last } = splitPatientName(value);
         fields.patientFirstName = first;
@@ -325,8 +438,15 @@ export function parseOrderSheet(text: string, options: ParseOrderSheetOptions): 
       // "Date" label never swallows a birth date, and vice versa.
       if (DOB_LABEL.test(label)) continue;
 
-      if (!fields.orderDate && ORDER_DATE_LABEL.test(label)) {
-        fields.orderDate = parseSheetDate(value);
+      if (ORDER_DATE_LABEL.test(label)) {
+        const parsed = parseSheetDate(value);
+        if (parsed) {
+          if (/^order\s*date$/i.test(label.trim())) {
+            if (!strictOrderDate) strictOrderDate = parsed;
+          } else if (!looseOrderDate) {
+            looseOrderDate = parsed;
+          }
+        }
         continue;
       }
 
@@ -364,10 +484,72 @@ export function parseOrderSheet(text: string, options: ParseOrderSheetOptions): 
     }
   }
 
-  // Fallbacks: a title like "FRAME ORDER" or a lab name printed without a
-  // label still resolves against the office's configured lists.
+  // Apply the date precedence: strict "Order Date" wins; otherwise the
+  // looser dispense/expected/etc-date matches.
+  fields.orderDate = strictOrderDate || looseOrderDate;
+
+  // Patient-name standalone fallback: if no labeled "Patient:" line
+  // produced a valid name (or the value was a title we rejected), scan
+  // every line AND its segments for a bare "Last, First" pattern. Forms
+  // with column drift often park the name in its own cell with the
+  // label in a different cell altogether ("test, test \t To:"), so the
+  // segment-level scan is what catches them. We reject digit-containing
+  // segments to keep city/state/zip lines like "test, CA 92866" from
+  // counting as a person.
+  if (!fields.patientLastName) {
+    const namePattern = /^([A-Za-z][A-Za-z'-]{1,40})\s*,\s*([A-Za-z][A-Za-z'-]{1,40}(?:\s+[A-Za-z]\.?){0,2})$/;
+    outer: for (const line of lines) {
+      if (PATIENT_NAME_TITLE_BLOCKLIST.test(line)) continue;
+      const segments = line.split(/\t+|\s{2,}/).map((s) => s.trim()).filter(Boolean);
+      for (const segment of segments) {
+        if (/\d/.test(segment)) continue;
+        if (PATIENT_NAME_TITLE_BLOCKLIST.test(segment)) continue;
+        if (namePattern.test(segment)) {
+          const { first, last } = splitPatientName(segment);
+          fields.patientFirstName = first;
+          fields.patientLastName = last;
+          break outer;
+        }
+      }
+    }
+  }
+
+  // Phone fallback: if no labeled phone landed, scan all lines for a
+  // 10-digit-pattern outside any "DOB" / "Acct ID" context. Some forms
+  // print the number with no label adjacency at all.
+  if (!fields.phone) {
+    for (const line of lines) {
+      if (/\b(dob|d\.o\.b|date of birth|acct|account|order|invoice|tray)\b/i.test(line)) continue;
+      const m = line.match(/\(?(\d{3})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})/);
+      if (m) {
+        fields.phone = `${m[1]}${m[2]}${m[3]}`;
+        break;
+      }
+    }
+  }
+
+  // Fallbacks for job type and lab. For the SCAN-by-option-label step we
+  // strip lines that are nothing but phone-label adjacencies, since
+  // "Contact #" plus a phone number is the most common way the bare
+  // word "contact" sneaks in and false-matches a "Contacts" job type.
+  const linesForOptionScan = lines.filter(
+    (line) => !/\b(?:phone|cell|mobile|telephone|tel|contact)\s*#?\s*[:：]?\s*\(?\d/i.test(line),
+  );
+
+  // EHR alias scan FIRST: a specific pattern like "Frame Order" or
+  // "Contact Lens" is a much stronger signal than the generic
+  // single-word token scan, which can false-match on a bare "Contact"
+  // appearing in some unrelated header. Aliases run first so the right
+  // answer wins before the loose scan gets a chance to mislabel.
   if (!fields.jobTypeId) {
-    const scan = scanLinesForOption(lines, options.jobTypes);
+    const alias = findAliasMatch(linesForOptionScan, options.jobTypes, JOB_TYPE_ALIASES);
+    if (alias.id) {
+      fields.jobTypeId = alias.id;
+      if (!fields.jobTypeText) fields.jobTypeText = alias.text;
+    }
+  }
+  if (!fields.jobTypeId) {
+    const scan = scanLinesForOption(linesForOptionScan, options.jobTypes);
     if (scan.id) {
       fields.jobTypeId = scan.id;
       if (!fields.jobTypeText) fields.jobTypeText = scan.text;
@@ -378,6 +560,13 @@ export function parseOrderSheet(text: string, options: ParseOrderSheetOptions): 
     if (scan.id) {
       fields.destinationId = scan.id;
       if (!fields.destinationText) fields.destinationText = scan.text;
+    }
+  }
+  if (!fields.destinationId) {
+    const alias = findAliasMatch(lines, options.destinations, LAB_ALIASES);
+    if (alias.id) {
+      fields.destinationId = alias.id;
+      if (!fields.destinationText) fields.destinationText = alias.text;
     }
   }
 

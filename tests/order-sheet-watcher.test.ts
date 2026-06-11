@@ -105,15 +105,19 @@ test("extractOrderSheetText reports unreadable PDFs instead of throwing", async 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("watcher: discovers new files, honors the mtime cutoff, acks", async () => {
+test("watcher: discovers new files, honors the enabledAt cutoff, acks", async () => {
   const dir = makeTmpDir();
 
   // A file that existed BEFORE the automation was enabled — must be
-  // skipped when includeExisting=false.
+  // skipped when includeExisting=false. The cutoff looks at the
+  // newest of mtime/ctime/birthtime, so for "old" to mean old, the
+  // file must have been WRITTEN earlier than enabledAt. We achieve
+  // this by waiting briefly after writing the file before setting
+  // enabledAt to "now".
   const oldFile = path.join(dir, "old-sheet.txt");
   fs.writeFileSync(oldFile, "Patient: Old File");
-  const past = (Date.now() - 60_000) / 1000;
-  fs.utimesSync(oldFile, past, past);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const enabledAt = Date.now();
 
   let pendingSnapshot: any[] = [];
   const statuses: string[] = [];
@@ -127,7 +131,7 @@ test("watcher: discovers new files, honors the mtime cutoff, acks", async () => 
   });
 
   try {
-    const status = await watcher.start({ folder: dir, includeExisting: false, enabledAt: Date.now() - 5_000 });
+    const status = await watcher.start({ folder: dir, includeExisting: false, enabledAt });
     assert.equal(status.state, "watching");
 
     // New file saved after enablement → must surface as pending.
@@ -173,6 +177,41 @@ test("watcher: includeExisting=true imports the backlog too", async () => {
     await watcher.start({ folder: dir, includeExisting: true, enabledAt: Date.now() });
     const entry = await waitFor(() => pendingSnapshot.find((p) => p.fileName === "backlog-sheet.txt"));
     assert.ok(entry);
+  } finally {
+    await watcher.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("watcher: file copied in with OLD mtime but new ctime still counts as new", async () => {
+  // The bug this guards: when a user drags an already-downloaded PDF
+  // into the watched folder via Finder, the destination's mtime is
+  // INHERITED from the source (often days/weeks old), but ctime and
+  // birthtime are set when the inode lands at the destination. Using
+  // mtime alone as the cutoff would silently drop these files even
+  // though they just "appeared" in the folder.
+  const dir = makeTmpDir();
+  let pendingSnapshot: any[] = [];
+  const watcher = createOrderSheetWatcher({
+    onPending: (pending) => {
+      pendingSnapshot = pending;
+    },
+  });
+
+  try {
+    await watcher.start({ folder: dir, includeExisting: false, enabledAt: Date.now() });
+
+    // Write a file, then dial its mtime far back into the past to
+    // simulate the Finder-drag scenario (preserved source mtime).
+    // ctime/birthtime stay at "now" because we can't set them through
+    // Node and the inode was just created.
+    const draggedFile = path.join(dir, "dragged.txt");
+    fs.writeFileSync(draggedFile, "Patient: Just dropped in\nLab: Vision Lab\n");
+    const longAgo = (Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000; // 30 days
+    fs.utimesSync(draggedFile, longAgo, longAgo);
+
+    const entry = await waitFor(() => pendingSnapshot.find((p) => p.fileName === "dragged.txt"));
+    assert.ok(entry, "file with old mtime but fresh ctime must be discovered");
   } finally {
     await watcher.stop();
     fs.rmSync(dir, { recursive: true, force: true });

@@ -45,29 +45,79 @@ export async function sha256File(filePath) {
 
 // ── Text extraction ────────────────────────────────────────────────────
 
-// Rebuild visual lines from pdf.js text items: bucket by rounded Y
-// (PDF y-origin is bottom-left, so higher y = earlier line), then sort
-// items left-to-right within each bucket. Label/value parsing downstream
-// depends on these line breaks — pdf.js itself returns items in content
-// order, which often interleaves columns.
+// Rebuild visual lines from pdf.js text items. PDF text is often a
+// patchwork of multi-column form layouts; pdf.js returns items in
+// content order which interleaves columns, so we re-group by vertical
+// position. Items within Y_TOLERANCE pixels of an existing row's
+// baseline join that row — Math.round bucketing alone misses pairs
+// where label and value differ in font baseline by a few px (so
+// "Order Date:" and "04/28/2025" land on separate lines and never
+// pair downstream).
+const Y_TOLERANCE_PX = 3;
+
 function linesFromTextContent(content) {
-  const byY = new Map();
+  const items = [];
   for (const item of content.items || []) {
     if (typeof item.str !== "string" || !item.str.trim()) continue;
-    const y = Math.round(item.transform?.[5] ?? 0);
-    if (!byY.has(y)) byY.set(y, []);
-    byY.get(y).push({ x: item.transform?.[4] ?? 0, str: item.str });
+    items.push({
+      y: item.transform?.[5] ?? 0,
+      x: item.transform?.[4] ?? 0,
+      width: typeof item.width === "number" ? item.width : 0,
+      fontSize: Math.abs(item.transform?.[0] ?? 10),
+      str: item.str,
+    });
   }
-  const ys = [...byY.keys()].sort((a, b) => b - a);
-  return ys.map((y) =>
-    byY
-      .get(y)
-      .sort((a, b) => a.x - b.x)
-      .map((entry) => entry.str)
-      .join(" ")
-      .replace(/[ \t]+/g, " ")
-      .trim(),
-  );
+  // Highest Y first (PDF origin is bottom-left, so high Y = top of page).
+  items.sort((a, b) => b.y - a.y);
+
+  const rows = []; // [{ y, items: [...] }]
+  for (const item of items) {
+    let row = null;
+    let bestDelta = Infinity;
+    for (const candidate of rows) {
+      const delta = Math.abs(candidate.y - item.y);
+      if (delta <= Y_TOLERANCE_PX && delta < bestDelta) {
+        bestDelta = delta;
+        row = candidate;
+      }
+    }
+    if (row) {
+      row.items.push(item);
+    } else {
+      rows.push({ y: item.y, items: [item] });
+    }
+  }
+
+  // Within a row, sort left-to-right and join. CRUCIAL: when the
+  // horizontal gap between items is wider than ~1.5 char widths, insert
+  // a TAB instead of a space. That preserves the original column
+  // structure (PDF text items are item-per-word for proportional fonts;
+  // a wide x-gap = a real column boundary like form labels in column 1
+  // and values in column 2) so downstream extractPairs can split on
+  // \t+ and find multiple label:value pairs in one visual row.
+  return rows.map((row) => {
+    const sorted = row.items.sort((a, b) => a.x - b.x);
+    const pieces = [];
+    for (let i = 0; i < sorted.length; i++) {
+      if (i > 0) {
+        const prev = sorted[i - 1];
+        const cur = sorted[i];
+        const prevEnd = prev.x + (prev.width || 0);
+        const gap = cur.x - prevEnd;
+        const fontSize = prev.fontSize || cur.fontSize || 10;
+        // ~0.5 px per char-width is conservative — only flag genuinely
+        // wide column gaps, not the half-em space between words.
+        pieces.push(gap > fontSize * 1.2 ? "\t" : " ");
+      }
+      pieces.push(sorted[i].str);
+    }
+    return pieces
+      .join("")
+      .replace(/ {2,}/g, "\t") // any wide whitespace gets canonicalized to tab
+      .replace(/\t+/g, "\t")
+      .replace(/ +/g, " ")
+      .trim();
+  });
 }
 
 export async function extractOrderSheetText(filePath, preloadedBuffer) {
@@ -163,12 +213,25 @@ export function createOrderSheetWatcher(hooks = {}) {
       return;
     }
 
-    // "New files only" cutoff: anything last modified before the moment the
-    // automation was enabled is pre-existing history the office opted out
-    // of. Files saved while the app was closed have a fresher mtime and
-    // still come through on the catch-up scan.
-    if (!options.includeExisting && options.enabledAt && fileStats.mtimeMs < options.enabledAt) {
-      return;
+    // "New files only" cutoff. The intent is "did this file appear in
+    // the folder before or after the automation turned on?". mtime alone
+    // gets the wrong answer when the user drags a previously-downloaded
+    // PDF into the folder via Finder — the destination inherits the
+    // source's modification time, which can predate enabledAt by days
+    // even though the file just "appeared" here moments ago. Use the
+    // MOST RECENT of mtime, ctime, and birthtime so any of those three
+    // events crossing enabledAt counts the file as new:
+    //   - birthtime: when the inode was created at the destination
+    //     (set by copy/move on macOS/most Linux filesystems)
+    //   - ctime: inode metadata last changed (moved, perms tweaked)
+    //   - mtime: content last modified (often inherited on copy)
+    if (!options.includeExisting && options.enabledAt) {
+      const newestSignal = Math.max(
+        fileStats.mtimeMs || 0,
+        fileStats.ctimeMs || 0,
+        fileStats.birthtimeMs || 0,
+      );
+      if (newestSignal < options.enabledAt) return;
     }
 
     const flightKey = `${filePath}:${fileStats.mtimeMs}`;
