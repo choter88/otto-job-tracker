@@ -7,9 +7,10 @@ import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Trash2, Clock, Check, X, KeyRound } from "lucide-react";
+import { Users, Trash2, Clock, Check, X, KeyRound, Info } from "lucide-react";
 import { format } from "date-fns";
 import type { PublicUser } from "@shared/schema";
+import { OTTO_TEAM_SOFT_CAP } from "@shared/constants";
 
 type AssignableRole = "manager" | "staff" | "view_only";
 
@@ -231,8 +232,32 @@ export default function TeamPage() {
     return member.role !== "owner" && member.role !== "manager";
   };
 
+  // Soft (non-blocking) cap warning. Counts active team members
+  // (pending requests don't count yet — they're still a question
+  // mark, not an active account). Owners and managers see it; staff
+  // don't need to, since they can't approve anyway.
+  const showSoftCap = canManageTeam && members.length >= OTTO_TEAM_SOFT_CAP;
+
   return (
     <div className="space-y-6">
+      {showSoftCap && (
+        <div
+          className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+          data-testid="banner-team-soft-cap"
+        >
+          <Info className="h-4 w-4 shrink-0 mt-0.5 text-amber-700 dark:text-amber-300" />
+          <div className="flex-1">
+            <div className="font-medium text-amber-900 dark:text-amber-100">
+              {members.length} active accounts — past Otto's usual size
+            </div>
+            <div className="text-amber-800/90 dark:text-amber-200/90">
+              Otto can keep going (this isn't a license limit), but most offices stay under {OTTO_TEAM_SOFT_CAP}.
+              If staff have left, removing their accounts keeps notifications and the team list tidy.
+            </div>
+          </div>
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
