@@ -78,6 +78,7 @@ import {
   scheduleAutomaticBackups as scheduleAutomaticBackupsRaw,
   maybePromptForBackupFolder as maybePromptForBackupFolderRaw,
   maybeWarnAboutBackups as maybeWarnAboutBackupsRaw,
+  restoreAttachmentsFromBackup,
 } from "./lib/backup.js";
 
 import {
@@ -973,6 +974,17 @@ function maybeRestoreDatabaseFromArgs() {
     if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
 
     fs.copyFileSync(restoreFrom, sqlitePath);
+
+    // Rebuild the order-sheet-attachments folder from the sidecar that
+    // sits next to the .sqlite (otto-backup-<ts>-attachments/). Legacy
+    // backups without a sidecar restore cleanly too — the dir is just
+    // empty and job dialogs fall back to "no preview saved".
+    try {
+      const restoredCount = restoreAttachmentsFromBackup(restoreFrom, path.dirname(sqlitePath));
+      _logStartup(`Restore: re-populated ${restoredCount} attachment(s) from sidecar`);
+    } catch (attachErr) {
+      console.error("Restore: failed to restore attachments sidecar", attachErr);
+    }
 
     // Stamp `onboarding.source = 'backup'` on every office in the restored DB
     // so that the BackupRestoreBanner shows after the user logs in. Without

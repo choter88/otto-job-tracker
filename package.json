@@ -41,7 +41,8 @@
     "test:order-sheet-watcher": "node --import tsx --test tests/order-sheet-watcher.test.ts",
     "test:order-sheet-watchers": "node --import tsx --test tests/order-sheet-watchers.test.ts",
     "test:order-sheet-attachments": "node --import tsx --test tests/order-sheet-attachments.test.ts",
-    "test:order-sheets": "npm run test:order-sheet-parser && npm run test:order-sheet-watcher && npm run test:order-sheet-watchers && npm run test:order-sheet-attachments",
+    "test:backup-attachments": "node --import tsx --test tests/backup-attachments.test.ts",
+    "test:order-sheets": "npm run test:order-sheet-parser && npm run test:order-sheet-watcher && npm run test:order-sheet-watchers && npm run test:order-sheet-attachments && npm run test:backup-attachments",
     "test:archive-tray-number": "node --import tsx --test tests/archive-tray-number.test.ts",
     "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets",
     "db:push": "drizzle-kit push"

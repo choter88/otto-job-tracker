@@ -157,6 +157,130 @@ function parseBackupTimestamp(filename) {
   return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s), Number(ms) || 0).getTime();
 }
 
+// Order-sheet attachment files live OUTSIDE the SQLite database (on disk
+// under <data>/order-sheet-attachments/) so backups don't ship MB per
+// sheet inside the .sqlite. Each backup pairs its .sqlite with a sidecar
+// directory at <backup-dir>/otto-backup-<ts>-attachments/ that holds a
+// copy of every attachment file present at backup time. Restore reads
+// the sidecar; retention deletes it alongside the sqlite.
+//
+// Why a sidecar (not a zip): no new native deps, the directory format
+// matches what restore writes back, and SMB/AFP shares handle a folder
+// of small PDFs fine — the same shares already hold every other Otto
+// artifact today.
+
+const ATTACHMENTS_SUBDIR = "order-sheet-attachments";
+
+/** Derive the sidecar directory path for a given backup file. */
+export function getAttachmentSidecarPath(backupFilePath) {
+  const dir = path.dirname(backupFilePath);
+  const base = path.basename(backupFilePath).replace(/\.(sqlite|db)$/i, "");
+  return path.join(dir, `${base}-attachments`);
+}
+
+/**
+ * Recursively copy a directory's contents to a destination. Best-effort:
+ * on a failing individual file we log and keep going so a single locked
+ * attachment doesn't kill the rest of the backup. Returns the count of
+ * files written.
+ */
+function copyDirContents(srcDir, destDir) {
+  let copied = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(srcDir, { withFileTypes: true });
+  } catch (err) {
+    if (err?.code === "ENOENT") return 0;
+    throw err;
+  }
+  fs.mkdirSync(destDir, { recursive: true, mode: 0o700 });
+  for (const entry of entries) {
+    const src = path.join(srcDir, entry.name);
+    const dest = path.join(destDir, entry.name);
+    try {
+      if (entry.isDirectory()) {
+        copied += copyDirContents(src, dest);
+      } else if (entry.isFile()) {
+        fs.copyFileSync(src, dest);
+        try {
+          fs.chmodSync(dest, 0o600);
+        } catch {
+          // best-effort on filesystems that don't carry POSIX modes
+        }
+        copied += 1;
+      }
+    } catch (err) {
+      console.error(`[backup] failed to copy ${src}:`, err?.message || err);
+    }
+  }
+  return copied;
+}
+
+/**
+ * Snapshot the live attachments directory into the sidecar next to the
+ * just-written .sqlite. Called AFTER the sqlite backup succeeds so a
+ * failed sidecar leaves an obvious orphan (no `.sqlite` to point at) and
+ * doesn't lie about the sqlite's status. Returns the file count or 0 if
+ * the source directory doesn't exist / is empty.
+ */
+export function copyAttachmentsForBackup(backupFilePath, sourceDataDir) {
+  const sourceDir = path.join(sourceDataDir, ATTACHMENTS_SUBDIR);
+  if (!fs.existsSync(sourceDir)) return 0;
+  const sidecar = getAttachmentSidecarPath(backupFilePath);
+  try {
+    if (fs.existsSync(sidecar)) {
+      fs.rmSync(sidecar, { recursive: true, force: true });
+    }
+    return copyDirContents(sourceDir, sidecar);
+  } catch (err) {
+    console.error("[backup] failed to copy attachments sidecar:", err?.message || err);
+    // Leave whatever managed to land — the sqlite is still good, and
+    // the next backup will refresh the sidecar.
+    return 0;
+  }
+}
+
+/**
+ * Restore the attachments folder from a backup's sidecar. Wipes the
+ * live <data>/order-sheet-attachments/ first so the destination matches
+ * the backup point-in-time exactly (no straggler files survive a
+ * restore). Legacy backups WITHOUT a sidecar are tolerated — restore
+ * proceeds with an empty attachments directory and the job dialogs
+ * fall back to the "no preview" message.
+ */
+export function restoreAttachmentsFromBackup(backupFilePath, destDataDir) {
+  const sidecar = getAttachmentSidecarPath(backupFilePath);
+  const destDir = path.join(destDataDir, ATTACHMENTS_SUBDIR);
+  try {
+    if (fs.existsSync(destDir)) {
+      fs.rmSync(destDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    console.error("[restore] failed to clear attachments dir:", err?.message || err);
+  }
+  // Always end with an existing (possibly empty) directory so the server
+  // and tests see a consistent layout, whether or not a sidecar was
+  // available. Legacy .sqlite-only backups land here with 0 files.
+  fs.mkdirSync(destDir, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(sidecar)) return 0;
+  try {
+    return copyDirContents(sidecar, destDir);
+  } catch (err) {
+    console.error("[restore] failed to copy attachments sidecar:", err?.message || err);
+    return 0;
+  }
+}
+
+/** Remove an attachment sidecar when its paired .sqlite is being pruned. */
+export function removeAttachmentSidecar(backupFilePath) {
+  const sidecar = getAttachmentSidecarPath(backupFilePath);
+  try {
+    fs.rmSync(sidecar, { recursive: true, force: true });
+  } catch {
+    // best-effort
+  }
+}
+
 // Sweep .tmp files left behind by a crashed/killed backup. The 1-hour age
 // guard keeps us safely clear of any in-progress write.
 const ORPHAN_TMP_MAX_AGE_MS = 1000 * 60 * 60;
@@ -219,6 +343,9 @@ export function enforceBackupRetention(dirPath, _retentionCount) {
     } catch {
       // ignore
     }
+    // The attachment sidecar lives next to the .sqlite and ages out
+    // with it — keeping one without the other would just leak disk.
+    removeAttachmentSidecar(filePath);
   }
 }
 
@@ -295,6 +422,12 @@ export async function runBackupToLocalFolder({ interactive, reason }, { dialog, 
     try {
       await db.backup(tempPath);
       fs.renameSync(tempPath, finalPath);
+
+      // Snapshot the order-sheet attachments alongside the .sqlite so
+      // restore brings back the actual PDFs, not just the rows that
+      // point at them. Best-effort: a failed sidecar leaves the sqlite
+      // valid and the dialog will fall back to "no preview saved".
+      copyAttachmentsForBackup(finalPath, path.dirname(sqlitePath));
 
       const updated = readConfig();
       writeConfig({
@@ -388,6 +521,10 @@ export async function runBackupToNetworkFolder({ interactive, reason }, { dialog
     try {
       await db.backup(tempPath);
       fs.renameSync(tempPath, finalPath);
+
+      // Same attachments sidecar as the local-backup path — without it,
+      // recovering from a Host disaster would lose every PDF preview.
+      copyAttachmentsForBackup(finalPath, path.dirname(sqlitePath));
 
       const updated = readConfig();
       writeConfig({
