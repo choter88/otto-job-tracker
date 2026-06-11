@@ -490,6 +490,10 @@ export class DatabaseStorage implements IStorage {
         orderId: job.orderId,
         patientFirstName: job.patientFirstName,
         patientLastName: job.patientLastName,
+        // In trayNumber identifier mode the patient name fields are blank
+        // by design — the tray IS the identifier, so dropping it here
+        // left archived rows with no identifier at all.
+        trayNumber: job.trayNumber,
         phone: job.phone,
         jobType: job.jobType,
         finalStatus: job.status,
@@ -527,10 +531,14 @@ export class DatabaseStorage implements IStorage {
       conditions.push(lte(archivedJobs.archivedAt, endDateTime));
     }
     
-    // Add name filtering
+    // Identifier filtering — matches patient name OR tray number so the
+    // search box works in both office identifier modes (tray-mode rows
+    // have blank names and a tray as their only identifier).
     if (name && name.trim()) {
+      const pattern = '%' + name.trim() + '%';
       conditions.push(
-        sql`LOWER(${archivedJobs.patientFirstName} || ' ' || ${archivedJobs.patientLastName}) LIKE LOWER(${'%' + name.trim() + '%'})`
+        sql`(LOWER(${archivedJobs.patientFirstName} || ' ' || ${archivedJobs.patientLastName}) LIKE LOWER(${pattern})
+             OR LOWER(COALESCE(${archivedJobs.trayNumber}, '')) LIKE LOWER(${pattern}))`
       );
     }
     
@@ -560,6 +568,11 @@ export class DatabaseStorage implements IStorage {
         orderId: archived.orderId,
         patientFirstName: archived.patientFirstName,
         patientLastName: archived.patientLastName,
+        // Round-trip the tray identifier and provenance marker — without
+        // these, restoring stripped the only identifier in trayNumber
+        // mode and dropped the "Auto" badge on automation-created jobs.
+        trayNumber: archived.trayNumber,
+        source: archived.source,
         phone: archived.phone,
         jobType: archived.jobType,
         status: restoreStatus as any,

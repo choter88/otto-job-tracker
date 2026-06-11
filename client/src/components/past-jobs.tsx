@@ -107,6 +107,15 @@ export default function PastJobs() {
     enabled: !!user?.officeId,
   });
 
+  // Identifier mode drives how archived rows are labeled: tray-mode
+  // offices keep patient name fields blank, so the tray number is the
+  // row's only identity (mirrors the Worklist's getPatientLabel).
+  const useTrayNumber = ((office?.settings as any)?.jobIdentifierMode || "patientName") === "trayNumber";
+  const getArchivedJobLabel = (job: ArchivedJob) =>
+    useTrayNumber
+      ? job.trayNumber || "—"
+      : `${job.patientFirstName} ${job.patientLastName}`.trim() || "—";
+
   const restoreJobMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await apiRequest("POST", `/api/jobs/archived/${id}/restore`, {});
@@ -231,7 +240,7 @@ export default function PastJobs() {
           <div className="relative flex-1 min-w-[200px] max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search by patient name..."
+              placeholder={useTrayNumber ? "Search by tray number..." : "Search by patient name..."}
               value={nameSearch}
               onChange={(e) => setNameSearch(e.target.value)}
               className="pl-9"
@@ -294,7 +303,7 @@ export default function PastJobs() {
           <Table className="text-[13px] [&_th]:h-10 [&_th]:px-2.5 [&_th]:text-[12px] [&_th]:font-semibold [&_td]:px-2.5 [&_td]:py-2">
           <TableHeader className="bg-muted/50">
             <TableRow>
-              <TableHead>Patient</TableHead>
+              <TableHead>{useTrayNumber ? "Tray #" : "Patient"}</TableHead>
               <TableHead>Job Type</TableHead>
               <TableHead>Destination</TableHead>
               <TableHead>Final Status</TableHead>
@@ -313,7 +322,7 @@ export default function PastJobs() {
               >
                 <TableCell>
                   <span className="font-medium">
-                    {`${job.patientFirstName} ${job.patientLastName}`.trim()}
+                    {getArchivedJobLabel(job)}
                   </span>
                 </TableCell>
                 <TableCell>
