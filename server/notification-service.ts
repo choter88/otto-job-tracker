@@ -131,11 +131,18 @@ export async function notifyJobStarred(
   importantNote?: string,
 ): Promise<void> {
   try {
-    // Notify every other user in the office. Starring is a "this job
-    // matters, please pay attention" signal; the team-wide notification
-    // is the whole point of the feature.
+    // Two kinds of star:
+    //  - With a note, the user wrote a message FOR the team — that's the
+    //    explicit "please pay attention" signal, so it reaches everyone.
+    //  - A plain star is mostly personal bookkeeping ("I'm tracking
+    //    this"). Broadcasting every bookmark to the whole office buried
+    //    the bell, so it now only tells the job's creator someone is
+    //    watching their job.
     const officeUsers = await storage.getUsersInOffice(job.officeId);
-    const recipients = officeUsers.filter((u) => u.id !== starredBy.id);
+    const hasNote = Boolean(importantNote && importantNote.trim());
+    const recipients = officeUsers.filter((u) =>
+      u.id !== starredBy.id && (hasNote || u.id === job.createdBy),
+    );
     if (recipients.length === 0) return;
 
     const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";

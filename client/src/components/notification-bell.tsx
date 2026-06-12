@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Bell, CheckCheck, MessageCircle, AlertTriangle, TrendingUp, User, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -89,6 +89,51 @@ export default function NotificationBell() {
       default:
         return <Bell className="h-4 w-4 text-gray-500" />;
     }
+  };
+
+  // A folder full of order sheets imports as a burst of auto-created
+  // jobs — one bell row each. Three or more in a row collapse into a
+  // single "N jobs created from order sheets" line so a bulk import
+  // doesn't shove everything else off the list. The underlying rows
+  // (and the per-job "New" badges they drive) are untouched.
+  type BellItem =
+    | { kind: "single"; notification: Notification }
+    | { kind: "autoGroup"; items: Notification[] };
+  const displayItems = useMemo<BellItem[]>(() => {
+    const out: BellItem[] = [];
+    let run: Notification[] = [];
+    const flush = () => {
+      if (run.length >= 3) out.push({ kind: "autoGroup", items: run });
+      else run.forEach((notification) => out.push({ kind: "single", notification }));
+      run = [];
+    };
+    for (const notification of notifications) {
+      if (notification.type === "job_auto_created") run.push(notification);
+      else {
+        flush();
+        out.push({ kind: "single", notification });
+      }
+    }
+    flush();
+    return out;
+  }, [notifications]);
+
+  const handleAutoGroupClick = async (items: Notification[]) => {
+    const unread = items.filter((n) => !n.readAt);
+    for (const n of unread) {
+      try {
+        await apiRequest("PATCH", `/api/notifications/${n.id}/read`, {});
+      } catch {
+        // best-effort; the rest still clear
+      }
+    }
+    if (unread.length > 0) {
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications", "recent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/new-auto-created"] });
+    }
+    setIsOpen(false);
+    setLocation("/");
   };
 
   const handleNotificationClick = async (notification: Notification) => {
@@ -195,44 +240,81 @@ export default function NotificationBell() {
             </div>
           ) : (
             <div>
-              {notifications.map((notification, index) => (
-                <div key={notification.id}>
-                  <button
-                    onClick={() => handleNotificationClick(notification)}
-                    className={`w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors flex items-start gap-2 ${
-                      !notification.readAt ? 'bg-red-50/50 dark:bg-red-950/20' : ''
-                    }`}
-                    data-testid={`notification-item-${notification.id}`}
-                  >
-                    <div className="flex-shrink-0 mt-0.5">
-                      {getNotificationIcon(notification.type)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-medium text-xs truncate flex-1" data-testid={`notification-title-${notification.id}`}>
-                          {notification.title}
-                        </p>
-                        <span className="text-[10px] text-muted-foreground shrink-0">
-                          {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
-                        </span>
-                        {!notification.readAt && (
-                          <div
-                            className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0"
-                            data-testid={`unread-indicator-${notification.id}`}
-                          />
-                        )}
-                      </div>
-                      <p
-                        className="text-[11px] text-muted-foreground truncate"
-                        data-testid={`notification-message-${notification.id}`}
+              {displayItems.map((item, index) => {
+                if (item.kind === "autoGroup") {
+                  const newest = item.items[0];
+                  const unreadInGroup = item.items.filter((n) => !n.readAt).length;
+                  return (
+                    <div key={`auto-group-${newest.id}`}>
+                      <button
+                        onClick={() => void handleAutoGroupClick(item.items)}
+                        className={`w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors flex items-start gap-2 ${
+                          unreadInGroup > 0 ? 'bg-red-50/50 dark:bg-red-950/20' : ''
+                        }`}
+                        data-testid={`notification-auto-group-${newest.id}`}
                       >
-                        {notification.message}
-                      </p>
+                        <div className="flex-shrink-0 mt-0.5">{getNotificationIcon("job_auto_created")}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-medium text-xs truncate flex-1">
+                              {item.items.length} jobs created from order sheets
+                            </p>
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              {formatDistanceToNow(new Date(newest.createdAt), { addSuffix: true })}
+                            </span>
+                            {unreadInGroup > 0 && (
+                              <div className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            They're marked "New" on the worklist — tap to view
+                          </p>
+                        </div>
+                      </button>
+                      {index < displayItems.length - 1 && <Separator />}
                     </div>
-                  </button>
-                  {index < notifications.length - 1 && <Separator />}
-                </div>
-              ))}
+                  );
+                }
+                const notification = item.notification;
+                return (
+                  <div key={notification.id}>
+                    <button
+                      onClick={() => handleNotificationClick(notification)}
+                      className={`w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors flex items-start gap-2 ${
+                        !notification.readAt ? 'bg-red-50/50 dark:bg-red-950/20' : ''
+                      }`}
+                      data-testid={`notification-item-${notification.id}`}
+                    >
+                      <div className="flex-shrink-0 mt-0.5">
+                        {getNotificationIcon(notification.type)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-medium text-xs truncate flex-1" data-testid={`notification-title-${notification.id}`}>
+                            {notification.title}
+                          </p>
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
+                          </span>
+                          {!notification.readAt && (
+                            <div
+                              className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0"
+                              data-testid={`unread-indicator-${notification.id}`}
+                            />
+                          )}
+                        </div>
+                        <p
+                          className="text-[11px] text-muted-foreground truncate"
+                          data-testid={`notification-message-${notification.id}`}
+                        >
+                          {notification.message}
+                        </p>
+                      </div>
+                    </button>
+                    {index < displayItems.length - 1 && <Separator />}
+                  </div>
+                );
+              })}
             </div>
           )}
         </ScrollArea>

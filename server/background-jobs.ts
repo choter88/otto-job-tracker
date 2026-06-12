@@ -50,7 +50,21 @@ cron.schedule('0 0 * * *', async () => {
   try {
     const rules = await db.select().from(notificationRules).where(eq(notificationRules.enabled, true));
     const updatedOffices = new Set<string>();
-    
+
+    // The sweep runs nightly but a job can stay overdue for weeks. Without
+    // this, every run re-creates an identical alert for every user — the
+    // bell fills with daily twins of a notification nobody acted on.
+    // Suppress repeats: one overdue alert per (user, job) per 7 days.
+    const RENOTIFY_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+    const recentRows = await db
+      .select({ userId: notifications.userId, jobId: notifications.jobId })
+      .from(notifications)
+      .where(and(
+        eq(notifications.type, "overdue_alert"),
+        gte(notifications.createdAt, new Date(Date.now() - RENOTIFY_AFTER_MS)),
+      ));
+    const recentlyNotified = new Set(recentRows.map((row) => `${row.userId}:${row.jobId}`));
+
     for (const rule of rules) {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - rule.maxDays);
@@ -87,6 +101,9 @@ cron.schedule('0 0 * * *', async () => {
         
         const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
         for (const userId of recipients) {
+          const dedupKey = `${userId}:${job.id}`;
+          if (recentlyNotified.has(dedupKey)) continue;
+          recentlyNotified.add(dedupKey);
           await storage.createNotification({
             userId,
             type: "overdue_alert",
