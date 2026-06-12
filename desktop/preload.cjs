@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld("otto", {
   orderSheetsExtract: (payload) => ipcRenderer.invoke("otto:orderSheets:extract", payload),
   orderSheetsReadBytes: (payload) => ipcRenderer.invoke("otto:orderSheets:read-bytes", payload),
   orderSheetsAck: (payload) => ipcRenderer.invoke("otto:orderSheets:ack", payload),
+  // Hand a saved sheet's bytes to the OS's own PDF viewer (Preview etc).
+  orderSheetsOpenExternal: (payload) => ipcRenderer.invoke("otto:orderSheets:open-external", payload),
   // Push events from the watcher (new pending file, status change).
   // Returns an unsubscribe function for React effect cleanup.
   onOrderSheetsEvent: (callback) => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
@@ -1393,25 +1393,106 @@ export default function JobDetailsModal({
 // once, by the iframe itself. Chromium's built-in viewer provides page
 // nav, zoom, and search; in Electron that viewer is enabled via the
 // `plugins` webPreference on the main window.
+// How the order sheet is shown: we render the PDF ourselves with pdf.js
+// onto canvases instead of an <iframe>. Chromium's built-in PDF viewer is
+// plugin-gated and unreliable inside Electron iframes (renders blank), and
+// canvases behave identically in the desktop app and a plain browser.
+// "Open" hands the bytes to the OS's own PDF viewer via IPC when the
+// Electron bridge is present, else falls back to a browser tab.
+const ORDER_SHEET_MAX_RENDER_PAGES = 10;
+
 function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
-  const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
+  const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading");
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // pdf.js TRANSFERS the buffer it's given to its worker (detaching it),
+  // so the copy used by "Open" must be made before rendering starts.
+  const bytesRef = useRef<Uint8Array | null>(null);
   const fileUrl = `/api/jobs/by-order-id/${encodeURIComponent(orderId)}/order-sheet-file`;
+  const bridge = (window as any)?.otto;
+  const canOpenExternally = typeof bridge?.orderSheetsOpenExternal === "function";
 
   useEffect(() => {
     let disposed = false;
     setState("loading");
+    setTextContent(null);
+    bytesRef.current = null;
+
     (async () => {
       try {
-        const res = await fetch(fileUrl, { method: "HEAD", credentials: "include" });
-        if (!disposed) setState(res.ok ? "ready" : "missing");
+        const res = await fetch(fileUrl, { credentials: "include" });
+        if (!res.ok) {
+          if (!disposed) setState("missing");
+          return;
+        }
+        const contentType = res.headers.get("content-type") || "";
+        const buffer = await res.arrayBuffer();
+        if (disposed) return;
+        bytesRef.current = new Uint8Array(buffer);
+
+        if (contentType.startsWith("text/")) {
+          setTextContent(new TextDecoder().decode(buffer));
+          setState("ready");
+          return;
+        }
+
+        // Lazy-load pdf.js — it's ~400KB and only order-sheet jobs pay it.
+        const pdfjs = await import("pdfjs-dist");
+        pdfjs.GlobalWorkerOptions.workerSrc = (
+          await import("pdfjs-dist/build/pdf.worker.min.mjs?url")
+        ).default;
+        const loadingTask = pdfjs.getDocument({ data: bytesRef.current.slice() });
+        const doc = await loadingTask.promise;
+        if (disposed) {
+          void loadingTask.destroy();
+          return;
+        }
+
+        const host = containerRef.current;
+        if (!host) return;
+        host.replaceChildren();
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const pageCount = Math.min(doc.numPages, ORDER_SHEET_MAX_RENDER_PAGES);
+        for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+          const page = await doc.getPage(pageNumber);
+          if (disposed) break;
+          const viewport = page.getViewport({ scale: 1.4 * dpr });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          canvas.style.width = "100%";
+          canvas.style.height = "auto";
+          canvas.style.display = "block";
+          const ctx = canvas.getContext("2d");
+          if (!ctx) break;
+          await page.render({ canvas, canvasContext: ctx, viewport } as any).promise;
+          if (disposed) break;
+          host.appendChild(canvas);
+        }
+        void loadingTask.destroy();
+        if (!disposed) setState("ready");
       } catch {
-        if (!disposed) setState("missing");
+        if (!disposed) setState("error");
       }
     })();
+
     return () => {
       disposed = true;
     };
   }, [fileUrl]);
+
+  const openSheet = async () => {
+    const bytes = bytesRef.current;
+    if (canOpenExternally && bytes) {
+      const result = await bridge.orderSheetsOpenExternal({
+        bytes,
+        fileName: `${orderId}${textContent !== null ? ".txt" : ".pdf"}`,
+      });
+      if (!result?.error) return;
+      // Fall through to the browser path if the OS hand-off failed.
+    }
+    window.open(fileUrl, "_blank", "noreferrer");
+  };
 
   return (
     <div className="flex flex-col h-full min-h-0" data-testid="section-order-sheet-attachment">
@@ -1419,15 +1500,14 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
         <ScanLine className="h-3 w-3" aria-hidden />
         Order Sheet
         {state === "ready" && (
-          <a
-            href={fileUrl}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            type="button"
+            onClick={() => void openSheet()}
             className="ml-auto text-[calc(10px*var(--ui-scale))] normal-case tracking-normal text-otto-accent-ink hover:text-otto-accent-strong"
             data-testid="link-order-sheet-open"
           >
-            Open in new tab
-          </a>
+            {canOpenExternally ? "Open in PDF viewer" : "Open in new tab"}
+          </button>
         )}
       </h4>
 
@@ -1445,12 +1525,24 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
         </p>
       )}
 
-      {state === "ready" && (
-        <iframe
-          src={fileUrl}
-          title="Order sheet"
-          className="block w-full flex-1 min-h-[480px] rounded-lg border border-line bg-paper-2"
-          data-testid="iframe-order-sheet"
+      {state === "error" && (
+        <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute m-0">
+          The saved sheet couldn't be displayed. Use "Open in PDF viewer" from the Order Sheets
+          page, or re-save the file into the watched folder.
+        </p>
+      )}
+
+      {textContent !== null ? (
+        <pre className="flex-1 min-h-0 overflow-auto rounded-lg border border-line bg-paper-2 p-3 text-[calc(11.5px*var(--ui-scale))] whitespace-pre-wrap">
+          {textContent}
+        </pre>
+      ) : (
+        <div
+          ref={containerRef}
+          className={`flex-1 min-h-0 overflow-auto rounded-lg border border-line bg-paper-2 space-y-2 p-2 ${
+            state === "ready" ? "" : "hidden"
+          }`}
+          data-testid="canvas-order-sheet"
         />
       )}
     </div>

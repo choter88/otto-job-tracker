@@ -1914,6 +1914,42 @@ ipcMain.handle("otto:orderSheets:ack", async (_event, payload) => {
   return { ok: true };
 });
 
+// Open a saved order sheet in the OS's own viewer (Preview, Acrobat, …).
+// The renderer already holds the bytes (fetched under its session); we
+// land them in a per-app temp folder and hand off to the OS. The temp
+// copy is PHI, so the folder is wiped on every app start and files are
+// owner-only.
+const orderSheetTempDir = () => path.join(app.getPath("temp"), "otto-order-sheets");
+
+function cleanOrderSheetTempDir() {
+  try {
+    fs.rmSync(orderSheetTempDir(), { recursive: true, force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+ipcMain.handle("otto:orderSheets:open-external", async (_event, payload) => {
+  try {
+    const bytes = payload?.bytes;
+    const isBinary = bytes instanceof Uint8Array || Buffer.isBuffer(bytes);
+    if (!isBinary || bytes.byteLength === 0 || bytes.byteLength > 25 * 1024 * 1024) {
+      return { error: "Invalid file payload." };
+    }
+    const rawName = typeof payload?.fileName === "string" ? payload.fileName : "order-sheet.pdf";
+    const safeName = rawName.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "order-sheet.pdf";
+    const dir = orderSheetTempDir();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const filePath = path.join(dir, safeName);
+    fs.writeFileSync(filePath, Buffer.from(bytes), { mode: 0o600 });
+    const openError = await shell.openPath(filePath);
+    if (openError) return { error: openError };
+    return { ok: true };
+  } catch (error) {
+    return { error: `Couldn't open the file (${error?.message || "unknown error"}).` };
+  }
+});
+
 // --- IPC Handlers ---
 
 ipcMain.handle("otto:config:get", async () => _readConfig());
@@ -2583,6 +2619,9 @@ app.whenReady().then(async () => {
   // writes to userData/startup.log — making server errors invisible.
   process.env.OTTO_STARTUP_LOG_PATH = getStartupLogPath(app);
   maybeRestoreDatabaseFromArgs();
+  // Temp copies of order sheets (handed to the OS viewer) are PHI —
+  // never let them outlive the session that created them.
+  cleanOrderSheetTempDir();
   _logStartup("App starting");
 
   appReadyForOpenEvents = true;
