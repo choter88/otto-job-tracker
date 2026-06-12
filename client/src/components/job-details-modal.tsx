@@ -869,7 +869,17 @@ export default function JobDetailsModal({
                     const stepIdx = trackStatuses.findIndex((t) => t.id === s.id);
                     const isPast = stepIdx < currentStepIdx;
                     const isCurrent = stepIdx === currentStepIdx;
-                    const entry = statusHistory.find((e) => e.newStatus === s.id);
+                    // Stamps only for steps the job is currently AT or past.
+                    // A job that advanced and was then reverted still has
+                    // history rows for the later steps — those steps must
+                    // read "pending" again, not show a stale time/user. The
+                    // newest entry per status wins so re-advancing shows the
+                    // fresh stamp, not the pre-revert one.
+                    const entry = isPast || isCurrent
+                      ? statusHistory
+                          .filter((e) => e.newStatus === s.id)
+                          .sort((a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime())[0]
+                      : undefined;
                     const actorName = entry
                       ? (entry.changedByUser?.firstName || entry.changedByUser?.lastName
                           ? `${entry.changedByUser?.firstName || ""} ${entry.changedByUser?.lastName || ""}`.trim()
