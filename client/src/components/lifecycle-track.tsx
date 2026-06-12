@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ArrowRight, ChevronDown } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -109,8 +109,36 @@ export default function LifecycleTrack({
     return body;
   }
 
+  // One-click advance: the most common status edit by far is "move to the
+  // next step", so it gets its own arrow beside the picker instead of
+  // requiring open-menu → find → click. Hidden on the last status and on
+  // cancelled jobs (there's no "next"). A sibling of the dropdown trigger,
+  // not a child — nested buttons are invalid HTML and Radix opens its menu
+  // on pointerdown, which would swallow the click.
+  const nextStatus = !cancelled && stepIdx >= 0 && stepIdx < track.length - 1 ? track[stepIdx + 1] : null;
+  const advanceEl = nextStatus && (
+    <button
+      type="button"
+      className={cn(
+        "shrink-0 self-end mb-px rounded p-0.5 text-otto-accent-ink",
+        "hover:bg-otto-accent-soft hover:text-otto-accent-strong",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+      title={`Move to ${nextStatus.label}`}
+      aria-label={`Move to ${nextStatus.label}`}
+      data-testid="lifecycle-advance"
+      onClick={(e) => {
+        e.stopPropagation();
+        onStatusChange(nextStatus.id);
+      }}
+    >
+      <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+    </button>
+  );
+
   // Interactive: wrap in a dropdown trigger.
   return (
+    <div className="flex items-stretch gap-0.5 min-w-0 max-w-full">
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         <button
@@ -166,6 +194,8 @@ export default function LifecycleTrack({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    {advanceEl}
+    </div>
   );
 }
 
