@@ -18,7 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List, AlertTriangle, ListFilter, Zap } from "lucide-react";
+import { Search, Plus, Upload, MessageSquare, ChevronUp, ChevronDown, Star, EllipsisVertical, Briefcase, Columns3, CheckSquare, Link2, X, Type, Hash, CalendarDays, List, AlertTriangle, ListFilter } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -1753,15 +1753,12 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
                                 Redo
                               </span>
                             )}
-                            {job.source === "order_sheet" && (
-                              <Zap
-                                className="shrink-0 h-3 w-3 text-otto-accent-ink"
-                                data-testid={`indicator-auto-${job.id}`}
-                                aria-label="Created automatically from an order sheet"
-                              >
-                                <title>Created automatically from an order sheet</title>
-                              </Zap>
-                            )}
+                            {/* No persistent automation marker: the per-user
+                                "New" pill below flags fresh auto-created jobs
+                                until seen, and the Order Sheets ledger is the
+                                durable record of which job came from which
+                                sheet — a permanent bolt on every row was noise
+                                with no ongoing action attached. */}
                             {newAutoCreatedJobIdSet.has(job.id) && (
                               <span
                                 className="shrink-0 inline-flex items-center px-1.5 py-px rounded-full text-[calc(9.5px*var(--ui-scale))] font-semibold uppercase tracking-wider bg-otto-accent text-white"
