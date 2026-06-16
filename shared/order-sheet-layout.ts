@@ -23,6 +23,7 @@
 // Express server, and anywhere else.
 
 import {
+  matchOption,
   parseSheetDate,
   splitPatientName,
   type OrderSheetOption,
@@ -67,12 +68,38 @@ export const ORDER_SHEET_LEARNABLE_FIELDS: OrderSheetLearnableField[] = [
 export interface OrderSheetAnchorRule {
   field: OrderSheetLearnableField;
   /** Normalized text of the printed label the value sits next to ("" for
-   * pure value-map rules on option fields). */
+   * pure value-map rules on option fields). Old-shape rules use this as
+   * their single search location; new-shape rules also accept `anchors`. */
   label: string;
   /** Where the value lives relative to that label. */
   position: "right" | "below";
+  /** Additional learned locations (label + position). Each correction
+   * appends here instead of replacing the previous anchor, so the same
+   * field can be searched at every spot the office has taught Otto over
+   * time. First valid extract wins. */
+  anchors?: Array<{ label: string; position: "right" | "below" }>;
   /** Option fields only: normalized sheet text → office option id. */
   valueMap?: Record<string, string>;
+}
+
+/** Normalize a stored rule (which may be old-shape single-anchor, new-
+ * shape multi-anchor, or pure value-map) into the list of label+position
+ * anchors to try during apply. */
+function anchorsForApply(
+  rule: OrderSheetAnchorRule,
+): Array<{ label: string; position: "right" | "below" }> {
+  const out: Array<{ label: string; position: "right" | "below" }> = [];
+  const seen = new Set<string>();
+  const push = (anchor: { label: string; position: "right" | "below" } | undefined) => {
+    if (!anchor || !anchor.label) return;
+    const key = `${anchor.label}|${anchor.position}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ label: anchor.label, position: anchor.position });
+  };
+  if (rule.label) push({ label: rule.label, position: rule.position });
+  if (Array.isArray(rule.anchors)) for (const anchor of rule.anchors) push(anchor);
+  return out;
 }
 
 // Same row/column reconstruction thresholds the desktop watcher uses for
@@ -330,11 +357,17 @@ function anchorFor(segments: Segment[], target: Segment): { label: string; posit
  * fixed. A rule is only produced when the corrected value can actually
  * be located on the sheet next to a printed label — values the user
  * typed from memory (not on the sheet) teach nothing, by design.
+ *
+ * `options` lets us also learn ANCHORS for lab / job-type when the
+ * corrected id maps back to a label that appears on this sheet. Without
+ * it, those fields can only learn raw-text → id mappings (valueMap),
+ * which leaves the "parser found nothing" case unfixable.
  */
 export function deriveOrderSheetAnchorRules(
   layout: OrderSheetLayout,
   original: ParsedOrderSheetFields | null,
   corrected: OrderSheetCorrection,
+  options?: { jobTypes: OrderSheetOption[]; destinations: OrderSheetOption[] },
 ): OrderSheetAnchorRule[] {
   const segments = segmentsFromLayout(layout);
   const rules: OrderSheetAnchorRule[] = [];
@@ -387,18 +420,45 @@ export function deriveOrderSheetAnchorRules(
     addAnchored("orderDate", (seg, inlineValue) => parseSheetDate((inlineValue ?? seg.text).trim()) === orderDate);
   }
 
-  // Option fields: the heuristics already FOUND the raw text but couldn't
-  // map it to an office option (or mapped it wrong). The correction tells
-  // us what that raw text means in this office — learn the mapping.
+  // Option fields (job type / lab) have TWO learning paths, used together:
+  //
+  //   • valueMap — the heuristics found raw text but couldn't map it to an
+  //     office option. The correction teaches what that raw text means.
+  //   • anchor — if the option's label can be located on the sheet, learn
+  //     where it lives (label + position) so the next sheet doesn't need
+  //     the parser to have found anything. This is the fix for "parser
+  //     keeps missing the lab field" — without it, the user can review
+  //     forever and the parser never improves.
+  //
+  // Both fire when applicable. Storage merges valueMaps across reviews
+  // AND appends anchors to a per-field list, so each new correction adds
+  // a search location instead of overwriting the last one.
+  const findOptionAnchor = (field: "jobType" | "destination", correctedId: string, list: OrderSheetOption[]) => {
+    if (!options) return;
+    const option = list.find((o) => o.id === correctedId);
+    if (!option?.label) return;
+    addAnchored(field, (seg, inlineValue) => {
+      const text = inlineValue ?? seg.text;
+      if (!text) return false;
+      return matchOption(text, [option]) === option.id;
+    });
+  };
+
   const jobTypeId = (corrected.jobTypeId || "").trim();
-  if (jobTypeId && jobTypeId !== (original?.jobTypeId || "") && original?.jobTypeText) {
-    const key = normalize(original.jobTypeText);
-    if (key) rules.push({ field: "jobType", label: "", position: "right", valueMap: { [key]: jobTypeId } });
+  if (jobTypeId && jobTypeId !== (original?.jobTypeId || "")) {
+    if (original?.jobTypeText) {
+      const key = normalize(original.jobTypeText);
+      if (key) rules.push({ field: "jobType", label: "", position: "right", valueMap: { [key]: jobTypeId } });
+    }
+    findOptionAnchor("jobType", jobTypeId, options?.jobTypes || []);
   }
   const destinationId = (corrected.destinationId || "").trim();
-  if (destinationId && destinationId !== (original?.destinationId || "") && original?.destinationText) {
-    const key = normalize(original.destinationText);
-    if (key) rules.push({ field: "destination", label: "", position: "right", valueMap: { [key]: destinationId } });
+  if (destinationId && destinationId !== (original?.destinationId || "")) {
+    if (original?.destinationText) {
+      const key = normalize(original.destinationText);
+      if (key) rules.push({ field: "destination", label: "", position: "right", valueMap: { [key]: destinationId } });
+    }
+    findOptionAnchor("destination", destinationId, options?.destinations || []);
   }
 
   return rules;
@@ -467,25 +527,53 @@ export function applyOrderSheetAnchorRules(
   const optionIdExists = (id: string, list: OrderSheetOption[]) => list.some((option) => option.id === id);
 
   for (const rule of rules) {
+    const anchors = anchorsForApply(rule);
+
     if (rule.field === "jobType" || rule.field === "destination") {
       const list = rule.field === "jobType" ? options.jobTypes : options.destinations;
-      const map = rule.valueMap || {};
       let matchedId = "";
       let matchedText = "";
-      for (const segment of segments) {
-        const norm = normalize(segment.text);
-        if (!norm) continue;
-        for (const [key, id] of Object.entries(map)) {
-          // The learned raw text must appear in the segment (or vice
-          // versa for shorthand like "B+L" vs "B+L Ultra").
-          if ((norm.includes(key) || key.includes(norm)) && optionIdExists(id, list)) {
-            matchedId = id;
-            matchedText = segment.text;
-            break;
-          }
+
+      // Try each LEARNED LOCATION first (label + position anchors). At
+      // each one, extract the raw text and run it through the same
+      // option matcher the heuristics use — this handles the
+      // "parser previously found nothing" case that pure valueMaps
+      // can't fix.
+      for (const anchor of anchors) {
+        const raw = extractAtAnchor(segments, {
+          field: rule.field,
+          label: anchor.label,
+          position: anchor.position,
+        });
+        if (!raw) continue;
+        const id = matchOption(raw, list);
+        if (id && optionIdExists(id, list)) {
+          matchedId = id;
+          matchedText = raw;
+          break;
         }
-        if (matchedId) break;
       }
+
+      // Fall back to learned valueMap (raw text → office option id) —
+      // covers the "parser found something but couldn't map it" case.
+      if (!matchedId) {
+        const map = rule.valueMap || {};
+        for (const segment of segments) {
+          const norm = normalize(segment.text);
+          if (!norm) continue;
+          for (const [key, id] of Object.entries(map)) {
+            // The learned raw text must appear in the segment (or vice
+            // versa for shorthand like "B+L" vs "B+L Ultra").
+            if ((norm.includes(key) || key.includes(norm)) && optionIdExists(id, list)) {
+              matchedId = id;
+              matchedText = segment.text;
+              break;
+            }
+          }
+          if (matchedId) break;
+        }
+      }
+
       if (matchedId) {
         if (rule.field === "jobType") {
           fields.jobTypeId = matchedId;
@@ -499,34 +587,48 @@ export function applyOrderSheetAnchorRules(
       continue;
     }
 
-    if (!rule.label) continue;
-    const raw = extractAtAnchor(segments, rule);
-    if (!raw) continue;
+    // Geometric fields: try every learned anchor; first one that
+    // extracts a valid value wins. A previously-good anchor that's
+    // empty on this sheet (different EHR template variant) falls
+    // through to the next anchor the office has taught Otto.
+    for (const anchor of anchors) {
+      const raw = extractAtAnchor(segments, {
+        field: rule.field,
+        label: anchor.label,
+        position: anchor.position,
+      });
+      if (!raw) continue;
 
-    if (rule.field === "patientName") {
-      const { first, last } = splitPatientName(raw);
-      if (first && last && !/\d/.test(`${first}${last}`)) {
-        fields.patientFirstName = first;
-        fields.patientLastName = last;
-        applied.push("patientName");
+      let validated = false;
+      if (rule.field === "patientName") {
+        const { first, last } = splitPatientName(raw);
+        if (first && last && !/\d/.test(`${first}${last}`)) {
+          fields.patientFirstName = first;
+          fields.patientLastName = last;
+          validated = true;
+        }
+      } else if (rule.field === "orderDate") {
+        const iso = parseSheetDate(raw);
+        if (iso) {
+          fields.orderDate = iso;
+          validated = true;
+        }
+      } else if (rule.field === "phone") {
+        const digits = phoneDigits(raw);
+        if (digits) {
+          fields.phone = digits;
+          validated = true;
+        }
+      } else if (rule.field === "trayNumber") {
+        const tray = raw.match(/^[\w-]+/)?.[0] || "";
+        if (tray) {
+          fields.trayNumber = tray;
+          validated = true;
+        }
       }
-    } else if (rule.field === "orderDate") {
-      const iso = parseSheetDate(raw);
-      if (iso) {
-        fields.orderDate = iso;
-        applied.push("orderDate");
-      }
-    } else if (rule.field === "phone") {
-      const digits = phoneDigits(raw);
-      if (digits) {
-        fields.phone = digits;
-        applied.push("phone");
-      }
-    } else if (rule.field === "trayNumber") {
-      const tray = raw.match(/^[\w-]+/)?.[0] || "";
-      if (tray) {
-        fields.trayNumber = tray;
-        applied.push("trayNumber");
+      if (validated) {
+        applied.push(rule.field);
+        break;
       }
     }
   }
