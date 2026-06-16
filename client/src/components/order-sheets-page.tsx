@@ -200,13 +200,12 @@ export default function OrderSheetsPage() {
 
   const [reviewRecord, setReviewRecord] = useState<OrderSheetImport | null>(null);
 
-  // Opening a record for review also opens the saved PDF so staff can
-  // verify the prefilled dialog against the original sheet. Desktop hands
-  // the bytes to the OS viewer (Preview/Acrobat); the web falls back to a
-  // new tab. Fire-and-forget — the dialog still opens if the file open
-  // fails (e.g., text sheet with no PDF), so review isn't blocked.
-  const openReview = (record: OrderSheetImport) => {
-    setReviewRecord(record);
+  // Open the saved PDF for a sheet record. Reuses the existing
+  // /api/order-sheets/:id/file route (no second copy of the bytes
+  // anywhere — the same file the ATTACHMENTS section of the job dialog
+  // serves). Desktop hands bytes to the OS viewer (Preview/Acrobat);
+  // web falls back to a new tab. No-ops when no attachment is saved.
+  const openSheetFile = (record: OrderSheetImport) => {
     if (!record.attachmentPath) return;
     const fileUrl = `/api/order-sheets/${encodeURIComponent(record.id)}/file`;
     const bridge = (window as any)?.otto;
@@ -218,12 +217,19 @@ export default function OrderSheetsPage() {
           const bytes = new Uint8Array(await res.arrayBuffer());
           await bridge.orderSheetsOpenExternal({ bytes, fileName: record.fileName });
         } catch {
-          /* leave the dialog open without the file */
+          /* swallow — caller's UI doesn't depend on the file open */
         }
       })();
     } else {
       window.open(fileUrl, "_blank", "noreferrer");
     }
+  };
+
+  // Reviewing a record opens the dialog AND the original PDF side-by-side
+  // so staff can verify the prefilled fields against the document.
+  const openReview = (record: OrderSheetImport) => {
+    setReviewRecord(record);
+    openSheetFile(record);
   };
   const reviewPrefill = useMemo(() => {
     if (!reviewRecord) return undefined;
@@ -517,16 +523,41 @@ export default function OrderSheetsPage() {
                   return (
                     <TableRow key={record.id} data-testid={`row-order-sheet-${record.id}`}>
                       <TableCell className="max-w-[260px]">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {record.status === "imported" ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-brand-emerald" />
-                          ) : record.status === "failed" ? (
-                            <XCircle className="h-3.5 w-3.5 shrink-0 text-danger" />
-                          ) : (
-                            <FileText className="h-3.5 w-3.5 shrink-0 text-ink-mute" />
-                          )}
-                          <span className="truncate text-sm" title={record.fileName}>{record.fileName}</span>
-                        </div>
+                        {record.attachmentPath ? (
+                          // The whole filename is a "View order sheet" button:
+                          // clicking it opens the saved PDF from the SAME file
+                          // the job dialog's ATTACHMENTS section shows — one
+                          // copy on disk, two surfaces.
+                          <button
+                            type="button"
+                            onClick={() => openSheetFile(record)}
+                            className="flex items-center gap-2 min-w-0 w-full text-left hover:text-otto-accent-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                            title={`View ${record.fileName}`}
+                            data-testid={`button-order-sheet-view-${record.id}`}
+                          >
+                            {record.status === "imported" ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-brand-emerald" />
+                            ) : record.status === "failed" ? (
+                              <XCircle className="h-3.5 w-3.5 shrink-0 text-danger" />
+                            ) : (
+                              <FileText className="h-3.5 w-3.5 shrink-0 text-ink-mute" />
+                            )}
+                            <span className="truncate text-sm underline-offset-2 hover:underline">
+                              {record.fileName}
+                            </span>
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-2 min-w-0" title={record.fileName}>
+                            {record.status === "imported" ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-brand-emerald" />
+                            ) : record.status === "failed" ? (
+                              <XCircle className="h-3.5 w-3.5 shrink-0 text-danger" />
+                            ) : (
+                              <FileText className="h-3.5 w-3.5 shrink-0 text-ink-mute" />
+                            )}
+                            <span className="truncate text-sm text-ink-mute">{record.fileName}</span>
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="text-sm text-ink-2">
                         <span className="inline-flex items-center gap-2">
