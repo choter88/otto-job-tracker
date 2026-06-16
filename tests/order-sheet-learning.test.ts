@@ -34,6 +34,7 @@ const {
   deriveOrderSheetAnchorRules,
   applyOrderSheetAnchorRules,
   mergeLearnedFields,
+  changedLearnableFields,
 } = await import("../shared/order-sheet-layout");
 const { computeMissingOrderSheetFields, parseOrderSheet } = await import("../shared/order-sheet-parser");
 const { extractOrderSheetLayoutFromPdf, applyLearnedOrderSheetTemplates, learnFromOrderSheetCorrection } =
@@ -405,4 +406,81 @@ test("end-to-end: review correction on a real PDF teaches the next ingest", asyn
 
   const merged = mergeLearnedFields({ ...EMPTY_FIELDS, jobTypeId: "jt-glasses" }, learned.fields);
   assert.deepEqual(computeMissingOrderSheetFields(merged, "patientName"), []);
+});
+
+// ── changedLearnableFields ──────────────────────────────────────────────
+
+test("changedLearnableFields: reports only the fields the user actually changed", () => {
+  const original = {
+    ...EMPTY_FIELDS,
+    patientFirstName: "Jane",
+    patientLastName: "Doe",
+    phone: "7145551234",
+    destinationId: "dest-apex",
+  };
+  // User fixes the lab and the phone, leaves the name alone.
+  const changed = changedLearnableFields(original, {
+    patientFirstName: "Jane",
+    patientLastName: "Doe",
+    phone: "9995551234",
+    destinationId: "dest-sunrise",
+  });
+  assert.ok(changed.includes("phone"));
+  assert.ok(changed.includes("destination"));
+  assert.ok(!changed.includes("patientName"));
+});
+
+// ── self-healing: drop a stale learned rule on re-correction ────────────
+
+test("learnFromOrderSheetCorrection drops a learned rule the user re-corrects but we can't re-derive", async () => {
+  const office = await storage.createOffice({ name: "Self-Heal Optical" } as any);
+
+  // Teach a (wrong, as it'll turn out) patientName anchor for this form.
+  const pdf = buildPositionedPdf(pdfItemsFor({ name: "Doe, Jane", date: "05/01/2026", phone: "(714) 555-1234", lab: "AXL" }));
+  const layout = await extractOrderSheetLayoutFromPdf(pdf);
+  assert.ok(layout);
+  const fp = computeOrderSheetFingerprint(layout!);
+  await storage.upsertOrderSheetTemplateRules(office.id, fp, [
+    { field: "patientName", label: "account holder", position: "right" },
+  ]);
+  assert.equal((await storage.getOrderSheetTemplates(office.id, fp)).some((r) => r.field === "patientName"), true);
+
+  // Stage the attachment so the learner can read the layout.
+  const dir = path.join(TEST_DIR, "order-sheet-attachments");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "heal-1.pdf"), pdf);
+
+  // The sheet was filled FROM that learned rule (learnedFields), but the
+  // user corrects the name to something NOT printed on the sheet — so no
+  // fresh rule can be derived. The stale rule must be dropped.
+  const { learnedFields, droppedFields } = await learnFromOrderSheetCorrection({
+    storage,
+    importRecord: {
+      id: "heal-1",
+      officeId: office.id,
+      parsed: { fields: { ...EMPTY_FIELDS, patientFirstName: "Doe", patientLastName: "Jane" }, learnedFields: ["patientName"] },
+      attachmentPath: path.posix.join("order-sheet-attachments", "heal-1.pdf"),
+    },
+    corrected: { patientFirstName: "Margaret", patientLastName: "Hollanaway-Notonthissheet" },
+  });
+  assert.deepEqual(learnedFields, []);
+  assert.ok(droppedFields.includes("patientName"), `dropped: ${droppedFields.join(", ")}`);
+  assert.equal((await storage.getOrderSheetTemplates(office.id, fp)).some((r) => r.field === "patientName"), false);
+});
+
+// ── office-wide reset ───────────────────────────────────────────────────
+
+test("deleteAllOrderSheetTemplates clears every learned rule for the office only", async () => {
+  const office = await storage.createOffice({ name: "Reset Optical" } as any);
+  const other = await storage.createOffice({ name: "Untouched Optical" } as any);
+  await storage.upsertOrderSheetTemplateRules(office.id, "fp-a", [{ field: "phone", label: "reach at", position: "right" }]);
+  await storage.upsertOrderSheetTemplateRules(office.id, "fp-b", [{ field: "orderDate", label: "written on", position: "right" }]);
+  await storage.upsertOrderSheetTemplateRules(other.id, "fp-a", [{ field: "phone", label: "reach at", position: "right" }]);
+
+  const cleared = await storage.deleteAllOrderSheetTemplates(office.id);
+  assert.equal(cleared, 2);
+  assert.equal((await storage.getOrderSheetTemplates(office.id, "fp-a")).length, 0);
+  assert.equal((await storage.getOrderSheetTemplates(office.id, "fp-b")).length, 0);
+  // Other office untouched.
+  assert.equal((await storage.getOrderSheetTemplates(other.id, "fp-a")).length, 1);
 });

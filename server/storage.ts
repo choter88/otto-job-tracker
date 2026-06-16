@@ -2157,6 +2157,35 @@ export class DatabaseStorage implements IStorage {
       }
     }
   }
+
+  /** Drop specific learned fields for one form (self-healing of bad rules). */
+  async deleteOrderSheetTemplateRules(
+    officeId: string,
+    fingerprint: string,
+    fields: string[],
+  ): Promise<void> {
+    if (!fingerprint || fields.length === 0) return;
+    await db
+      .delete(orderSheetTemplates)
+      .where(
+        and(
+          eq(orderSheetTemplates.officeId, officeId),
+          eq(orderSheetTemplates.fingerprint, fingerprint),
+          inArray(orderSheetTemplates.field, fields),
+        ),
+      );
+  }
+
+  /** Forget everything Otto has learned about an office's forms (the manual
+   * escape hatch). Returns how many rules were cleared so the caller can
+   * tell the user. Otto re-learns as staff review future sheets. */
+  async deleteAllOrderSheetTemplates(officeId: string): Promise<number> {
+    const rows = await db
+      .delete(orderSheetTemplates)
+      .where(eq(orderSheetTemplates.officeId, officeId))
+      .returning({ id: orderSheetTemplates.id });
+    return rows.length;
+  }
 }
 
 export const storage = new DatabaseStorage();

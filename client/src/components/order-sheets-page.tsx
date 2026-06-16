@@ -20,6 +20,17 @@ import OrderSheetFolderSetup from "@/components/order-sheet-folder-setup";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { openJobDetails } from "@/components/spotlight/feature-spotlight-host";
@@ -124,6 +135,7 @@ export default function OrderSheetsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const canEdit = user?.role !== "view_only";
+  const canManage = user?.role === "owner" || user?.role === "manager";
 
   const { data: office } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
@@ -213,6 +225,26 @@ export default function OrderSheetsPage() {
     },
     onError: (error: Error) => {
       toast({ title: "Couldn't dismiss", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const forgetLearningMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/order-sheets/forget-learning");
+      return res.json() as Promise<{ cleared: number }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/order-sheets"] });
+      toast({
+        title: "Reset what Otto learned",
+        description:
+          data.cleared > 0
+            ? "Otto will re-learn your forms as you review new sheets."
+            : "There was nothing learned to reset yet.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't reset", description: error.message, variant: "destructive" });
     },
   });
 
@@ -393,7 +425,46 @@ export default function OrderSheetsPage() {
       {/* ── Activity ledger ── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Activity</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-base">Activity</CardTitle>
+            {/* Escape hatch — owner/manager only. Otto normally self-heals a
+                bad learned rule when staff re-correct it; this is the blunt
+                reset for a form that's gotten stuck. */}
+            {canManage && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-ink-mute hover:text-ink"
+                    data-testid="button-forget-learning"
+                  >
+                    Reset learned parsing
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent data-testid="dialog-forget-learning">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Reset what Otto has learned?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Otto adapts to your order sheets as staff correct reviewed ones. This clears
+                      everything it has learned about your forms across the office. It will start
+                      learning again from your next reviews. Use this only if parsing has gotten
+                      stuck on a form.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => forgetLearningMutation.mutate()}
+                      disabled={forgetLearningMutation.isPending}
+                    >
+                      Reset learning
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (

@@ -12,6 +12,7 @@
 import type { OrderSheetOption, ParsedOrderSheetFields } from "@shared/order-sheet-parser";
 import {
   applyOrderSheetAnchorRules,
+  changedLearnableFields,
   computeOrderSheetFingerprint,
   deriveOrderSheetAnchorRules,
   type OrderSheetAnchorRule,
@@ -111,25 +112,42 @@ export async function learnFromOrderSheetCorrection(params: {
   };
   corrected: OrderSheetCorrection;
   userId?: string | null;
-}): Promise<{ learnedFields: OrderSheetLearnableField[] }> {
+}): Promise<{ learnedFields: OrderSheetLearnableField[]; droppedFields: OrderSheetLearnableField[] }> {
   const { storage, importRecord } = params;
   if (!importRecord.attachmentPath || !importRecord.attachmentPath.toLowerCase().endsWith(".pdf")) {
-    return { learnedFields: [] };
+    return { learnedFields: [], droppedFields: [] };
   }
   const absolutePath = storage.resolveOrderSheetAttachmentPath(importRecord as any);
-  if (!absolutePath) return { learnedFields: [] };
+  if (!absolutePath) return { learnedFields: [], droppedFields: [] };
 
   const buffer = await fs.promises.readFile(absolutePath);
   const layout = await extractOrderSheetLayoutFromPdf(buffer);
-  if (!layout) return { learnedFields: [] };
+  if (!layout) return { learnedFields: [], droppedFields: [] };
 
   const fingerprint = computeOrderSheetFingerprint(layout);
-  if (!fingerprint) return { learnedFields: [] };
+  if (!fingerprint) return { learnedFields: [], droppedFields: [] };
 
   const originalFields = (importRecord.parsed?.fields as ParsedOrderSheetFields | undefined) || null;
   const rules = deriveOrderSheetAnchorRules(layout, originalFields, params.corrected);
-  if (rules.length === 0) return { learnedFields: [] };
+  const derived = new Set(rules.map((rule) => rule.field));
 
-  await storage.upsertOrderSheetTemplateRules(importRecord.officeId, fingerprint, rules, params.userId);
-  return { learnedFields: rules.map((rule) => rule.field) };
+  // Self-healing: a field that was filled FROM a learned rule this time
+  // (in parsed.learnedFields) but which the user just CORRECTED, and which
+  // we can't re-derive a fresh rule for, means the saved rule is actively
+  // wrong — drop it so it stops mis-filling every future sheet of this
+  // form. Without this, a bad anchor persists until staff happen to
+  // correct it into a re-derivable position, degrading silently.
+  const learnedApplied: OrderSheetLearnableField[] = Array.isArray((importRecord.parsed as any)?.learnedFields)
+    ? ((importRecord.parsed as any).learnedFields as OrderSheetLearnableField[])
+    : [];
+  const changed = changedLearnableFields(originalFields, params.corrected);
+  const dropped = learnedApplied.filter((field) => changed.includes(field) && !derived.has(field));
+  if (dropped.length > 0) {
+    await storage.deleteOrderSheetTemplateRules(importRecord.officeId, fingerprint, dropped);
+  }
+
+  if (rules.length > 0) {
+    await storage.upsertOrderSheetTemplateRules(importRecord.officeId, fingerprint, rules, params.userId);
+  }
+  return { learnedFields: rules.map((rule) => rule.field), droppedFields: dropped };
 }

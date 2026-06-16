@@ -1860,9 +1860,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               },
               userId: learnUserId,
             })
-              .then(({ learnedFields }) => {
+              .then(({ learnedFields, droppedFields }) => {
                 if (learnedFields.length > 0) {
                   console.log(`[order-sheets] learned ${learnedFields.join(", ")} from review of ${sheetRecord.fileName}`);
+                }
+                if (droppedFields.length > 0) {
+                  console.log(`[order-sheets] dropped stale learned rule(s) ${droppedFields.join(", ")} after re-correction of ${sheetRecord.fileName}`);
                 }
               })
               .catch((err) => console.error("[order-sheets] correction learning failed:", err?.message || err));
@@ -4615,6 +4618,25 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.status(500).json({ error: error.message });
     }
   });
+
+  // Escape hatch: forget everything Otto has learned about this office's
+  // order-sheet forms. The correction-driven learner self-heals bad rules
+  // when staff re-correct, but this is the blunt reset for a form that's
+  // gotten badly stuck. Otto re-learns from subsequent reviews. Owner/
+  // manager only — it affects the whole office's parsing.
+  app.post(
+    "/api/order-sheets/forget-learning",
+    requireOffice,
+    requireRole(["owner", "manager"]),
+    async (req, res) => {
+      try {
+        const cleared = await storage.deleteAllOrderSheetTemplates(getOfficeUser(req).officeId);
+        res.json({ ok: true, cleared });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    },
+  );
 
   // Stream the saved viewable copy of the original sheet for an
   // automation-created job. Keyed on the stable orderId (ORD-…) instead

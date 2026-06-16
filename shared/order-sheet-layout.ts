@@ -241,6 +241,49 @@ export interface OrderSheetCorrection {
   orderDate?: string;
 }
 
+/**
+ * Which learnable fields the staff actually CHANGED relative to the
+ * parser's original extraction. Used both to know what to learn and —
+ * critically — to detect when a previously-learned rule produced a wrong
+ * value the user just fixed (so a stale rule can be dropped instead of
+ * left mis-filling every future sheet of that form).
+ */
+export function changedLearnableFields(
+  original: ParsedOrderSheetFields | null,
+  corrected: OrderSheetCorrection,
+): OrderSheetLearnableField[] {
+  const o = original || ({} as ParsedOrderSheetFields);
+  const out: OrderSheetLearnableField[] = [];
+
+  const first = (corrected.patientFirstName || "").trim();
+  const last = (corrected.patientLastName || "").trim();
+  if (
+    first &&
+    last &&
+    (normalize(first) !== normalize(o.patientFirstName || "") ||
+      normalize(last) !== normalize(o.patientLastName || ""))
+  ) {
+    out.push("patientName");
+  }
+
+  const tray = (corrected.trayNumber || "").trim();
+  if (tray && tray !== (o.trayNumber || "")) out.push("trayNumber");
+
+  const phone = phoneDigits(corrected.phone || "");
+  if (phone && phone !== (o.phone || "")) out.push("phone");
+
+  const orderDate = (corrected.orderDate || "").trim();
+  if (orderDate && orderDate !== (o.orderDate || "")) out.push("orderDate");
+
+  const jobTypeId = (corrected.jobTypeId || "").trim();
+  if (jobTypeId && jobTypeId !== (o.jobTypeId || "")) out.push("jobType");
+
+  const destinationId = (corrected.destinationId || "").trim();
+  if (destinationId && destinationId !== (o.destinationId || "")) out.push("destination");
+
+  return out;
+}
+
 function findValueSegment(segments: Segment[], matches: (seg: Segment, inlineValue: string | null) => boolean): {
   segment: Segment;
   inlineLabel: string | null;
