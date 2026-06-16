@@ -1846,6 +1846,12 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
             // the next sheet printed from the same template parses
             // right. Fire-and-forget — learning never blocks creation.
             const learnUserId = getAuthUser(req).id;
+            // Pull the office's options so learning can also anchor on
+            // the lab/job-type fields by finding their LABELS in the
+            // layout — without this, those fields only learn raw-text
+            // mappings and can't be fixed when the parser found nothing.
+            const learnOffice = await storage.getOffice(sheetRecord.officeId);
+            const learnOptions = getOfficeParserOptions((learnOffice?.settings || {}) as Record<string, any>);
             learnFromOrderSheetCorrection({
               storage,
               importRecord: sheetRecord,
@@ -1857,6 +1863,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
                 jobTypeId: job.jobType || "",
                 destinationId: job.orderDestination || "",
                 orderDate: job.createdAt ? new Date(job.createdAt).toISOString().slice(0, 10) : "",
+              },
+              options: {
+                jobTypes: learnOptions.jobTypes,
+                destinations: learnOptions.destinations,
               },
               userId: learnUserId,
             })

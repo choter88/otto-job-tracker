@@ -111,6 +111,8 @@ export async function learnFromOrderSheetCorrection(params: {
     attachmentPath: string | null;
   };
   corrected: OrderSheetCorrection;
+  /** Office options — required to derive anchor rules for lab/job-type. */
+  options?: { jobTypes: OrderSheetOption[]; destinations: OrderSheetOption[] };
   userId?: string | null;
 }): Promise<{ learnedFields: OrderSheetLearnableField[]; droppedFields: OrderSheetLearnableField[] }> {
   const { storage, importRecord } = params;
@@ -128,7 +130,7 @@ export async function learnFromOrderSheetCorrection(params: {
   if (!fingerprint) return { learnedFields: [], droppedFields: [] };
 
   const originalFields = (importRecord.parsed?.fields as ParsedOrderSheetFields | undefined) || null;
-  const rules = deriveOrderSheetAnchorRules(layout, originalFields, params.corrected);
+  const rules = deriveOrderSheetAnchorRules(layout, originalFields, params.corrected, params.options);
   const derived = new Set(rules.map((rule) => rule.field));
 
   // Self-healing: a field that was filled FROM a learned rule this time

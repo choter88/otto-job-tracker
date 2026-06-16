@@ -2278,10 +2278,11 @@ export class DatabaseStorage implements IStorage {
 
   /**
    * Save the rules derived from one user correction. Keyed per
-   * (office, fingerprint, field): anchor rules replace the previous one
-   * (the latest correction is the freshest truth about where the field
-   * lives), while option-mapping rules MERGE their valueMaps so earlier
-   * learned spellings survive new ones.
+   * (office, fingerprint, field): each correction APPENDS its anchor
+   * (label + position) to the field's anchors list and MERGES its
+   * valueMap in. Nothing is dropped on a new correction — the parser
+   * gains a new place to look without losing the old ones. Identical
+   * anchors are deduped so re-correcting the same spot is a no-op.
    */
   async upsertOrderSheetTemplateRules(
     officeId: string,
@@ -2295,13 +2296,48 @@ export class DatabaseStorage implements IStorage {
 
     for (const rule of rules) {
       const current = byField.get(rule.field);
-      let nextRule: Record<string, any> = { ...rule };
-      if (rule.valueMap && current?.rule && typeof current.rule === "object") {
-        const previousMap = (current.rule as Record<string, any>).valueMap;
-        if (previousMap && typeof previousMap === "object") {
-          nextRule = { ...rule, valueMap: { ...previousMap, ...rule.valueMap } };
+      const previous = (current?.rule as Record<string, any> | undefined) || {};
+
+      // Anchors: combine the existing list (including the legacy single
+      // {label, position} shape if that's all we have) with whatever the
+      // new rule supplies, then dedupe on label+position. Empty-label
+      // value-map rules contribute no anchor.
+      const anchors: Array<{ label: string; position: "right" | "below" }> = [];
+      const seen = new Set<string>();
+      const tryPush = (label: any, position: any) => {
+        if (typeof label !== "string" || !label) return;
+        const pos = position === "below" ? "below" : "right";
+        const key = `${label}|${pos}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        anchors.push({ label, position: pos });
+      };
+      if (Array.isArray(previous.anchors)) {
+        for (const a of previous.anchors) tryPush(a?.label, a?.position);
+      }
+      tryPush(previous.label, previous.position);
+      if (Array.isArray(rule.anchors)) {
+        for (const a of rule.anchors) tryPush(a?.label, a?.position);
+      }
+      tryPush(rule.label, rule.position);
+
+      // valueMap: merge (new spellings extend old ones).
+      const mergedMap: Record<string, string> = {};
+      if (previous.valueMap && typeof previous.valueMap === "object") {
+        for (const [k, v] of Object.entries(previous.valueMap as Record<string, string>)) {
+          if (typeof v === "string") mergedMap[k] = v;
         }
       }
+      if (rule.valueMap) {
+        for (const [k, v] of Object.entries(rule.valueMap)) {
+          if (typeof v === "string") mergedMap[k] = v;
+        }
+      }
+
+      const nextRule: Record<string, any> = { field: rule.field };
+      if (anchors.length > 0) nextRule.anchors = anchors;
+      if (Object.keys(mergedMap).length > 0) nextRule.valueMap = mergedMap;
+
       if (current) {
         await db
           .update(orderSheetTemplates)
