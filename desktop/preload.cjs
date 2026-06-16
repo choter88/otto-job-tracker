@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld("otto", {
   orderSheetsAck: (payload) => ipcRenderer.invoke("otto:orderSheets:ack", payload),
   // Hand a saved sheet's bytes to the OS's own PDF viewer (Preview etc).
   orderSheetsOpenExternal: (payload) => ipcRenderer.invoke("otto:orderSheets:open-external", payload),
+  // Auto-print: open a freshly-imported sheet (by watched-folder path) for
+  // printing — Windows print verb / macOS default viewer.
+  orderSheetsPrint: (payload) => ipcRenderer.invoke("otto:orderSheets:print", payload),
   // Push events from the watcher (new pending file, status change).
   // Returns an unsubscribe function for React effect cleanup.
   onOrderSheetsEvent: (callback) => {

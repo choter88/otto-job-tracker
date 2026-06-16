@@ -95,6 +95,15 @@ export default function OrderSheetFolderSetup({ description }: OrderSheetFolderS
     }
   };
 
+  const toggleAutoPrint = async (autoPrint: boolean) => {
+    setBusy(true);
+    try {
+      await desktop.configure({ autoPrint });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const watcherState = desktop.status?.state || "stopped";
   const watching = desktop.config?.enabled && watcherState === "watching";
 
@@ -165,6 +174,33 @@ export default function OrderSheetFolderSetup({ description }: OrderSheetFolderS
           {desktop.config.folder}
         </p>
       )}
+
+      {/* Auto-print — on by default, but only meaningful while watching is
+          ON, so it's disabled (grayed) when watching is OFF. Staff save the
+          sheet PDF to the folder; Otto opens it for printing on this
+          computer, replacing the manual "print from the EHR" step. */}
+      <div
+        className={cn(
+          "flex items-start gap-2 rounded-lg border border-line p-3",
+          !desktop.config?.enabled && "opacity-55",
+        )}
+      >
+        <Switch
+          checked={desktop.config?.autoPrint !== false}
+          onCheckedChange={(checked) => void toggleAutoPrint(checked)}
+          disabled={busy || !canEdit || !desktop.config?.enabled}
+          data-testid="switch-order-sheets-autoprint"
+          aria-label="Auto-print imported order sheets"
+        />
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-ink">Auto-print order sheets</div>
+          <p className="text-xs text-ink-mute m-0">
+            {desktop.config?.enabled
+              ? "When a sheet is imported, Otto opens it for printing on this computer — no need to print from your EHR. Your printer's dialog appears each time."
+              : "Turn on folder watching above to use auto-print."}
+          </p>
+        </div>
+      </div>
 
       {watcherState === "error" && desktop.status?.error && (
         <p className="text-sm text-danger" data-testid="text-order-sheets-error">

@@ -26,6 +26,9 @@ export interface OrderSheetDesktopConfig {
   folder: string;
   includeExisting: boolean;
   enabledAt: number;
+  // Auto-print imported sheets (opens each new sheet for printing). Default
+  // true; only meaningful while `enabled` is true.
+  autoPrint: boolean;
 }
 
 export interface OrderSheetWatcherStatus {
@@ -60,6 +63,7 @@ interface OrderSheetsBridge {
   orderSheetsExtract: (payload: { path: string }) => Promise<{ text?: string; extractError?: string }>;
   orderSheetsReadBytes: (payload: { path: string }) => Promise<{ bytes?: Uint8Array; error?: string }>;
   orderSheetsAck: (payload: { hash: string }) => Promise<{ ok: boolean }>;
+  orderSheetsPrint?: (payload: { path: string }) => Promise<{ ok?: boolean; error?: string }>;
   onOrderSheetsEvent: (callback: (payload: any) => void) => () => void;
 }
 
@@ -122,10 +126,12 @@ export function useOrderSheetIngestion() {
       let created = 0;
       let needsReview = 0;
       let failed = 0;
+      let printFailed = 0;
 
       try {
         const snapshot = await bridge.orderSheetsGet();
         const pending = snapshot.pending || [];
+        const cfg = snapshot.config;
         if (!pending.length) return;
 
         // Hash pre-check: anything the office has already ingested gets
@@ -191,6 +197,30 @@ export function useOrderSheetIngestion() {
             await bridge.orderSheetsAck({ hash: file.hash });
 
             if (!result.alreadyKnown) {
+              // Auto-print: this machine WON the ingest claim (alreadyKnown
+              // is false for exactly one machine, guaranteed by the unique
+              // (officeId, contentHash) index), so it prints the sheet —
+              // exactly once across the office, on the computer that has it.
+              // Replaces the old "print from the EHR and walk it to the
+              // tray" step. Gate on mtime >= enabledAt so turning watching
+              // on over a folder of old sheets doesn't print the backlog.
+              // A print hiccup must never break ingest or the batch loop.
+              if (
+                cfg?.autoPrint &&
+                bridge.orderSheetsPrint &&
+                file.mtimeMs >= (cfg.enabledAt || 0)
+              ) {
+                try {
+                  const printRes = await bridge.orderSheetsPrint({ path: file.path });
+                  // Surface a failed print: the sheet still imported, so
+                  // without this the staff would never know it didn't
+                  // print and assume the paper's on its way to the tray.
+                  if (printRes?.error) printFailed += 1;
+                } catch {
+                  printFailed += 1;
+                }
+              }
+
               if (result.record.status === "imported") {
                 created += 1;
               } else if (result.record.status === "needs_review") {
@@ -234,6 +264,16 @@ export function useOrderSheetIngestion() {
         toast({
           title: failed === 1 ? "Couldn't read an order sheet" : `Couldn't read ${failed} order sheets`,
           description: "See the Order Sheets page for details.",
+          variant: "destructive",
+        });
+      }
+      if (printFailed) {
+        toast({
+          title:
+            printFailed === 1
+              ? "Couldn't auto-print a sheet"
+              : `Couldn't auto-print ${printFailed} sheets`,
+          description: "The sheet was imported. Open it from the Order Sheets page to print it.",
           variant: "destructive",
         });
       }

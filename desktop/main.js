@@ -1800,6 +1800,10 @@ function getOrderSheetsConfig(config) {
     folder: typeof section.folder === "string" ? section.folder : "",
     includeExisting: !!section.includeExisting,
     enabledAt: Number(section.enabledAt) || 0,
+    // Auto-print defaults ON: turning on folder-watching is opting into the
+    // "save the sheet and Otto prints it" flow. Stored as `autoPrint`;
+    // absent → true so existing watchers get the new behavior on upgrade.
+    autoPrint: section.autoPrint !== false,
   };
 }
 
@@ -1855,6 +1859,7 @@ ipcMain.handle("otto:orderSheets:configure", async (_event, payload) => {
     includeExisting:
       typeof payload?.includeExisting === "boolean" ? payload.includeExisting : previous.includeExisting,
     enabledAt: previous.enabledAt,
+    autoPrint: typeof payload?.autoPrint === "boolean" ? payload.autoPrint : previous.autoPrint,
   };
 
   // Stamp the moment the automation turns on (or moves to a new folder) —
@@ -1947,6 +1952,114 @@ ipcMain.handle("otto:orderSheets:open-external", async (_event, payload) => {
     return { ok: true };
   } catch (error) {
     return { error: `Couldn't open the file (${error?.message || "unknown error"}).` };
+  }
+});
+
+// Auto-print: surface an imported order sheet for printing. This is the
+// "save the sheet, Otto prints it" flow — it replaces walking the printed
+// EHR sheet to the tray. Per the office's choice it shows the print
+// dialog each time (no silent printing): on Windows we invoke the default
+// PDF handler's "print" verb (Edge/Acrobat opens its print dialog); on
+// macOS we open the sheet in the default viewer (Preview) where Cmd-P
+// prints. webContents.print() is deliberately avoided — it renders PDFs
+// blank on our Electron (29) and we don't bump versions.
+//
+// Security: only files that live INSIDE the configured watch folder and
+// carry a supported extension may be printed, so this channel can't be
+// turned into arbitrary "open any path" by the renderer.
+const ORDER_SHEET_PRINTABLE_EXT = /\.(pdf|txt|text)$/i;
+
+ipcMain.handle("otto:orderSheets:print", async (_event, payload) => {
+  const requestedPath = typeof payload?.path === "string" ? payload.path : "";
+  if (!requestedPath) return { error: "No file path." };
+  const cfg = getOrderSheetsConfig(_readConfig());
+  if (!cfg.folder) return { error: "No watch folder configured." };
+
+  // Resolve symlinks on BOTH the requested file and the folder before the
+  // containment check — path.resolve only normalizes `..`/`.`, so a symlink
+  // inside the folder pointing elsewhere would otherwise pass and let the
+  // renderer print an arbitrary file. realpathSync also throws if the file
+  // is gone, covering the existence check.
+  let realResolved;
+  let realFolder;
+  try {
+    realFolder = fs.realpathSync(path.resolve(cfg.folder));
+    realResolved = fs.realpathSync(path.resolve(requestedPath));
+  } catch {
+    return { error: "File no longer exists." };
+  }
+  const inFolder = realResolved === realFolder || realResolved.startsWith(realFolder + path.sep);
+  if (!inFolder || !ORDER_SHEET_PRINTABLE_EXT.test(realResolved)) {
+    return { error: "File is outside the watched folder." };
+  }
+
+  // Copy to a GENERIC-named temp file before printing. Order-sheet
+  // filenames routinely carry PHI ("JaneDoe_DOB_OrderSheet.pdf"), and both
+  // the Windows print dialog and macOS Preview show the filename to anyone
+  // standing at the printer. The temp copy lives in the same wiped-on-launch
+  // 0600 dir as open-external, named with a non-PHI stamp.
+  let printPath;
+  try {
+    const dir = orderSheetTempDir();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const ext = path.extname(realResolved).toLowerCase().replace(/[^.a-z0-9]/g, "") || ".pdf";
+    printPath = path.join(dir, `order-sheet-${Date.now().toString(36)}${ext}`);
+    fs.copyFileSync(realResolved, printPath);
+    fs.chmodSync(printPath, 0o600);
+  } catch (error) {
+    _logStartup(`[order-sheets] print: temp copy failed: ${error?.message || error}`);
+    return { error: "Couldn't prepare the file for printing." };
+  }
+
+  try {
+    if (process.platform === "win32") {
+      // Route to the default PDF handler's Print action (shows its dialog).
+      // The path is passed as an ENV VAR, never interpolated into the
+      // -Command string: Windows filenames may legally contain `$( )` and
+      // backticks, which PowerShell would otherwise execute. As an env var
+      // it's plain data that `-FilePath` consumes verbatim (also avoids the
+      // backslash-doubling a quoted/JSON path would suffer). Falls back to
+      // just opening the file if the association has no print verb.
+      const { spawn } = await import("child_process");
+      const ok = await new Promise((resolve) => {
+        const child = spawn(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            "Start-Process -FilePath $env:OTTO_PRINT_PATH -Verb Print",
+          ],
+          { windowsHide: true, env: { ...process.env, OTTO_PRINT_PATH: printPath } },
+        );
+        child.on("error", (err) => {
+          _logStartup(`[order-sheets] print: powershell spawn error: ${err?.message || err}`);
+          resolve(false);
+        });
+        child.on("exit", (code) => resolve(code === 0));
+      });
+      if (!ok) {
+        _logStartup("[order-sheets] print: print verb unavailable; opening the sheet instead");
+        const openError = await shell.openPath(printPath);
+        if (openError) {
+          _logStartup(`[order-sheets] print: openPath fallback failed: ${openError}`);
+          return { error: openError };
+        }
+      }
+      return { ok: true };
+    }
+    // macOS / other: open in the default viewer; the user prints from there.
+    const openError = await shell.openPath(printPath);
+    if (openError) {
+      _logStartup(`[order-sheets] print: openPath failed: ${openError}`);
+      return { error: openError };
+    }
+    return { ok: true };
+  } catch (error) {
+    _logStartup(`[order-sheets] print failed: ${error?.message || error}`);
+    return { error: `Couldn't print the file (${error?.message || "unknown error"}).` };
   }
 });
 
