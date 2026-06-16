@@ -4719,6 +4719,47 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  // Same file, but keyed on the order-sheet-import id — for sheets that
+  // haven't become a job yet (needs_review / failed). Lets the Review &
+  // create flow open the original PDF alongside the prefilled dialog so
+  // staff can verify against the document. Office-scoped lookup so a
+  // caller can't reach across offices by id.
+  app.get("/api/order-sheets/:id/file", requireOffice, async (req, res) => {
+    try {
+      const id = String(req.params.id || "").trim();
+      if (!id) return res.status(400).json({ error: "id is required" });
+
+      const record = await storage.getOrderSheetImport(id);
+      if (!record || record.officeId !== getOfficeUser(req).officeId) {
+        return res.status(404).json({ error: "Order sheet not found" });
+      }
+
+      const absolutePath = storage.resolveOrderSheetAttachmentPath(record);
+      if (!absolutePath) return res.status(404).json({ error: "Attachment file is missing" });
+
+      await logPhiAccess(req, "view", "order_sheet_import", record.id, record.jobOrderId || undefined, {
+        fileName: record.fileName,
+      });
+
+      const ext = (absolutePath.split(".").pop() || "").toLowerCase();
+      const mime =
+        ext === "pdf" ? "application/pdf"
+        : ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+        : ext === "png" ? "image/png"
+        : ext === "txt" || ext === "text" ? "text/plain; charset=utf-8"
+        : "application/octet-stream";
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("X-Frame-Options", "SAMEORIGIN");
+      res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+      const safeName = record.fileName.replace(/[^A-Za-z0-9._-]/g, "_");
+      res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+      res.sendFile(absolutePath);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ── Job attachments (ATTACHMENTS section in the job details modal) ───
   // The modal's ATTACHMENTS list unions two sources keyed on the stable
   // ORD-… handle: the ONE auto-imported order sheet (order_sheet_imports,
