@@ -104,7 +104,7 @@ function getOfficeUser(req: Request): OfficeUser {
 async function logPhiAccess(
   req: Request,
   action: 'view' | 'create' | 'update' | 'delete' | 'export',
-  entityType: 'job' | 'comment' | 'archived_job' | 'patient_list' | 'order_sheet_import',
+  entityType: 'job' | 'comment' | 'archived_job' | 'patient_list' | 'order_sheet_import' | 'job_attachment',
   entityId: string,
   orderId?: string,
   details?: Record<string, any>
@@ -1867,6 +1867,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
                 if (droppedFields.length > 0) {
                   console.log(`[order-sheets] dropped stale learned rule(s) ${droppedFields.join(", ")} after re-correction of ${sheetRecord.fileName}`);
                 }
+                // Portal-visible signal that this job came from a sheet
+                // review (vs. manual entry / EHR import), plus the size
+                // of the learning step it produced.
+                trackEvent({
+                  userId: learnUserId,
+                  officeId: sheetRecord.officeId,
+                  eventType: "order_sheet_review_completed",
+                  metadata: {
+                    learnedFields: learnedFields.length,
+                    droppedFields: droppedFields.length,
+                  },
+                });
               })
               .catch((err) => console.error("[order-sheets] correction learning failed:", err?.message || err));
           }
@@ -2056,8 +2068,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       // Log PHI access before deletion
       await logPhiAccess(req, 'delete', 'job', job.id, job.orderId);
-      
+
       await storage.deleteJob(job.id);
+      // Permanent delete (NOT archive): also drop any user uploads. Archive
+      // keeps them; this route is the only place active-job uploads die.
+      if (job.orderId) {
+        await storage.deleteJobAttachmentsByOrderId(job.officeId, job.orderId);
+      }
       trackEvent({ userId: getAuthUser(req)?.id, officeId: getAuthUser(req).officeId, eventType: "job_deleted" });
       res.status(204).send();
     } catch (error: any) {
@@ -2158,6 +2175,10 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
         await logPhiAccess(req, "delete", "job", job.id, job.orderId);
         await storage.deleteJob(jobId);
+        // Permanent delete: drop user uploads too (archive would keep them).
+        if (job.orderId) {
+          await storage.deleteJobAttachmentsByOrderId(officeId, job.orderId);
+        }
         deleted++;
       }
 
@@ -4630,7 +4651,14 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     requireRole(["owner", "manager"]),
     async (req, res) => {
       try {
-        const cleared = await storage.deleteAllOrderSheetTemplates(getOfficeUser(req).officeId);
+        const officeId = getOfficeUser(req).officeId;
+        const cleared = await storage.deleteAllOrderSheetTemplates(officeId);
+        trackEvent({
+          userId: getAuthUser(req)?.id,
+          officeId,
+          eventType: "order_sheet_learning_reset",
+          metadata: { cleared },
+        });
         res.json({ ok: true, cleared });
       } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -4686,6 +4714,254 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const safeName = record.fileName.replace(/[^A-Za-z0-9._-]/g, "_");
       res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
       res.sendFile(absolutePath);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Job attachments (ATTACHMENTS section in the job details modal) ───
+  // The modal's ATTACHMENTS list unions two sources keyed on the stable
+  // ORD-… handle: the ONE auto-imported order sheet (order_sheet_imports,
+  // dropped on archive) plus any number of user uploads (job_attachments,
+  // kept through archive). All four routes are office-scoped at the
+  // storage layer so an id from another office never resolves.
+
+  // Files a browser can show inline; everything else downloads.
+  const jobAttachmentMime = (ext: string): { mime: string; inline: boolean } => {
+    switch (ext) {
+      case "pdf": return { mime: "application/pdf", inline: true };
+      case "png": return { mime: "image/png", inline: true };
+      case "jpg":
+      case "jpeg": return { mime: "image/jpeg", inline: true };
+      case "gif": return { mime: "image/gif", inline: true };
+      case "webp": return { mime: "image/webp", inline: true };
+      case "heic":
+      case "heif": return { mime: "image/heic", inline: false };
+      case "txt":
+      case "text": return { mime: "text/plain; charset=utf-8", inline: true };
+      case "csv": return { mime: "text/csv; charset=utf-8", inline: false };
+      case "rtf": return { mime: "application/rtf", inline: false };
+      case "doc": return { mime: "application/msword", inline: false };
+      case "docx": return { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", inline: false };
+      case "xls": return { mime: "application/vnd.ms-excel", inline: false };
+      case "xlsx": return { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", inline: false };
+      default: return { mime: "application/octet-stream", inline: false };
+    }
+  };
+
+  const JOB_ATTACHMENT_EXT_ALLOWLIST = new Set([
+    "pdf", "png", "jpg", "jpeg", "gif", "webp", "heic", "heif",
+    "txt", "text", "csv", "rtf", "doc", "docx", "xls", "xlsx",
+  ]);
+
+  const jobAttachmentUploadSchema = z.object({
+    fileName: z.string().min(1).max(300),
+    // Base64 inflates ~33%; 35MB encoded covers the 25MB decoded cap below.
+    fileBase64: z.string().min(1).max(35_000_000),
+    ext: z.string().max(8).optional(),
+    mimeType: z.string().max(160).optional(),
+  });
+
+  // List every attachment for an order (order sheet + uploads), each with
+  // a ready-to-use fileUrl. Keyed on orderId so active and archived jobs
+  // both resolve. No PHI body — just metadata; the file routes log access.
+  app.get("/api/jobs/by-order-id/:orderId/attachments", requireOffice, async (req, res) => {
+    try {
+      const orderId = String(req.params.orderId || "").trim();
+      if (!orderId) return res.status(400).json({ error: "orderId is required" });
+      const officeId = getOfficeUser(req).officeId;
+      const encodedOrderId = encodeURIComponent(orderId);
+
+      const items: any[] = [];
+
+      // The auto-imported order sheet, if its file is still on disk (it's
+      // unlinked on archive, so this naturally drops off once archived).
+      const sheet = await storage.getOrderSheetImportByJobOrderId(officeId, orderId);
+      if (sheet?.attachmentPath) {
+        const sheetExt = (sheet.attachmentPath.split(".").pop() || "pdf").toLowerCase();
+        items.push({
+          id: sheet.id,
+          kind: "order_sheet",
+          fileName: sheet.fileName,
+          ext: sheetExt,
+          mimeType: jobAttachmentMime(sheetExt).mime,
+          size: sheet.attachmentSize ?? null,
+          pageCount: sheet.attachmentPageCount ?? null,
+          inline: jobAttachmentMime(sheetExt).inline,
+          deletable: false,
+          createdAt: sheet.createdAt,
+          fileUrl: `/api/jobs/by-order-id/${encodedOrderId}/order-sheet-file`,
+        });
+      }
+
+      // User uploads (kept through archive).
+      const uploads = await storage.getJobAttachmentsByOrderId(officeId, orderId);
+      for (const upload of uploads) {
+        const info = jobAttachmentMime(upload.ext);
+        items.push({
+          id: upload.id,
+          kind: "upload",
+          fileName: upload.fileName,
+          ext: upload.ext,
+          mimeType: upload.mimeType || info.mime,
+          size: upload.size ?? null,
+          pageCount: null,
+          inline: info.inline,
+          deletable: true,
+          createdBy: upload.createdBy,
+          createdAt: upload.createdAt,
+          fileUrl: `/api/jobs/by-order-id/${encodedOrderId}/attachments/${upload.id}/file`,
+        });
+      }
+
+      res.json({ attachments: items });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Upload a document onto a job. Base64-JSON (no multipart anywhere in
+  // the app). Gated to a real order in this office so we can't seed orphan
+  // rows. 25MB decoded cap; extension must be on the allowlist.
+  app.post(
+    "/api/jobs/by-order-id/:orderId/attachments",
+    requireOffice,
+    requireNotViewOnly,
+    async (req, res) => {
+      try {
+        const orderId = String(req.params.orderId || "").trim();
+        if (!orderId) return res.status(400).json({ error: "orderId is required" });
+        const officeId = getOfficeUser(req).officeId;
+
+        if (!(await storage.orderIdExistsInOffice(officeId, orderId))) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+
+        const payload = jobAttachmentUploadSchema.parse(req.body || {});
+
+        let fileBuffer: Buffer;
+        try {
+          fileBuffer = Buffer.from(payload.fileBase64, "base64");
+        } catch {
+          return res.status(400).json({ error: "Invalid file data" });
+        }
+        if (fileBuffer.byteLength === 0) {
+          return res.status(400).json({ error: "File is empty" });
+        }
+        if (fileBuffer.byteLength > 25 * 1024 * 1024) {
+          return res.status(413).json({ error: "File exceeds the 25MB limit" });
+        }
+
+        const ext =
+          (payload.ext || (payload.fileName.split(".").pop() ?? ""))
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, "")
+            .slice(0, 6);
+        if (!JOB_ATTACHMENT_EXT_ALLOWLIST.has(ext)) {
+          return res.status(415).json({ error: "Unsupported file type" });
+        }
+
+        const saved = await storage.saveJobAttachment({
+          officeId,
+          jobOrderId: orderId,
+          fileBuffer,
+          fileName: payload.fileName,
+          ext,
+          mimeType: payload.mimeType || jobAttachmentMime(ext).mime,
+          createdBy: getAuthUser(req)?.id ?? null,
+        });
+
+        await logPhiAccess(req, "create", "job_attachment", saved.id, orderId, {
+          fileName: saved.fileName,
+        });
+        trackEvent({
+          userId: getAuthUser(req)?.id,
+          officeId,
+          eventType: "attachment_uploaded",
+          metadata: { ext: saved.ext, size: saved.size ?? 0 },
+        });
+
+        res.status(201).json({
+          attachment: {
+            id: saved.id,
+            kind: "upload",
+            fileName: saved.fileName,
+            ext: saved.ext,
+            mimeType: saved.mimeType,
+            size: saved.size,
+            deletable: true,
+            createdBy: saved.createdBy,
+            createdAt: saved.createdAt,
+            fileUrl: `/api/jobs/by-order-id/${encodeURIComponent(orderId)}/attachments/${saved.id}/file`,
+          },
+        });
+      } catch (error: any) {
+        if (error?.name === "ZodError") {
+          return res.status(400).json({ error: "Invalid upload payload" });
+        }
+        res.status(500).json({ error: error.message });
+      }
+    },
+  );
+
+  // Stream one uploaded attachment. Same same-origin framing relaxation as
+  // the order-sheet-file route so it can show in the modal's iframe.
+  app.get("/api/jobs/by-order-id/:orderId/attachments/:attachmentId/file", requireOffice, async (req, res) => {
+    try {
+      const officeId = getOfficeUser(req).officeId;
+      const attachmentId = String(req.params.attachmentId || "").trim();
+      if (!attachmentId) return res.status(400).json({ error: "attachmentId is required" });
+
+      const record = await storage.getJobAttachment(officeId, attachmentId);
+      if (!record) return res.status(404).json({ error: "Attachment not found" });
+
+      const absolutePath = storage.resolveJobAttachmentPath(record);
+      if (!absolutePath) return res.status(404).json({ error: "Attachment file is missing" });
+
+      await logPhiAccess(req, "view", "job_attachment", record.id, record.jobOrderId || undefined, {
+        fileName: record.fileName,
+      });
+
+      // Always derive Content-Type from the validated extension. The client
+      // submits mimeType too, but trusting it would let a user upload PNG
+      // bytes with mimeType "text/html" and have them served as HTML inside
+      // the modal's same-origin iframe — a same-origin XSS vector.
+      const info = jobAttachmentMime(record.ext);
+      res.setHeader("Content-Type", info.mime);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("X-Frame-Options", "SAMEORIGIN");
+      res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+      const safeName = record.fileName.replace(/[^A-Za-z0-9._-]/g, "_");
+      res.setHeader("Content-Disposition", `${info.inline ? "inline" : "attachment"}; filename="${safeName}"`);
+      res.sendFile(absolutePath);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete one uploaded attachment (file + row). Order sheets aren't
+  // deletable here — they're managed by the job lifecycle.
+  app.delete("/api/jobs/by-order-id/:orderId/attachments/:attachmentId", requireOffice, requireNotViewOnly, async (req, res) => {
+    try {
+      const officeId = getOfficeUser(req).officeId;
+      const attachmentId = String(req.params.attachmentId || "").trim();
+      if (!attachmentId) return res.status(400).json({ error: "attachmentId is required" });
+
+      const record = await storage.getJobAttachment(officeId, attachmentId);
+      if (!record) return res.status(404).json({ error: "Attachment not found" });
+
+      await logPhiAccess(req, "delete", "job_attachment", record.id, record.jobOrderId || undefined, {
+        fileName: record.fileName,
+      });
+      await storage.deleteJobAttachment(officeId, attachmentId);
+      trackEvent({
+        userId: getAuthUser(req)?.id,
+        officeId,
+        eventType: "attachment_deleted",
+        metadata: { ext: record.ext },
+      });
+      res.status(204).send();
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
