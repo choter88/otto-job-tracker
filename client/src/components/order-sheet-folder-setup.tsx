@@ -28,8 +28,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { FolderOpen, Loader2 } from "lucide-react";
+import { FolderOpen, HelpCircle, Loader2 } from "lucide-react";
 
 interface OrderSheetFolderSetupProps {
   /**
@@ -118,24 +119,28 @@ export default function OrderSheetFolderSetup({ description }: OrderSheetFolderS
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
+      {/* Setup contexts (e.g. the wizard) pass a description; the page
+          omits it — the card title already frames the section, so we don't
+          repeat 3 lines of helper text every time the user lands here. */}
       {description && <p className="text-sm text-muted-foreground">{description}</p>}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Switch
-            checked={!!desktop.config?.enabled}
-            onCheckedChange={(checked) => void toggleEnabled(checked)}
-            disabled={busy || !canEdit}
-            data-testid="switch-order-sheets-enabled"
-            aria-label="Watch folder for order sheets"
-          />
-          <span className="text-sm font-medium text-ink">{desktop.config?.enabled ? "On" : "Off"}</span>
-        </div>
+      {/* One-row primary state: switch · status pill · folder path · change.
+          Folder takes the remaining width and truncates so the row stays
+          one line at typical breakpoints. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Switch
+          checked={!!desktop.config?.enabled}
+          onCheckedChange={(checked) => void toggleEnabled(checked)}
+          disabled={busy || !canEdit}
+          data-testid="switch-order-sheets-enabled"
+          aria-label="Watch folder for order sheets"
+        />
+        <span className="text-sm font-medium text-ink">{desktop.config?.enabled ? "On" : "Off"}</span>
 
         <span
           className={cn(
-            "inline-flex items-center gap-2 px-3 py-[5px] rounded-full text-[calc(11.5px*var(--ui-scale))] font-medium",
+            "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[calc(11px*var(--ui-scale))] font-medium",
             watching && "text-brand-emerald",
             watcherState === "error" && "bg-danger-bg text-danger",
             !watching && watcherState !== "error" && "bg-line-2 text-ink-mute",
@@ -154,34 +159,47 @@ export default function OrderSheetFolderSetup({ description }: OrderSheetFolderS
           {watching ? "Watching" : watcherState === "error" ? "Problem with folder" : "Not watching"}
         </span>
 
+        {desktop.config?.folder && (
+          <span
+            className="text-xs text-ink-mute font-mono truncate min-w-0 flex-1"
+            title={desktop.config.folder}
+            data-testid="text-order-sheets-folder"
+          >
+            {desktop.config.folder}
+          </span>
+        )}
+
         {desktop.pending.length > 0 && (
           <span
-            className="inline-flex items-center gap-1.5 text-xs text-ink-mute"
+            className="inline-flex items-center gap-1 text-xs text-ink-mute shrink-0"
             data-testid="text-order-sheets-processing"
           >
             <Loader2 className="h-3 w-3 animate-spin" />
-            Processing {desktop.pending.length} file{desktop.pending.length === 1 ? "" : "s"}…
+            {desktop.pending.length} processing…
           </span>
+        )}
+
+        {canEdit && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void chooseFolder()}
+            disabled={busy}
+            className="h-7 text-xs shrink-0"
+            data-testid="button-order-sheets-choose-folder"
+          >
+            <FolderOpen className="h-3 w-3 mr-1" />
+            {desktop.config?.folder ? "Change" : "Choose folder"}
+          </Button>
         )}
       </div>
 
-      {desktop.config?.folder && (
-        <p
-          className="text-xs text-ink-mute font-mono truncate"
-          title={desktop.config.folder}
-          data-testid="text-order-sheets-folder"
-        >
-          {desktop.config.folder}
-        </p>
-      )}
-
-      {/* Auto-print — on by default, but only meaningful while watching is
-          ON, so it's disabled (grayed) when watching is OFF. Staff save the
-          sheet PDF to the folder; Otto opens it for printing on this
-          computer, replacing the manual "print from the EHR" step. */}
+      {/* Auto-print — same line as a compact toggle. The help text moved
+          to a tooltip since the row is already self-explanatory once
+          you've seen it once. */}
       <div
         className={cn(
-          "flex items-start gap-2 rounded-lg border border-line p-3",
+          "flex items-center gap-2 text-sm",
           !desktop.config?.enabled && "opacity-55",
         )}
       >
@@ -192,35 +210,25 @@ export default function OrderSheetFolderSetup({ description }: OrderSheetFolderS
           data-testid="switch-order-sheets-autoprint"
           aria-label="Auto-print imported order sheets"
         />
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-ink">Auto-print order sheets</div>
-          <p className="text-xs text-ink-mute m-0">
+        <span className="font-medium text-ink">Auto-print order sheets</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" className="text-ink-mute hover:text-ink" aria-label="Auto-print help">
+              <HelpCircle className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-[260px]">
             {desktop.config?.enabled
               ? "When a sheet is imported, Otto opens it for printing on this computer — no need to print from your EHR. Your printer's dialog appears each time."
               : "Turn on folder watching above to use auto-print."}
-          </p>
-        </div>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {watcherState === "error" && desktop.status?.error && (
         <p className="text-sm text-danger" data-testid="text-order-sheets-error">
           {desktop.status.error}
         </p>
-      )}
-
-      {canEdit && (
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void chooseFolder()}
-            disabled={busy}
-            data-testid="button-order-sheets-choose-folder"
-          >
-            <FolderOpen className="h-3.5 w-3.5 mr-1.5" />
-            {desktop.config?.folder ? "Change folder" : "Choose folder"}
-          </Button>
-        </div>
       )}
 
       {/* Existing-files choice when enabling */}
