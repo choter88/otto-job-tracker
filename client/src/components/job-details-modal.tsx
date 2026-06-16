@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
@@ -6,6 +6,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Clock3,
+  ExternalLink,
+  FileText,
   Hash,
   Info,
   Link2,
@@ -1389,157 +1391,76 @@ export default function JobDetailsModal({
   );
 }
 
-// Inline viewer for the order sheet attached to an automation-created
-// job — the unmodified original PDF, written to disk at ingest time and
-// served back to any computer that asks. Lookup is by stable orderId so
-// this resolves for active jobs; archived jobs intentionally show the
-// "no preview" fallback because the file is deleted to keep storage
-// bounded by the active worklist.
+// Inline view of the order sheet attached to an automation-created job.
 //
-// The iframe points DIRECTLY at the same-origin file endpoint (cookies
-// ride along automatically) rather than at a fetched blob: URL — blob
-// frames are blocked by the app's CSP (frame-src 'self'), which is what
-// made the first version of this component render a blank grey box.
-// Availability is probed with a HEAD request (Express answers HEAD for
-// GET routes with headers only) so the PDF bytes are downloaded exactly
-// once, by the iframe itself. Chromium's built-in viewer provides page
-// nav, zoom, and search; in Electron that viewer is enabled via the
-// `plugins` webPreference on the main window.
-// How the order sheet is shown: we render the PDF ourselves with pdf.js
-// onto canvases instead of an <iframe>. Chromium's built-in PDF viewer is
-// plugin-gated and unreliable inside Electron iframes (renders blank), and
-// canvases behave identically in the desktop app and a plain browser.
-// "Open" hands the bytes to the OS's own PDF viewer via IPC when the
-// Electron bridge is present, else falls back to a browser tab.
-const ORDER_SHEET_MAX_RENDER_PAGES = 10;
-
-// Lazy pdf.js loader — the lib (~400KB + worker) only loads for jobs that
-// actually have a sheet, and the worker URL is resolved by Vite at build
-// time so it ships identically on Mac and Windows.
-async function loadPdfjs() {
-  const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = (
-    await import("pdfjs-dist/build/pdf.worker.min.mjs?url")
-  ).default;
-  return pdfjs;
-}
-
+// We do NOT rasterize the PDF in the renderer. The desktop app ships an
+// older Electron than current browsers (Chromium 122 vs ~148), and
+// pdf.js's in-renderer rendering is unreliable there — the panel sat on
+// "Loading sheet..." forever in the Mac app. Instead this is a small,
+// instant tile that opens the real file in the OS's own PDF viewer
+// (Preview / Acrobat / Edge) — reliable on Mac and Windows regardless of
+// the bundled Chromium, and a better read than an in-app canvas anyway.
+// Text sheets (rare) keep a genuine inline preview since rendering text
+// needs no PDF engine.
+//
+// Lookup is by stable orderId so this resolves for active jobs; archived
+// jobs deliberately show the "no preview" fallback because the file is
+// deleted to keep storage bounded by the active worklist.
 function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
-  const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
+  const [isText, setIsText] = useState(false);
   const [textContent, setTextContent] = useState<string | null>(null);
-  const [pageCount, setPageCount] = useState(0);
   const [enlarged, setEnlarged] = useState(false);
-  const thumbRef = useRef<HTMLCanvasElement | null>(null);
-  const lightboxHostRef = useRef<HTMLDivElement | null>(null);
-  // pdf.js TRANSFERS the buffer it's given to its worker (detaching it), so
-  // every render slices a fresh copy and the bytes survive for "Open" too.
-  const bytesRef = useRef<Uint8Array | null>(null);
   const fileUrl = `/api/jobs/by-order-id/${encodeURIComponent(orderId)}/order-sheet-file`;
   const bridge = (window as any)?.otto;
   const canOpenExternally = typeof bridge?.orderSheetsOpenExternal === "function";
+  const openLabel = canOpenExternally ? "Open in PDF viewer" : "Open in new tab";
 
-  // Fetch + render the page-1 thumbnail. Just enough to confirm "this is
-  // the sheet" — nobody reads details off the preview, so it's small and
-  // the real reading happens in the enlarged view or the OS viewer.
+  // Cheap existence + type probe (Express answers HEAD for GET routes), so
+  // we never download the whole PDF just to show the tile.
   useEffect(() => {
     let disposed = false;
     setState("loading");
+    setIsText(false);
     setTextContent(null);
-    setPageCount(0);
-    bytesRef.current = null;
-
     (async () => {
       try {
-        const res = await fetch(fileUrl, { credentials: "include" });
+        const res = await fetch(fileUrl, { method: "HEAD", credentials: "include" });
         if (!res.ok) {
           if (!disposed) setState("missing");
           return;
         }
-        const contentType = res.headers.get("content-type") || "";
-        const buffer = await res.arrayBuffer();
-        if (disposed) return;
-        bytesRef.current = new Uint8Array(buffer);
-
-        if (contentType.startsWith("text/")) {
-          setTextContent(new TextDecoder().decode(buffer));
+        if (!disposed) {
+          setIsText((res.headers.get("content-type") || "").startsWith("text/"));
           setState("ready");
-          return;
         }
-
-        const pdfjs = await loadPdfjs();
-        const loadingTask = pdfjs.getDocument({ data: bytesRef.current.slice() });
-        const doc = await loadingTask.promise;
-        if (disposed) {
-          void loadingTask.destroy();
-          return;
-        }
-        const canvas = thumbRef.current;
-        if (canvas) {
-          const page = await doc.getPage(1);
-          const dpr = Math.min(window.devicePixelRatio || 1, 2);
-          const viewport = page.getViewport({ scale: 1.0 * dpr });
-          canvas.width = Math.floor(viewport.width);
-          canvas.height = Math.floor(viewport.height);
-          const ctx = canvas.getContext("2d");
-          if (ctx) await page.render({ canvas, canvasContext: ctx, viewport } as any).promise;
-        }
-        if (!disposed) setPageCount(doc.numPages);
-        void loadingTask.destroy();
-        if (!disposed) setState("ready");
       } catch {
-        if (!disposed) setState("error");
+        if (!disposed) setState("missing");
       }
     })();
-
     return () => {
       disposed = true;
     };
   }, [fileUrl]);
 
-  // Render every page at readable size into the lightbox when it opens.
+  // Text sheets get a real inline preview — no PDF engine involved.
   useEffect(() => {
-    if (!enlarged || textContent !== null) return;
-    const bytes = bytesRef.current;
-    const host = lightboxHostRef.current;
-    if (!bytes || !host) return;
+    if (state !== "ready" || !isText) return;
     let disposed = false;
     (async () => {
-      const pdfjs = await loadPdfjs();
-      const loadingTask = pdfjs.getDocument({ data: bytes.slice() });
-      const doc = await loadingTask.promise;
-      if (disposed) {
-        void loadingTask.destroy();
-        return;
+      try {
+        const res = await fetch(fileUrl, { credentials: "include" });
+        if (res.ok && !disposed) setTextContent(await res.text());
+      } catch {
+        /* leave null — the tile still opens externally */
       }
-      host.replaceChildren();
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const pages = Math.min(doc.numPages, ORDER_SHEET_MAX_RENDER_PAGES);
-      for (let pageNumber = 1; pageNumber <= pages; pageNumber++) {
-        const page = await doc.getPage(pageNumber);
-        if (disposed) break;
-        const viewport = page.getViewport({ scale: 1.6 * dpr });
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
-        canvas.style.width = "100%";
-        canvas.style.maxWidth = "820px";
-        canvas.style.height = "auto";
-        canvas.style.borderRadius = "6px";
-        canvas.style.background = "white";
-        const ctx = canvas.getContext("2d");
-        if (!ctx) break;
-        await page.render({ canvas, canvasContext: ctx, viewport } as any).promise;
-        if (disposed) break;
-        host.appendChild(canvas);
-      }
-      void loadingTask.destroy();
     })();
     return () => {
       disposed = true;
     };
-  }, [enlarged, textContent]);
+  }, [state, isText, fileUrl]);
 
-  // Esc closes the lightbox.
+  // Esc closes the text lightbox.
   useEffect(() => {
     if (!enlarged) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1550,14 +1471,20 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
   }, [enlarged]);
 
   const openSheet = async () => {
-    const bytes = bytesRef.current;
-    if (canOpenExternally && bytes) {
-      const result = await bridge.orderSheetsOpenExternal({
-        bytes,
-        fileName: `${orderId}${textContent !== null ? ".txt" : ".pdf"}`,
-      });
-      if (!result?.error) return;
-      // Fall through to the browser path if the OS hand-off failed.
+    if (canOpenExternally) {
+      try {
+        const res = await fetch(fileUrl, { credentials: "include" });
+        if (res.ok) {
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          const result = await bridge.orderSheetsOpenExternal({
+            bytes,
+            fileName: `${orderId}${isText ? ".txt" : ".pdf"}`,
+          });
+          if (!result?.error) return;
+        }
+      } catch {
+        /* fall through to the browser path */
+      }
     }
     window.open(fileUrl, "_blank", "noreferrer");
   };
@@ -1567,22 +1494,12 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
       <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
         <ScanLine className="h-3 w-3" aria-hidden />
         Order Sheet
-        {state === "ready" && (
-          <button
-            type="button"
-            onClick={() => void openSheet()}
-            className="ml-auto text-[calc(10px*var(--ui-scale))] normal-case tracking-normal text-otto-accent-ink hover:text-otto-accent-strong"
-            data-testid="link-order-sheet-open"
-          >
-            {canOpenExternally ? "Open in PDF viewer" : "Open in new tab"}
-          </button>
-        )}
       </h4>
 
       {state === "loading" && (
         <div className="flex items-center gap-2 text-[calc(12.5px*var(--ui-scale))] text-ink-mute">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading sheet…
+          Checking for sheet...
         </div>
       )}
 
@@ -1593,60 +1510,57 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
         </p>
       )}
 
-      {state === "error" && (
-        <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute m-0">
-          The saved sheet couldn't be displayed. Use "{canOpenExternally ? "Open in PDF viewer" : "Open in new tab"}"
-          above, or re-save the file into the watched folder.
-        </p>
-      )}
-
-      {/* Compact preview, click to enlarge. Hidden until ready so the
-          thumbnail canvas has a mount target during loading. */}
-      <button
-        type="button"
-        onClick={() => setEnlarged(true)}
-        className={cn(
-          "group relative block w-fit max-w-full rounded-lg border border-line bg-paper-2 p-1.5",
-          "hover:border-otto-accent-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          state === "ready" ? "" : "hidden",
-        )}
-        aria-label="Enlarge order sheet"
-        data-testid="button-order-sheet-enlarge"
-      >
-        {textContent !== null ? (
-          <pre className="max-h-[200px] w-[180px] overflow-hidden rounded bg-white p-2 text-[calc(9px*var(--ui-scale))] leading-snug text-ink-2 whitespace-pre-wrap">
-            {textContent}
-          </pre>
-        ) : (
-          <canvas
-            ref={thumbRef}
-            className="block max-h-[200px] w-auto max-w-full rounded"
-            data-testid="canvas-order-sheet-thumb"
-          />
-        )}
-        <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-ink/0 opacity-0 transition-opacity group-hover:bg-ink/30 group-hover:opacity-100">
-          <span className="flex items-center gap-1 rounded-full bg-white/95 px-2 py-1 text-[calc(10.5px*var(--ui-scale))] font-medium text-ink shadow-sm">
-            <Maximize2 className="h-3 w-3" aria-hidden />
-            Click to enlarge
+      {/* PDF (the common case): an instant, reliable tile that opens the
+          real file in the OS viewer. No in-renderer rasterization. */}
+      {state === "ready" && !isText && (
+        <button
+          type="button"
+          onClick={() => void openSheet()}
+          className="group flex w-full items-center gap-3 rounded-lg border border-line bg-paper-2 p-3 text-left hover:border-otto-accent-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          data-testid="button-order-sheet-open"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-otto-accent-soft text-otto-accent-ink">
+            <FileText className="h-5 w-5" aria-hidden />
           </span>
-        </span>
-      </button>
-
-      {state === "ready" && (
-        <p className="mt-1.5 text-[calc(10.5px*var(--ui-scale))] text-ink-mute">
-          {textContent !== null
-            ? "Click to read the full sheet"
-            : pageCount > 1
-              ? `Page 1 of ${pageCount} · click to enlarge`
-              : "Click to enlarge"}
-        </p>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[calc(13px*var(--ui-scale))] font-medium text-ink">Order sheet (PDF)</span>
+            <span className="block text-[calc(11px*var(--ui-scale))] text-ink-mute">{openLabel}</span>
+          </span>
+          <ExternalLink className="h-4 w-4 shrink-0 text-ink-mute group-hover:text-otto-accent-ink" aria-hidden />
+        </button>
       )}
 
-      {/* Enlarged view — a portal to <body> so it escapes the dialog's
-          transformed, overflow-hidden container instead of being clipped
-          by it. Works identically on Mac and Windows (in-app render, no
-          OS viewer or iframe involved). */}
-      {enlarged &&
+      {/* Text sheet: genuine inline preview, click to enlarge in-app. */}
+      {state === "ready" && isText && (
+        <>
+          <button
+            type="button"
+            onClick={() => setEnlarged(true)}
+            className="group relative block w-full overflow-hidden rounded-lg border border-line bg-paper-2 p-2 text-left hover:border-otto-accent-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="button-order-sheet-enlarge"
+          >
+            <pre className="max-h-[200px] overflow-hidden rounded bg-white p-2 text-[calc(9.5px*var(--ui-scale))] leading-snug text-ink-2 whitespace-pre-wrap">
+              {textContent ?? "Loading..."}
+            </pre>
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+              <span className="flex items-center gap-1 rounded-full bg-white/95 px-2 py-1 text-[calc(10.5px*var(--ui-scale))] font-medium text-ink shadow-sm">
+                <Maximize2 className="h-3 w-3" aria-hidden />
+                Click to enlarge
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void openSheet()}
+            className="mt-1.5 self-start text-[calc(10.5px*var(--ui-scale))] text-otto-accent-ink hover:text-otto-accent-strong"
+            data-testid="link-order-sheet-open"
+          >
+            {openLabel}
+          </button>
+        </>
+      )}
+
+      {enlarged && textContent !== null &&
         createPortal(
           <div
             className="fixed inset-0 z-[200] flex flex-col bg-ink/80 backdrop-blur-sm"
@@ -1655,41 +1569,21 @@ function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
           >
             <div className="flex items-center justify-between gap-3 px-4 py-3 text-white">
               <span className="text-sm font-medium">Order sheet</span>
-              <div className="flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void openSheet();
-                  }}
-                  className="text-xs text-white/90 hover:text-white"
-                >
-                  {canOpenExternally ? "Open in PDF viewer" : "Open in new tab"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEnlarged(false)}
-                  aria-label="Close"
-                  className="rounded p-1 text-white/90 hover:bg-white/10 hover:text-white"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-            {textContent !== null ? (
-              <pre
-                className="mx-auto w-full max-w-[820px] flex-1 overflow-auto rounded-lg bg-white p-5 text-[calc(13px*var(--ui-scale))] leading-relaxed whitespace-pre-wrap"
-                onClick={(e) => e.stopPropagation()}
+              <button
+                type="button"
+                onClick={() => setEnlarged(false)}
+                aria-label="Close"
+                className="rounded p-1 text-white/90 hover:bg-white/10 hover:text-white"
               >
-                {textContent}
-              </pre>
-            ) : (
-              <div
-                ref={lightboxHostRef}
-                className="flex flex-1 flex-col items-center gap-4 overflow-auto px-4 pb-6"
-                onClick={(e) => e.stopPropagation()}
-              />
-            )}
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <pre
+              className="mx-auto w-full max-w-[820px] flex-1 overflow-auto rounded-lg bg-white p-5 text-[calc(13px*var(--ui-scale))] leading-relaxed whitespace-pre-wrap"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {textContent}
+            </pre>
           </div>,
           document.body,
         )}
