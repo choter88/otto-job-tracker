@@ -1960,9 +1960,11 @@ ipcMain.handle("otto:orderSheets:open-external", async (_event, payload) => {
 // EHR sheet to the tray. Per the office's choice it shows the print
 // dialog each time (no silent printing): on Windows we invoke the default
 // PDF handler's "print" verb (Edge/Acrobat opens its print dialog); on
-// macOS we open the sheet in the default viewer (Preview) where Cmd-P
-// prints. webContents.print() is deliberately avoided — it renders PDFs
-// blank on our Electron (29) and we don't bump versions.
+// macOS we drive Preview via AppleScript so the system print dialog
+// appears automatically — `shell.openPath` alone just opens the file and
+// forces the user to press Cmd-P, which doesn't match what the auto-print
+// setting promises. webContents.print() is deliberately avoided — it
+// renders PDFs blank on our Electron (29) and we don't bump versions.
 //
 // Security: only files that live INSIDE the configured watch folder and
 // carry a supported extension may be printed, so this channel can't be
@@ -2050,7 +2052,57 @@ ipcMain.handle("otto:orderSheets:print", async (_event, payload) => {
       }
       return { ok: true };
     }
-    // macOS / other: open in the default viewer; the user prints from there.
+    if (process.platform === "darwin") {
+      // Drive Preview to AUTOMATICALLY show the system print dialog instead
+      // of just opening the doc and waiting for the user to press Cmd-P.
+      // The file path is passed as argv[1] (not interpolated) so osascript
+      // treats it as data — filenames with quotes / backticks can't break
+      // out of the script. `with properties {} print dialog true` is the
+      // standard scripting verb that forces the print sheet to appear on
+      // the front document.
+      const { spawn } = await import("child_process");
+      const script = `on run argv
+  set theFile to POSIX file (item 1 of argv)
+  tell application "Preview"
+    activate
+    open theFile
+  end tell
+  delay 0.4
+  tell application "Preview"
+    print front document with properties {} print dialog true
+  end tell
+end run`;
+      const ok = await new Promise((resolve) => {
+        const child = spawn("osascript", ["-e", script, printPath]);
+        let stderr = "";
+        child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+        child.on("error", (err) => {
+          _logStartup(`[order-sheets] print: osascript spawn error: ${err?.message || err}`);
+          resolve(false);
+        });
+        child.on("exit", (code) => {
+          if (code !== 0) {
+            _logStartup(`[order-sheets] print: osascript exit ${code}: ${stderr.trim()}`);
+            resolve(false);
+          } else {
+            resolve(true);
+          }
+        });
+      });
+      if (!ok) {
+        // Preview missing / scripting blocked: fall back to just opening the
+        // file so staff can still Cmd-P manually rather than losing the
+        // sheet entirely.
+        _logStartup("[order-sheets] print: osascript failed; opening the sheet instead");
+        const openError = await shell.openPath(printPath);
+        if (openError) {
+          _logStartup(`[order-sheets] print: openPath fallback failed: ${openError}`);
+          return { error: openError };
+        }
+      }
+      return { ok: true };
+    }
+    // Linux / other: open in the default viewer; the user prints from there.
     const openError = await shell.openPath(printPath);
     if (openError) {
       _logStartup(`[order-sheets] print: openPath failed: ${openError}`);
