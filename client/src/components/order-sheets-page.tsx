@@ -199,6 +199,32 @@ export default function OrderSheetsPage() {
   // ── Review & dismiss ─────────────────────────────────────────────────
 
   const [reviewRecord, setReviewRecord] = useState<OrderSheetImport | null>(null);
+
+  // Opening a record for review also opens the saved PDF so staff can
+  // verify the prefilled dialog against the original sheet. Desktop hands
+  // the bytes to the OS viewer (Preview/Acrobat); the web falls back to a
+  // new tab. Fire-and-forget — the dialog still opens if the file open
+  // fails (e.g., text sheet with no PDF), so review isn't blocked.
+  const openReview = (record: OrderSheetImport) => {
+    setReviewRecord(record);
+    if (!record.attachmentPath) return;
+    const fileUrl = `/api/order-sheets/${encodeURIComponent(record.id)}/file`;
+    const bridge = (window as any)?.otto;
+    if (typeof bridge?.orderSheetsOpenExternal === "function") {
+      void (async () => {
+        try {
+          const res = await fetch(fileUrl, { credentials: "include" });
+          if (!res.ok) return;
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          await bridge.orderSheetsOpenExternal({ bytes, fileName: record.fileName });
+        } catch {
+          /* leave the dialog open without the file */
+        }
+      })();
+    } else {
+      window.open(fileUrl, "_blank", "noreferrer");
+    }
+  };
   const reviewPrefill = useMemo(() => {
     if (!reviewRecord) return undefined;
     const fields = parsedFieldsOf(reviewRecord);
@@ -255,23 +281,21 @@ export default function OrderSheetsPage() {
 
   return (
     <div className="space-y-6" data-testid="page-order-sheets">
-      {/* ── This computer's watcher ── */}
+      {/* ── This computer's watcher ── tighter card so Needs attention
+          below is the visual focal point when items are stuck. */}
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
+        <CardHeader className="py-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <ScanLine className="h-4 w-4 text-otto-accent-ink" />
             Order sheet folder
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <OrderSheetFolderSetup description="Save each printed frame order sheet (PDF or text file) into one folder, and Otto turns it into a job automatically. Sheets it can't fully read land in “Needs attention” below." />
+        <CardContent className="pt-0 pb-3">
+          <OrderSheetFolderSetup />
 
-          {/* ── Office-wide watcher presence ── */}
+          {/* ── Office-wide watcher presence ── compact one-row-per-watcher */}
           {showWatchers && (
-            <div className="mt-4 pt-4 border-t border-line-2 space-y-2" data-testid="panel-order-sheet-watchers">
-              <p className="text-[calc(11px*var(--ui-scale))] font-medium uppercase tracking-wide text-ink-mute">
-                Watching from
-              </p>
+            <div className="mt-2 pt-2 border-t border-line-2 space-y-1" data-testid="panel-order-sheet-watchers">
               {watchers.map((watcher) => {
                 const heartbeatAge = Date.now() - new Date(watcher.lastHeartbeatAt).getTime();
                 const fresh = heartbeatAge < WATCHER_STALE_AFTER_MS;
@@ -289,7 +313,7 @@ export default function OrderSheetsPage() {
                 return (
                   <div
                     key={watcher.deviceId}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1"
+                    className="flex items-center gap-2 text-xs"
                     data-testid={`row-order-sheet-watcher-${watcher.deviceId}`}
                   >
                     <span
@@ -300,26 +324,23 @@ export default function OrderSheetsPage() {
                         !isWatching && !hasProblem && "bg-ink-mute",
                       )}
                     />
-                    <span className="text-sm font-medium text-ink">
+                    <span className="font-medium text-ink whitespace-nowrap">
                       {watcher.customName || watcher.deviceLabel || "Unknown computer"}
+                      {watcher.deviceId === myDeviceId && (
+                        <span className="ml-1.5 text-[calc(10px*var(--ui-scale))] text-ink-mute font-normal">(this)</span>
+                      )}
                     </span>
-                    {watcher.deviceId === myDeviceId && (
-                      <Badge className="bg-line-2 text-ink-mute border-0 text-[calc(10px*var(--ui-scale))]">
-                        This computer
-                      </Badge>
-                    )}
                     {watcher.folderPath && (
                       <span
-                        className="text-xs text-ink-mute font-mono truncate max-w-[280px]"
+                        className="text-ink-mute font-mono truncate min-w-0 flex-1"
                         title={watcher.folderPath}
                       >
                         {watcher.folderPath}
                       </span>
                     )}
-                    <span className="flex-1" />
                     <span
                       className={cn(
-                        "text-xs whitespace-nowrap",
+                        "whitespace-nowrap shrink-0",
                         isWatching && "text-brand-emerald",
                         hasProblem && "text-danger",
                         !isWatching && !hasProblem && "text-ink-mute",
@@ -399,7 +420,7 @@ export default function OrderSheetsPage() {
                     <div className="flex items-center gap-2">
                       <Button
                         size="sm"
-                        onClick={() => setReviewRecord(record)}
+                        onClick={() => openReview(record)}
                         data-testid={`button-order-sheet-review-${record.id}`}
                       >
                         Review &amp; create
@@ -554,7 +575,7 @@ export default function OrderSheetsPage() {
                             size="sm"
                             variant="ghost"
                             className="h-7 text-xs"
-                            onClick={() => setReviewRecord(record)}
+                            onClick={() => openReview(record)}
                             data-testid={`button-order-sheet-table-review-${record.id}`}
                           >
                             Review
