@@ -4932,6 +4932,13 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
           mimeType: payload.mimeType || jobAttachmentMime(ext).mime,
           createdBy: getAuthUser(req)?.id ?? null,
         });
+        // Logged for cross-computer visibility — Client computers POST here
+        // (same as order sheets); the file is saved on the Host's disk so
+        // every other computer sees it via the file-serve endpoint. The
+        // log line is the user-visible breadcrumb that the upload landed.
+        console.log(
+          `[job-attachments] uploaded ${fileBuffer.byteLength}B (${ext}) "${saved.fileName}" → ${orderId} (host data dir)`,
+        );
 
         await logPhiAccess(req, "create", "job_attachment", saved.id, orderId, {
           fileName: saved.fileName,
