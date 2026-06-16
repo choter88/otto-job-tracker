@@ -175,6 +175,122 @@ test("derive: option corrections become raw-text → option-id mappings", () => 
   ]);
 });
 
+test("derive: lab also learns an ANCHOR when the option label appears on the sheet", () => {
+  // Simulates the user's screenshot: the parser found nothing for "lab"
+  // (destinationText is empty), so the old valueMap-only path produced
+  // no rule. Now we also try to anchor on the lab's label/aliases.
+  const layout = [
+    [
+      item("Account Holder:", 50, 700),
+      item("Doe, Jane", 200, 700),
+      item("Written On:", 50, 680),
+      item("05/01/2026", 200, 680),
+      item("Send Via:", 50, 640),
+      // The lab's PRINTED text matches the option label so the matcher
+      // can resolve it.
+      item("Apex Lab Co", 200, 640),
+      item("Job Kind:", 50, 620),
+      item("Frame Order", 200, 620),
+    ],
+  ];
+  const rules = deriveOrderSheetAnchorRules(
+    layout,
+    EMPTY_FIELDS,
+    { destinationId: "dest-apex" },
+    OFFICE_OPTIONS,
+  );
+  assert.deepEqual(rules, [{ field: "destination", label: "send via", position: "right" }]);
+});
+
+test("derive: lab learning PRODUCES BOTH valueMap and anchor when both signals are present", () => {
+  // The parser found raw text ("AXL") AND the lab's option label is
+  // resolvable somewhere on the sheet — we should learn both.
+  const layout = [
+    [
+      item("Account Holder:", 50, 700),
+      item("Doe, Jane", 200, 700),
+      item("Send Via:", 50, 640),
+      item("Apex Lab Co", 200, 640),
+    ],
+  ];
+  const original = { ...EMPTY_FIELDS, destinationText: "AXL" };
+  const rules = deriveOrderSheetAnchorRules(
+    layout,
+    original,
+    { destinationId: "dest-apex" },
+    OFFICE_OPTIONS,
+  );
+  assert.equal(rules.length, 2);
+  assert.deepEqual(rules.find((r) => r.valueMap), {
+    field: "destination",
+    label: "",
+    position: "right",
+    valueMap: { axl: "dest-apex" },
+  });
+  assert.deepEqual(rules.find((r) => r.label === "send via"), {
+    field: "destination",
+    label: "send via",
+    position: "right",
+  });
+});
+
+test("apply: a stored multi-anchor rule tries each anchor; first valid extract wins", () => {
+  // Layout where only the SECOND anchor matches — the first ("account
+  // holder") doesn't exist on this sheet variant.
+  const layout = [
+    [
+      item("Account Name:", 50, 700),
+      item("Doe, Jane", 200, 700),
+      item("Written On:", 50, 680),
+      item("05/01/2026", 200, 680),
+    ],
+  ];
+  const stored = [
+    {
+      field: "patientName",
+      label: "",
+      position: "right",
+      anchors: [
+        { label: "account holder", position: "right" },
+        { label: "account name", position: "right" },
+      ],
+    },
+  ] as any;
+  const result = applyOrderSheetAnchorRules(layout, stored, OFFICE_OPTIONS);
+  assert.equal(result.fields.patientFirstName, "Jane");
+  assert.equal(result.fields.patientLastName, "Doe");
+  assert.deepEqual(result.applied, ["patientName"]);
+});
+
+test("apply: lab anchor learned from one sheet resolves the lab on the next sheet", () => {
+  // The exact case from the user's screenshot: previously the lab was
+  // "missing" and reviewing the sheet didn't fix it. With anchor
+  // learning, the next sheet auto-fills the lab from the learned spot.
+  const stored = [
+    { field: "destination", label: "send via", position: "right" },
+  ] as any;
+  const result = applyOrderSheetAnchorRules(FORM_A, stored, {
+    jobTypes: [{ id: "jt-glasses", label: "Eyeglasses" }],
+    destinations: [
+      { id: "dest-apex", label: "AXL" }, // The label-as-printed
+      { id: "dest-sunrise", label: "Sunrise Optics" },
+    ],
+  });
+  assert.equal(result.fields.destinationId, "dest-apex");
+  assert.deepEqual(result.applied, ["destination"]);
+});
+
+test("apply: backward-compat — old-shape single-anchor JSON still applies", () => {
+  // Pre-anchors-list rows still in the wild: just {label, position}, no
+  // `anchors` array.
+  const stored = [
+    { field: "patientName", label: "account holder", position: "right" },
+  ] as any;
+  const result = applyOrderSheetAnchorRules(FORM_A, stored, OFFICE_OPTIONS);
+  assert.equal(result.fields.patientFirstName, "Jane");
+  assert.equal(result.fields.patientLastName, "Doe");
+});
+
 test("derive: inline 'Label: value' segments anchor to the inline label", () => {
   const layout = [
     [
@@ -272,7 +388,7 @@ test("mergeLearnedFields: learned values override, empties never clobber", () =>
 
 // ── Storage round-trip ─────────────────────────────────────────────────
 
-test("storage: rules upsert per field and valueMaps merge across corrections", async () => {
+test("storage: rules upsert per field and merge anchors + valueMaps across corrections", async () => {
   const office = await storage.createOffice({ name: "Learning Optical" } as any);
   const fp = computeOrderSheetFingerprint(FORM_A);
 
@@ -280,7 +396,10 @@ test("storage: rules upsert per field and valueMaps merge across corrections", a
     { field: "patientName", label: "account holder", position: "right" },
     { field: "destination", label: "", position: "right", valueMap: { axl: "dest-apex" } },
   ]);
-  // Second correction: patientName anchor moves, destination learns a new spelling.
+  // Second correction: patientName anchor learned at a DIFFERENT spot
+  // ("account name" on a redesigned form), destination learns another
+  // spelling. The first patient anchor must survive — it might still be
+  // the only one that matches on sheets printed from the older template.
   await storage.upsertOrderSheetTemplateRules(office.id, fp, [
     { field: "patientName", label: "account name", position: "right" },
     { field: "destination", label: "", position: "right", valueMap: { "apex labs": "dest-apex" } },
@@ -289,8 +408,21 @@ test("storage: rules upsert per field and valueMaps merge across corrections", a
   const rows = await storage.getOrderSheetTemplates(office.id, fp);
   assert.equal(rows.length, 2);
   const byField = new Map(rows.map((row) => [row.field, row.rule as any]));
-  assert.equal(byField.get("patientName").label, "account name");
+  // Both anchors survive — additive, not replacing.
+  assert.deepEqual(byField.get("patientName").anchors, [
+    { label: "account holder", position: "right" },
+    { label: "account name", position: "right" },
+  ]);
+  // Destination has no anchor (pure valueMap) but value spellings merged.
   assert.deepEqual(byField.get("destination").valueMap, { axl: "dest-apex", "apex labs": "dest-apex" });
+
+  // Re-saving the SAME anchor is a no-op (dedup on label+position).
+  await storage.upsertOrderSheetTemplateRules(office.id, fp, [
+    { field: "patientName", label: "account name", position: "right" },
+  ]);
+  const after = await storage.getOrderSheetTemplates(office.id, fp);
+  const patientAfter = (after.find((r) => r.field === "patientName")?.rule as any) || {};
+  assert.equal(patientAfter.anchors.length, 2);
 
   // Other offices and other forms see nothing.
   assert.equal((await storage.getOrderSheetTemplates(office.id, "different-fp")).length, 0);
