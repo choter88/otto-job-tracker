@@ -20,6 +20,7 @@ import {
   orderSheetImports,
   orderSheetWatchers,
   orderSheetTemplates,
+  jobAttachments,
   clientDevices,
   type User,
   type InsertUser,
@@ -54,6 +55,7 @@ import {
   type InsertOrderSheetImport,
   type OrderSheetWatcher,
   type OrderSheetTemplate,
+  type JobAttachment,
 } from "@shared/schema";
 import type { OrderSheetAnchorRule } from "@shared/order-sheet-layout";
 import { db, getDataDir } from "./db";
@@ -187,6 +189,8 @@ export interface IStorage {
     activeJobs: number;
     archivedJobs: number;
     avgCompletionTime: number | null;
+    orderSheetImports: number;
+    jobAttachments: number;
   }>;
   getAllOffices(): Promise<Office[]>;
   getOfficeWithMetrics(officeId: string): Promise<{
@@ -215,6 +219,24 @@ export interface IStorage {
   getOrderSheetImportByJobOrderId(officeId: string, jobOrderId: string): Promise<OrderSheetImport | undefined>;
   getOrderSheetImportByJobId(jobId: string): Promise<OrderSheetImport | undefined>;
   resolveOrderSheetAttachmentPath(record: OrderSheetImport): string | null;
+
+  // User-uploaded job attachments (kept through archive, removed only on
+  // permanent delete — see deleteJobAttachmentsByOrderId callers)
+  saveJobAttachment(input: {
+    officeId: string;
+    jobOrderId: string;
+    fileBuffer: Buffer;
+    fileName: string;
+    ext: string;
+    mimeType?: string | null;
+    createdBy?: string | null;
+  }): Promise<JobAttachment>;
+  getJobAttachmentsByOrderId(officeId: string, jobOrderId: string): Promise<JobAttachment[]>;
+  getJobAttachment(officeId: string, id: string): Promise<JobAttachment | undefined>;
+  resolveJobAttachmentPath(record: JobAttachment): string | null;
+  deleteJobAttachment(officeId: string, id: string): Promise<boolean>;
+  deleteJobAttachmentsByOrderId(officeId: string, jobOrderId: string): Promise<void>;
+  orderIdExistsInOffice(officeId: string, orderId: string): Promise<boolean>;
 
   // Order-sheet watcher presence (heartbeats from each watching computer)
   upsertOrderSheetWatcher(record: {
@@ -1763,6 +1785,8 @@ export class DatabaseStorage implements IStorage {
     activeJobs: number;
     archivedJobs: number;
     avgCompletionTime: number | null;
+    orderSheetImports: number;
+    jobAttachments: number;
   }> {
     const [officeStats] = await db
       .select({
@@ -1790,6 +1814,15 @@ export class DatabaseStorage implements IStorage {
       .from(archivedJobs)
       .where(eq(archivedJobs.finalStatus, 'completed'));
 
+    // Adoption signals for the two attachment features (each row = one
+    // file on disk). Counts only — no PHI leaves the box.
+    const [orderSheetStats] = await db
+      .select({ count: sql`count(*)` })
+      .from(orderSheetImports);
+    const [jobAttachmentStats] = await db
+      .select({ count: sql`count(*)` })
+      .from(jobAttachments);
+
     return {
       totalOffices: Number(officeStats.totalOffices) || 0,
       activeOffices: Number(officeStats.activeOffices) || 0,
@@ -1798,6 +1831,8 @@ export class DatabaseStorage implements IStorage {
       activeJobs: Number(jobStats.activeJobs) || 0,
       archivedJobs: Number(archivedStats.archivedJobs) || 0,
       avgCompletionTime: completionTimeStats.avgCompletionTime ? Number(completionTimeStats.avgCompletionTime) : null,
+      orderSheetImports: Number(orderSheetStats.count) || 0,
+      jobAttachments: Number(jobAttachmentStats.count) || 0,
     };
   }
 
@@ -2041,6 +2076,133 @@ export class DatabaseStorage implements IStorage {
     if (!resolved.startsWith(path.resolve(dataDir) + path.sep)) return null;
     if (!fs.existsSync(resolved)) return null;
     return resolved;
+  }
+
+  // ── User-uploaded job attachments ──────────────────────────────────
+  // Distinct from the auto-imported order sheet above: these are files
+  // staff manually attach to a job (insurance cards, Rx scans, lab
+  // receipts…). Keyed by the stable jobOrderId so they survive archive,
+  // and — unlike the order sheet — are KEPT through archive, removed only
+  // when the order is permanently deleted. Files live under
+  // <data>/job-attachments/<id>.<ext> with owner-only perms.
+
+  async saveJobAttachment(input: {
+    officeId: string;
+    jobOrderId: string;
+    fileBuffer: Buffer;
+    fileName: string;
+    ext: string;
+    mimeType?: string | null;
+    createdBy?: string | null;
+  }): Promise<JobAttachment> {
+    const id = randomUUID();
+    const safeExt = String(input.ext || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6) || "bin";
+    const relPath = path.posix.join("job-attachments", `${id}.${safeExt}`);
+    const absPath = path.join(getDataDir(), relPath);
+    fs.mkdirSync(path.dirname(absPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(absPath, input.fileBuffer, { mode: 0o600 });
+    const [created] = await db
+      .insert(jobAttachments)
+      .values({
+        id,
+        officeId: input.officeId,
+        jobOrderId: input.jobOrderId,
+        fileName: input.fileName,
+        ext: safeExt,
+        mimeType: input.mimeType ?? null,
+        size: input.fileBuffer.byteLength,
+        attachmentPath: relPath,
+        createdBy: input.createdBy ?? null,
+      })
+      .returning();
+    return created;
+  }
+
+  async getJobAttachmentsByOrderId(officeId: string, jobOrderId: string): Promise<JobAttachment[]> {
+    return db
+      .select()
+      .from(jobAttachments)
+      .where(and(eq(jobAttachments.officeId, officeId), eq(jobAttachments.jobOrderId, jobOrderId)))
+      .orderBy(jobAttachments.createdAt);
+  }
+
+  async getJobAttachment(officeId: string, id: string): Promise<JobAttachment | undefined> {
+    const [record] = await db
+      .select()
+      .from(jobAttachments)
+      .where(and(eq(jobAttachments.officeId, officeId), eq(jobAttachments.id, id)));
+    return record || undefined;
+  }
+
+  // Same clamp-inside-the-data-dir defense as the order-sheet variant.
+  resolveJobAttachmentPath(record: JobAttachment): string | null {
+    if (!record.attachmentPath) return null;
+    const dataDir = getDataDir();
+    const resolved = path.resolve(dataDir, record.attachmentPath);
+    if (!resolved.startsWith(path.resolve(dataDir) + path.sep)) return null;
+    if (!fs.existsSync(resolved)) return null;
+    return resolved;
+  }
+
+  // Delete one upload (file + row). Office-scoped so a caller can't reach
+  // across offices by id. Returns true if a row was removed.
+  async deleteJobAttachment(officeId: string, id: string): Promise<boolean> {
+    const record = await this.getJobAttachment(officeId, id);
+    if (!record) return false;
+    const absolutePath = this.resolveJobAttachmentPath(record);
+    if (absolutePath) {
+      try {
+        fs.unlinkSync(absolutePath);
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") {
+          console.error("[job-attachments] failed to unlink attachment:", err?.message || err);
+        }
+      }
+    }
+    await db.delete(jobAttachments).where(eq(jobAttachments.id, record.id));
+    return true;
+  }
+
+  // Bulk-remove every upload for an order (files + rows). Called ONLY from
+  // the permanent-delete path — NOT from archive — so uploads persist on
+  // archived jobs.
+  async deleteJobAttachmentsByOrderId(officeId: string, jobOrderId: string): Promise<void> {
+    const records = await this.getJobAttachmentsByOrderId(officeId, jobOrderId);
+    for (const record of records) {
+      const absolutePath = this.resolveJobAttachmentPath(record);
+      if (absolutePath) {
+        try {
+          fs.unlinkSync(absolutePath);
+        } catch (err: any) {
+          if (err?.code !== "ENOENT") {
+            console.error("[job-attachments] failed to unlink attachment:", err?.message || err);
+          }
+        }
+      }
+    }
+    if (records.length > 0) {
+      await db
+        .delete(jobAttachments)
+        .where(and(eq(jobAttachments.officeId, officeId), eq(jobAttachments.jobOrderId, jobOrderId)));
+    }
+  }
+
+  // True if the ORD-… handle names a real order in this office, active OR
+  // archived. Gate for the attachment-upload route so a caller can't seed
+  // orphan rows for arbitrary ids. Active and archived share the orderId.
+  async orderIdExistsInOffice(officeId: string, orderId: string): Promise<boolean> {
+    const [active] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.officeId, officeId), eq(jobs.orderId, orderId)))
+      .limit(1);
+    if (active) return true;
+    const [archived] = await db
+      .select({ id: archivedJobs.id })
+      .from(archivedJobs)
+      .where(and(eq(archivedJobs.officeId, officeId), eq(archivedJobs.orderId, orderId)))
+      .limit(1);
+    return !!archived;
   }
 
   // ── Order-sheet watcher presence ───────────────────────────────────
