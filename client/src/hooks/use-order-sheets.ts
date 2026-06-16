@@ -215,7 +215,19 @@ export function useOrderSheetIngestion() {
                   // Surface a failed print: the sheet still imported, so
                   // without this the staff would never know it didn't
                   // print and assume the paper's on its way to the tray.
-                  if (printRes?.error) printFailed += 1;
+                  if (printRes?.error) {
+                    printFailed += 1;
+                  } else {
+                    // Portal-visible signal so we can measure auto-print
+                    // adoption (vs. offices that have watching on but
+                    // print elsewhere).
+                    fetch("/api/track", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "include",
+                      body: JSON.stringify({ eventType: "order_sheet_auto_print_triggered" }),
+                    }).catch(() => { /* fire-and-forget */ });
+                  }
                 } catch {
                   printFailed += 1;
                 }

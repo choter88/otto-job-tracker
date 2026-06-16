@@ -61,7 +61,15 @@ export type UsageEventType =
   // Notification rules
   | "notification_rule_created"
   | "notification_rule_updated"
-  | "notification_rule_deleted";
+  | "notification_rule_deleted"
+  // Order-sheet automation (PDF watcher → parsed job)
+  | "order_sheet_ingested"
+  | "order_sheet_review_completed"
+  | "order_sheet_learning_reset"
+  | "order_sheet_auto_print_triggered"
+  // Attachments (user-uploaded documents on a job)
+  | "attachment_uploaded"
+  | "attachment_deleted";
 
 /** Allowlist for desktop-side event types (POST /api/track). */
 export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
@@ -107,6 +115,10 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   "spotlight_target_clicked",
   "spotlight_archive_opened",
   "spotlight_archive_replay",
+  // Renderer-side auto-print signal: the office's host has watching on
+  // AND the print bridge is available AND this is the machine that won
+  // the ingest claim. Fired once per successful auto-print.
+  "order_sheet_auto_print_triggered",
 ]);
 
 /** Allowlist for tablet-side event types (POST /tablet/api/track). Kept

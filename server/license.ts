@@ -176,6 +176,8 @@ export async function forceCheckin(): Promise<LicenseSnapshot> {
       clientCount: getConnectedClientCount(),
       tabletCount: getActiveTabletSessionCount(),
       platform: process.platform,
+      orderSheetImports: stats.orderSheetImports,
+      jobAttachments: stats.jobAttachments,
     };
 
     // Attach daily activity aggregates (since last successful check-in or 7 days ago)

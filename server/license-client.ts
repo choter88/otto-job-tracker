@@ -265,6 +265,10 @@ export type CheckinMetrics = {
   clientCount?: number;
   tabletCount?: number;
   platform?: string;
+  // Capacity signals for the two attachment categories on disk. Row
+  // counts only — no PHI leaves the box.
+  orderSheetImports?: number;
+  jobAttachments?: number;
   dailyActivity?: DailyActivitySummary[];
   rawEvents?: RawUsageEvent[];
 };
