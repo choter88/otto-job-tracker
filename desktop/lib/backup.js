@@ -169,13 +169,29 @@ function parseBackupTimestamp(filename) {
 // of small PDFs fine — the same shares already hold every other Otto
 // artifact today.
 
+// Two on-disk attachment categories live outside the sqlite, each in its
+// own <data> subdir and each paired with its own backup sidecar:
+//   • order-sheet-attachments  → "<base>-attachments"      (legacy name kept
+//                                  for backward-compatible restore)
+//   • job-attachments          → "<base>-job-attachments"  (user uploads)
+// The public copy/restore/remove helpers below fan out over BOTH so a
+// single call covers every attachment a job can carry.
 const ATTACHMENTS_SUBDIR = "order-sheet-attachments";
+const JOB_ATTACHMENTS_SUBDIR = "job-attachments";
+const ATTACHMENT_CATEGORIES = [
+  { subdir: ATTACHMENTS_SUBDIR, suffix: "attachments" },
+  { subdir: JOB_ATTACHMENTS_SUBDIR, suffix: "job-attachments" },
+];
 
-/** Derive the sidecar directory path for a given backup file. */
-export function getAttachmentSidecarPath(backupFilePath) {
+/**
+ * Derive a sidecar directory path for a given backup file. The suffix
+ * defaults to "attachments" so existing callers keep resolving the
+ * order-sheet sidecar exactly as before.
+ */
+export function getAttachmentSidecarPath(backupFilePath, suffix = "attachments") {
   const dir = path.dirname(backupFilePath);
   const base = path.basename(backupFilePath).replace(/\.(sqlite|db)$/i, "");
-  return path.join(dir, `${base}-attachments`);
+  return path.join(dir, `${base}-${suffix}`);
 }
 
 /**
@@ -224,20 +240,23 @@ function copyDirContents(srcDir, destDir) {
  * the source directory doesn't exist / is empty.
  */
 export function copyAttachmentsForBackup(backupFilePath, sourceDataDir) {
-  const sourceDir = path.join(sourceDataDir, ATTACHMENTS_SUBDIR);
-  if (!fs.existsSync(sourceDir)) return 0;
-  const sidecar = getAttachmentSidecarPath(backupFilePath);
-  try {
-    if (fs.existsSync(sidecar)) {
-      fs.rmSync(sidecar, { recursive: true, force: true });
+  let total = 0;
+  for (const { subdir, suffix } of ATTACHMENT_CATEGORIES) {
+    const sourceDir = path.join(sourceDataDir, subdir);
+    if (!fs.existsSync(sourceDir)) continue;
+    const sidecar = getAttachmentSidecarPath(backupFilePath, suffix);
+    try {
+      if (fs.existsSync(sidecar)) {
+        fs.rmSync(sidecar, { recursive: true, force: true });
+      }
+      total += copyDirContents(sourceDir, sidecar);
+    } catch (err) {
+      console.error(`[backup] failed to copy ${subdir} sidecar:`, err?.message || err);
+      // Leave whatever managed to land — the sqlite is still good, and
+      // the next backup will refresh the sidecar.
     }
-    return copyDirContents(sourceDir, sidecar);
-  } catch (err) {
-    console.error("[backup] failed to copy attachments sidecar:", err?.message || err);
-    // Leave whatever managed to land — the sqlite is still good, and
-    // the next backup will refresh the sidecar.
-    return 0;
   }
+  return total;
 }
 
 /**
@@ -249,35 +268,40 @@ export function copyAttachmentsForBackup(backupFilePath, sourceDataDir) {
  * fall back to the "no preview" message.
  */
 export function restoreAttachmentsFromBackup(backupFilePath, destDataDir) {
-  const sidecar = getAttachmentSidecarPath(backupFilePath);
-  const destDir = path.join(destDataDir, ATTACHMENTS_SUBDIR);
-  try {
-    if (fs.existsSync(destDir)) {
-      fs.rmSync(destDir, { recursive: true, force: true });
+  let total = 0;
+  for (const { subdir, suffix } of ATTACHMENT_CATEGORIES) {
+    const sidecar = getAttachmentSidecarPath(backupFilePath, suffix);
+    const destDir = path.join(destDataDir, subdir);
+    try {
+      if (fs.existsSync(destDir)) {
+        fs.rmSync(destDir, { recursive: true, force: true });
+      }
+    } catch (err) {
+      console.error(`[restore] failed to clear ${subdir} dir:`, err?.message || err);
     }
-  } catch (err) {
-    console.error("[restore] failed to clear attachments dir:", err?.message || err);
+    // Always end with an existing (possibly empty) directory so the server
+    // and tests see a consistent layout, whether or not a sidecar was
+    // available. Legacy .sqlite-only backups land here with 0 files.
+    fs.mkdirSync(destDir, { recursive: true, mode: 0o700 });
+    if (!fs.existsSync(sidecar)) continue;
+    try {
+      total += copyDirContents(sidecar, destDir);
+    } catch (err) {
+      console.error(`[restore] failed to copy ${subdir} sidecar:`, err?.message || err);
+    }
   }
-  // Always end with an existing (possibly empty) directory so the server
-  // and tests see a consistent layout, whether or not a sidecar was
-  // available. Legacy .sqlite-only backups land here with 0 files.
-  fs.mkdirSync(destDir, { recursive: true, mode: 0o700 });
-  if (!fs.existsSync(sidecar)) return 0;
-  try {
-    return copyDirContents(sidecar, destDir);
-  } catch (err) {
-    console.error("[restore] failed to copy attachments sidecar:", err?.message || err);
-    return 0;
-  }
+  return total;
 }
 
-/** Remove an attachment sidecar when its paired .sqlite is being pruned. */
+/** Remove both attachment sidecars when the paired .sqlite is pruned. */
 export function removeAttachmentSidecar(backupFilePath) {
-  const sidecar = getAttachmentSidecarPath(backupFilePath);
-  try {
-    fs.rmSync(sidecar, { recursive: true, force: true });
-  } catch {
-    // best-effort
+  for (const { suffix } of ATTACHMENT_CATEGORIES) {
+    const sidecar = getAttachmentSidecarPath(backupFilePath, suffix);
+    try {
+      fs.rmSync(sidecar, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
   }
 }
 
