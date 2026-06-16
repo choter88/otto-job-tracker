@@ -199,3 +199,104 @@ test("empty live attachments folder skips the sidecar entirely", () => {
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(backupDir, { recursive: true, force: true });
 });
+
+// ── job-attachments (user uploads) ride the SAME backup helpers in a
+//    SECOND sidecar so a single backup carries both categories. ─────────
+
+test("getAttachmentSidecarPath derives the job-attachments sidecar with its suffix", () => {
+  const got = getAttachmentSidecarPath("/backups/otto-backup-2026-06-16-080000-001.sqlite", "job-attachments");
+  assert.equal(got, path.join("/backups", "otto-backup-2026-06-16-080000-001-job-attachments"));
+});
+
+test("one backup carries BOTH order-sheet and job-attachment dirs, restores both", () => {
+  const dataDir = makeTmpDir("otto-data-");
+  const backupDir = makeTmpDir("otto-backup-dir-");
+  const backupFile = path.join(backupDir, "otto-backup-2026-06-16-080000-002.sqlite");
+  fs.writeFileSync(backupFile, "sqlite");
+
+  // Both live dirs populated.
+  writePdf(path.join(dataDir, "order-sheet-attachments", "sheet-1.pdf"), "%PDF sheet\n");
+  writePdf(path.join(dataDir, "job-attachments", "upload-1.png"), "PNG-bytes-1");
+  writePdf(path.join(dataDir, "job-attachments", "upload-2.pdf"), "%PDF upload\n");
+
+  // Total across both categories.
+  const writtenCount = copyAttachmentsForBackup(backupFile, dataDir);
+  assert.equal(writtenCount, 3);
+
+  // Two distinct sidecars exist.
+  const sheetSidecar = getAttachmentSidecarPath(backupFile, "attachments");
+  const jobSidecar = getAttachmentSidecarPath(backupFile, "job-attachments");
+  assert.deepEqual(fs.readdirSync(sheetSidecar).sort(), ["sheet-1.pdf"]);
+  assert.deepEqual(fs.readdirSync(jobSidecar).sort(), ["upload-1.png", "upload-2.pdf"]);
+
+  // Restore into a fresh data dir rebuilds both live dirs byte-for-byte.
+  const restoredDataDir = makeTmpDir("otto-restored-");
+  const restoredCount = restoreAttachmentsFromBackup(backupFile, restoredDataDir);
+  assert.equal(restoredCount, 3);
+
+  assert.equal(
+    fs.readFileSync(path.join(restoredDataDir, "order-sheet-attachments", "sheet-1.pdf")).toString(),
+    "%PDF sheet\n",
+  );
+  assert.equal(
+    fs.readFileSync(path.join(restoredDataDir, "job-attachments", "upload-1.png")).toString(),
+    "PNG-bytes-1",
+  );
+  assert.equal(
+    fs.readFileSync(path.join(restoredDataDir, "job-attachments", "upload-2.pdf")).toString(),
+    "%PDF upload\n",
+  );
+
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  fs.rmSync(backupDir, { recursive: true, force: true });
+  fs.rmSync(restoredDataDir, { recursive: true, force: true });
+});
+
+test("removeAttachmentSidecar prunes BOTH sidecars", () => {
+  const dataDir = makeTmpDir("otto-data-");
+  const backupDir = makeTmpDir("otto-backup-dir-");
+  const backupFile = path.join(backupDir, "otto-backup-2026-06-16-080000-003.sqlite");
+  fs.writeFileSync(backupFile, "sqlite");
+
+  writePdf(path.join(dataDir, "order-sheet-attachments", "s.pdf"), "s");
+  writePdf(path.join(dataDir, "job-attachments", "u.pdf"), "u");
+  copyAttachmentsForBackup(backupFile, dataDir);
+
+  assert.equal(fs.existsSync(getAttachmentSidecarPath(backupFile, "attachments")), true);
+  assert.equal(fs.existsSync(getAttachmentSidecarPath(backupFile, "job-attachments")), true);
+
+  removeAttachmentSidecar(backupFile);
+
+  assert.equal(fs.existsSync(getAttachmentSidecarPath(backupFile, "attachments")), false);
+  assert.equal(fs.existsSync(getAttachmentSidecarPath(backupFile, "job-attachments")), false);
+
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  fs.rmSync(backupDir, { recursive: true, force: true });
+});
+
+test("job uploads restore even when there is no order-sheet sidecar", () => {
+  const dataDir = makeTmpDir("otto-data-");
+  const backupDir = makeTmpDir("otto-backup-dir-");
+  const backupFile = path.join(backupDir, "otto-backup-2026-06-16-080000-004.sqlite");
+  fs.writeFileSync(backupFile, "sqlite");
+
+  // Only uploads present at backup time (manual jobs, no automation).
+  writePdf(path.join(dataDir, "job-attachments", "only-upload.pdf"), "%PDF only\n");
+  const count = copyAttachmentsForBackup(backupFile, dataDir);
+  assert.equal(count, 1);
+  assert.equal(fs.existsSync(getAttachmentSidecarPath(backupFile, "attachments")), false);
+
+  const restoredDataDir = makeTmpDir("otto-restored-");
+  const restoredCount = restoreAttachmentsFromBackup(backupFile, restoredDataDir);
+  assert.equal(restoredCount, 1);
+  assert.equal(
+    fs.readFileSync(path.join(restoredDataDir, "job-attachments", "only-upload.pdf")).toString(),
+    "%PDF only\n",
+  );
+  // The (empty) order-sheet dir is still created for a consistent layout.
+  assert.equal(fs.existsSync(path.join(restoredDataDir, "order-sheet-attachments")), true);
+
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  fs.rmSync(backupDir, { recursive: true, force: true });
+  fs.rmSync(restoredDataDir, { recursive: true, force: true });
+});
