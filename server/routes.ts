@@ -4553,7 +4553,9 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       // one (decoded once, up top). Failure here is non-fatal — the
       // ledger row + auto-created job are already done, and a missing
       // attachment just means the details modal shows its "no preview
-      // was saved" fallback.
+      // was saved" fallback. Both branches log explicitly so users can
+      // confirm via startup.log when an auto-created job's ATTACHMENTS
+      // section ends up empty (no payload vs. write failure).
       if (attachmentBuffer) {
         try {
           record = await storage.saveOrderSheetAttachment(
@@ -4562,9 +4564,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
             attachmentExt,
             payload.attachmentPageCount,
           );
+          console.log(
+            `[order-sheets] attached ${attachmentBuffer.byteLength}B (${attachmentExt}) to ${record.fileName} → ${record.jobOrderId || "no job yet"}`,
+          );
         } catch (attachErr: any) {
           console.error("[order-sheets] failed to save attachment:", attachErr?.message || attachErr);
         }
+      } else {
+        console.warn(
+          `[order-sheets] no attachment payload for ${record.fileName} — modal will show "no preview was saved"`,
+        );
       }
 
       await logPhiAccess(req, "create", "order_sheet_import", record.id, record.jobOrderId || undefined, {

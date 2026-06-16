@@ -157,20 +157,21 @@ export function useOrderSheetIngestion() {
             const extracted = await bridge.orderSheetsExtract({ path: file.path });
 
             // Read the raw bytes so the server can store the original
-            // sheet as the viewable copy. The text gate keeps us from
-            // shipping bytes for files that already failed extraction
-            // (encrypted/broken PDFs, scanned-image-only sheets that
-            // the server is going to flag as failed anyway).
+            // sheet as the viewable copy. No text gate: we ALWAYS try to
+            // ship the bytes for any file the bridge can read, even one
+            // whose text extraction failed — that PDF still goes onto the
+            // job's ATTACHMENTS list so staff can see what came in, and
+            // dropping the bytes was a silent failure mode that left
+            // auto-created jobs with no attachment whenever any quirk
+            // (text gate, mis-classified PDF) tripped the old guard.
             let attachmentBase64: string | undefined;
             let attachmentExtension: string | undefined;
-            if (extracted.text && !extracted.extractError) {
-              const read = await bridge.orderSheetsReadBytes({ path: file.path });
-              if (read?.bytes && read.bytes.byteLength > 0 && read.bytes.byteLength <= ATTACHMENT_RAW_CAP_BYTES) {
-                attachmentBase64 = uint8ToBase64(read.bytes);
-                attachmentExtension = file.fileName.includes(".")
-                  ? file.fileName.split(".").pop()!.toLowerCase()
-                  : undefined;
-              }
+            const read = await bridge.orderSheetsReadBytes({ path: file.path });
+            if (read?.bytes && read.bytes.byteLength > 0 && read.bytes.byteLength <= ATTACHMENT_RAW_CAP_BYTES) {
+              attachmentBase64 = uint8ToBase64(read.bytes);
+              attachmentExtension = file.fileName.includes(".")
+                ? file.fileName.split(".").pop()!.toLowerCase()
+                : undefined;
             }
 
             const ingestRes = await apiRequest("POST", "/api/order-sheets/ingest", {
