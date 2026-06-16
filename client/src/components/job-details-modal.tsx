@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
@@ -13,10 +13,11 @@ import {
   Link2,
   Maximize2,
   MessageSquare,
+  Paperclip,
   Phone,
   Loader2,
   Save,
-  ScanLine,
+  Upload,
   Send,
   Share2,
   Star,
@@ -584,11 +585,13 @@ export default function JobDetailsModal({
     }
   })();
 
-  // Automation-created jobs carry a saved copy of the source order sheet.
-  // When present, the Overview tab grows a third column to host the PDF
-  // viewer (and the modal widens to fit) — manual jobs keep the original
-  // two-column layout.
-  const hasOrderSheet = (job as any).source === "order_sheet" && !!job.orderId;
+  // Every job gets a third Overview column for ATTACHMENTS — the auto-
+  // imported order sheet (when present) plus any documents staff upload
+  // (insurance cards, Rx scans, lab receipts…). The modal always widens to
+  // fit the column so the layout is identical across manual and
+  // automation-created jobs. orderId is the stable handle the section
+  // queries by (non-null on every job).
+  const canEdit = user?.role !== "view_only";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -600,9 +603,7 @@ export default function JobDetailsModal({
         hideClose
         className={cn(
           "h-[min(720px,calc(100vh-64px))] p-0 overflow-hidden flex flex-col gap-0",
-          hasOrderSheet
-            ? "max-w-[1140px] w-[min(1140px,calc(100vw-48px))]"
-            : "max-w-[1013px] w-[min(1013px,calc(100vw-48px))]",
+          "max-w-[1140px] w-[min(1140px,calc(100vw-48px))]",
         )}
         data-testid="dialog-job-details"
       >
@@ -738,12 +739,7 @@ export default function JobDetailsModal({
             value="overview"
             className="mt-0 flex-1 min-h-0 overflow-y-scroll px-6 py-5"
           >
-            <div
-              className={cn(
-                "grid grid-cols-1 gap-7",
-                hasOrderSheet ? "lg:grid-cols-[1fr_1fr_0.8fr]" : "lg:grid-cols-[1fr_1.15fr]",
-              )}
-            >
+            <div className="grid grid-cols-1 gap-7 lg:grid-cols-[1fr_1fr_0.8fr]">
               {/* Left column: Patient & Order, Custom fields, Notes */}
               <div>
                 <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
@@ -941,15 +937,13 @@ export default function JobDetailsModal({
                 </div>
               </div>
 
-              {/* Third column — the saved order sheet (automation-created
-                  jobs only). Promoted to its own column so the source
-                  document is visible at a glance, not buried below
-                  Notes. */}
-              {hasOrderSheet && (
-                <div className="min-w-0">
-                  <OrderSheetAttachmentSection orderId={job.orderId} />
-                </div>
-              )}
+              {/* Third column — ATTACHMENTS: the saved order sheet (when
+                  the job came from automation) plus any documents staff
+                  upload. Its own column so the source paperwork is visible
+                  at a glance, not buried below Notes. */}
+              <div className="min-w-0">
+                <AttachmentsSection orderId={job.orderId} canEdit={canEdit} />
+              </div>
             </div>
           </TabsContent>
 
@@ -1391,202 +1385,334 @@ export default function JobDetailsModal({
   );
 }
 
-// Inline view of the order sheet attached to an automation-created job.
+// One row returned by GET /api/jobs/by-order-id/:orderId/attachments —
+// the auto-imported order sheet (kind "order_sheet", not deletable) and
+// any user uploads (kind "upload", deletable) unified into one list.
+type AttachmentItem = {
+  id: string;
+  kind: "order_sheet" | "upload";
+  fileName: string;
+  ext: string;
+  mimeType: string | null;
+  size: number | null;
+  pageCount?: number | null;
+  inline?: boolean;
+  deletable: boolean;
+  fileUrl: string;
+  createdAt?: number | string | null;
+};
+
+// Mirror the server's allowlist + 25MB cap so the user gets an instant
+// client-side rejection instead of a round-trip 4xx.
+const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const ATTACHMENT_ACCEPT =
+  ".pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.txt,.csv,.rtf,.doc,.docx,.xls,.xlsx,image/*,application/pdf";
+
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
+const isImageExt = (ext: string) => IMAGE_EXTS.has(ext.toLowerCase());
+
+function formatAttachmentSize(bytes: number | null | undefined): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// btoa chokes on big arrays via the argument-list cap, so chunk through it
+// (same trick the order-sheet ingest hook uses).
+function attachmentBytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x4000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+  }
+  return btoa(binary);
+}
+
+// ATTACHMENTS column for every job: the auto-imported order sheet (when
+// the job came from automation) plus documents staff upload — insurance
+// cards, Rx scans, lab receipts. Lookup is by the stable orderId so it
+// resolves for active jobs; the order sheet drops off once archived (its
+// file is deleted to keep storage bounded), but uploads persist.
 //
-// We do NOT rasterize the PDF in the renderer. The desktop app ships an
-// older Electron than current browsers (Chromium 122 vs ~148), and
-// pdf.js's in-renderer rendering is unreliable there — the panel sat on
-// "Loading sheet..." forever in the Mac app. Instead this is a small,
-// instant tile that opens the real file in the OS's own PDF viewer
-// (Preview / Acrobat / Edge) — reliable on Mac and Windows regardless of
-// the bundled Chromium, and a better read than an in-app canvas anyway.
-// Text sheets (rare) keep a genuine inline preview since rendering text
-// needs no PDF engine.
-//
-// Lookup is by stable orderId so this resolves for active jobs; archived
-// jobs deliberately show the "no preview" fallback because the file is
-// deleted to keep storage bounded by the active worklist.
-function OrderSheetAttachmentSection({ orderId }: { orderId: string }) {
-  const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
-  const [isText, setIsText] = useState(false);
-  const [textContent, setTextContent] = useState<string | null>(null);
-  const [enlarged, setEnlarged] = useState(false);
-  const fileUrl = `/api/jobs/by-order-id/${encodeURIComponent(orderId)}/order-sheet-file`;
+// Files are NOT rasterized in the renderer (the desktop app's Electron 29
+// / Chromium 122 can't drive pdf.js reliably). PDFs and documents open in
+// the OS's own viewer via the desktop bridge — reliable on Mac and Windows
+// — or a new browser tab on the web. Images preview inline and enlarge in
+// an in-app lightbox, which needs no PDF engine.
+function AttachmentsSection({ orderId, canEdit }: { orderId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [enlarged, setEnlarged] = useState<AttachmentItem | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AttachmentItem | null>(null);
+  const [uploading, setUploading] = useState(false);
+
   const bridge = (window as any)?.otto;
   const canOpenExternally = typeof bridge?.orderSheetsOpenExternal === "function";
-  const openLabel = canOpenExternally ? "Open in PDF viewer" : "Open in new tab";
 
-  // Cheap existence + type probe (Express answers HEAD for GET routes), so
-  // we never download the whole PDF just to show the tile.
-  useEffect(() => {
-    let disposed = false;
-    setState("loading");
-    setIsText(false);
-    setTextContent(null);
-    (async () => {
-      try {
-        const res = await fetch(fileUrl, { method: "HEAD", credentials: "include" });
-        if (!res.ok) {
-          if (!disposed) setState("missing");
-          return;
-        }
-        if (!disposed) {
-          setIsText((res.headers.get("content-type") || "").startsWith("text/"));
-          setState("ready");
-        }
-      } catch {
-        if (!disposed) setState("missing");
-      }
-    })();
-    return () => {
-      disposed = true;
-    };
-  }, [fileUrl]);
+  const listKey = ["/api/jobs/by-order-id", orderId, "attachments"] as const;
+  const { data, isLoading } = useQuery({
+    queryKey: listKey,
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/jobs/by-order-id/${encodeURIComponent(orderId)}/attachments`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error("Failed to load attachments");
+      return (await res.json()) as { attachments: AttachmentItem[] };
+    },
+  });
+  const attachments = data?.attachments ?? [];
 
-  // Text sheets get a real inline preview — no PDF engine involved.
-  useEffect(() => {
-    if (state !== "ready" || !isText) return;
-    let disposed = false;
-    (async () => {
-      try {
-        const res = await fetch(fileUrl, { credentials: "include" });
-        if (res.ok && !disposed) setTextContent(await res.text());
-      } catch {
-        /* leave null — the tile still opens externally */
-      }
-    })();
-    return () => {
-      disposed = true;
-    };
-  }, [state, isText, fileUrl]);
-
-  // Esc closes the text lightbox.
+  // Esc closes the image lightbox.
   useEffect(() => {
     if (!enlarged) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setEnlarged(false);
+      if (e.key === "Escape") setEnlarged(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [enlarged]);
 
-  const openSheet = async () => {
+  // Open a non-image file: hand the bytes to the OS viewer in the desktop
+  // app, else fall back to a new browser tab.
+  const openFile = async (item: AttachmentItem) => {
     if (canOpenExternally) {
       try {
-        const res = await fetch(fileUrl, { credentials: "include" });
+        const res = await fetch(item.fileUrl, { credentials: "include" });
         if (res.ok) {
           const bytes = new Uint8Array(await res.arrayBuffer());
-          const result = await bridge.orderSheetsOpenExternal({
-            bytes,
-            fileName: `${orderId}${isText ? ".txt" : ".pdf"}`,
-          });
+          const result = await bridge.orderSheetsOpenExternal({ bytes, fileName: item.fileName });
           if (!result?.error) return;
         }
       } catch {
         /* fall through to the browser path */
       }
     }
-    window.open(fileUrl, "_blank", "noreferrer");
+    window.open(item.fileUrl, "_blank", "noreferrer");
+  };
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    let succeeded = 0;
+    for (const file of Array.from(files)) {
+      if (file.size === 0) {
+        toast({ title: "Empty file skipped", description: file.name, variant: "destructive" });
+        continue;
+      }
+      if (file.size > ATTACHMENT_MAX_BYTES) {
+        toast({
+          title: "File too large",
+          description: `${file.name} exceeds the 25 MB limit.`,
+          variant: "destructive",
+        });
+        continue;
+      }
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const ext = (file.name.split(".").pop() || "").toLowerCase();
+        await apiRequest("POST", `/api/jobs/by-order-id/${encodeURIComponent(orderId)}/attachments`, {
+          fileName: file.name,
+          fileBase64: attachmentBytesToBase64(bytes),
+          ext,
+          mimeType: file.type || undefined,
+        });
+        succeeded += 1;
+      } catch (err: any) {
+        toast({
+          title: "Upload failed",
+          description: `${file.name}: ${err?.message || "Unknown error"}`,
+          variant: "destructive",
+        });
+      }
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (succeeded > 0) {
+      await queryClient.invalidateQueries({ queryKey: listKey });
+      toast({ title: succeeded === 1 ? "Attachment added" : `${succeeded} attachments added` });
+    }
+  };
+
+  const confirmDelete = async () => {
+    const item = pendingDelete;
+    if (!item) return;
+    setPendingDelete(null);
+    try {
+      await apiRequest(
+        "DELETE",
+        `/api/jobs/by-order-id/${encodeURIComponent(orderId)}/attachments/${item.id}`,
+      );
+      await queryClient.invalidateQueries({ queryKey: listKey });
+      toast({ title: "Attachment removed" });
+    } catch (err: any) {
+      toast({ title: "Couldn't remove attachment", description: err?.message, variant: "destructive" });
+    }
   };
 
   return (
-    <div className="flex flex-col min-h-0" data-testid="section-order-sheet-attachment">
+    <div className="flex flex-col min-h-0" data-testid="section-attachments">
       <h4 className="flex items-center gap-1.5 text-[calc(10.5px*var(--ui-scale))] font-semibold uppercase tracking-[0.10em] text-ink-mute mb-3">
-        <ScanLine className="h-3 w-3" aria-hidden />
-        Order Sheet
+        <Paperclip className="h-3 w-3" aria-hidden />
+        Attachments
       </h4>
 
-      {state === "loading" && (
+      {isLoading ? (
         <div className="flex items-center gap-2 text-[calc(12.5px*var(--ui-scale))] text-ink-mute">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Checking for sheet...
+          Loading attachments...
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {attachments.length === 0 && (
+            <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute m-0">
+              {canEdit ? "No attachments yet. Add documents below." : "No attachments."}
+            </p>
+          )}
+
+          {attachments.map((item) => {
+            const image = isImageExt(item.ext);
+            const sizeLabel = formatAttachmentSize(item.size);
+            const isSheet = item.kind === "order_sheet";
+            // Images preview inline + enlarge in-app; everything else opens
+            // in the OS viewer / a new tab.
+            const onOpen = () => (image ? setEnlarged(item) : void openFile(item));
+            return (
+              <div
+                key={item.id}
+                className="group relative flex items-center gap-3 rounded-lg border border-line bg-paper-2 p-2.5 hover:border-otto-accent-line"
+                data-testid={`attachment-${item.kind}-${item.id}`}
+              >
+                <button
+                  type="button"
+                  onClick={onOpen}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left focus-visible:outline-none"
+                  title={item.fileName}
+                >
+                  {image ? (
+                    <span className="h-10 w-10 shrink-0 overflow-hidden rounded-md border border-line bg-white">
+                      <img src={item.fileUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    </span>
+                  ) : (
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-otto-accent-soft text-otto-accent-ink">
+                      <FileText className="h-5 w-5" aria-hidden />
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[calc(12.5px*var(--ui-scale))] font-medium text-ink">
+                      {isSheet ? "Order sheet" : item.fileName}
+                    </span>
+                    <span className="block text-[calc(10.5px*var(--ui-scale))] text-ink-mute">
+                      {isSheet ? "From automation" : item.ext.toUpperCase()}
+                      {sizeLabel ? ` · ${sizeLabel}` : ""}
+                    </span>
+                  </span>
+                  {image ? (
+                    <Maximize2 className="h-4 w-4 shrink-0 text-ink-mute group-hover:text-otto-accent-ink" aria-hidden />
+                  ) : (
+                    <ExternalLink className="h-4 w-4 shrink-0 text-ink-mute group-hover:text-otto-accent-ink" aria-hidden />
+                  )}
+                </button>
+                {canEdit && item.deletable && (
+                  <button
+                    type="button"
+                    onClick={() => setPendingDelete(item)}
+                    aria-label={`Remove ${item.fileName}`}
+                    className="shrink-0 rounded p-1 text-ink-mute hover:bg-danger-bg hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    data-testid={`button-attachment-delete-${item.id}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          {canEdit && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ATTACHMENT_ACCEPT}
+                className="hidden"
+                onChange={(e) => void handleFiles(e.target.files)}
+                data-testid="input-attachment-upload"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="mt-1 flex items-center justify-center gap-2 rounded-lg border border-dashed border-line py-2.5 text-[calc(12px*var(--ui-scale))] font-medium text-ink-mute hover:border-otto-accent-line hover:text-otto-accent-ink disabled:opacity-60"
+                data-testid="button-attachment-add"
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-3.5 w-3.5" aria-hidden />
+                    Add files
+                  </>
+                )}
+              </button>
+            </>
+          )}
         </div>
       )}
 
-      {state === "missing" && (
-        <p className="text-[calc(12.5px*var(--ui-scale))] text-ink-mute m-0">
-          No preview was saved for this sheet. The original file is in the watched folder on the
-          computer that imported it.
-        </p>
-      )}
-
-      {/* PDF (the common case): an instant, reliable tile that opens the
-          real file in the OS viewer. No in-renderer rasterization. */}
-      {state === "ready" && !isText && (
-        <button
-          type="button"
-          onClick={() => void openSheet()}
-          className="group flex w-full items-center gap-3 rounded-lg border border-line bg-paper-2 p-3 text-left hover:border-otto-accent-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          data-testid="button-order-sheet-open"
-        >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-otto-accent-soft text-otto-accent-ink">
-            <FileText className="h-5 w-5" aria-hidden />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[calc(13px*var(--ui-scale))] font-medium text-ink">Order sheet (PDF)</span>
-            <span className="block text-[calc(11px*var(--ui-scale))] text-ink-mute">{openLabel}</span>
-          </span>
-          <ExternalLink className="h-4 w-4 shrink-0 text-ink-mute group-hover:text-otto-accent-ink" aria-hidden />
-        </button>
-      )}
-
-      {/* Text sheet: genuine inline preview, click to enlarge in-app. */}
-      {state === "ready" && isText && (
-        <>
-          <button
-            type="button"
-            onClick={() => setEnlarged(true)}
-            className="group relative block w-full overflow-hidden rounded-lg border border-line bg-paper-2 p-2 text-left hover:border-otto-accent-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            data-testid="button-order-sheet-enlarge"
-          >
-            <pre className="max-h-[200px] overflow-hidden rounded bg-white p-2 text-[calc(9.5px*var(--ui-scale))] leading-snug text-ink-2 whitespace-pre-wrap">
-              {textContent ?? "Loading..."}
-            </pre>
-            <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
-              <span className="flex items-center gap-1 rounded-full bg-white/95 px-2 py-1 text-[calc(10.5px*var(--ui-scale))] font-medium text-ink shadow-sm">
-                <Maximize2 className="h-3 w-3" aria-hidden />
-                Click to enlarge
-              </span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void openSheet()}
-            className="mt-1.5 self-start text-[calc(10.5px*var(--ui-scale))] text-otto-accent-ink hover:text-otto-accent-strong"
-            data-testid="link-order-sheet-open"
-          >
-            {openLabel}
-          </button>
-        </>
-      )}
-
-      {enlarged && textContent !== null &&
+      {enlarged &&
         createPortal(
           <div
             className="fixed inset-0 z-[200] flex flex-col bg-ink/80 backdrop-blur-sm"
-            onClick={() => setEnlarged(false)}
-            data-testid="order-sheet-lightbox"
+            onClick={() => setEnlarged(null)}
+            data-testid="attachment-lightbox"
           >
             <div className="flex items-center justify-between gap-3 px-4 py-3 text-white">
-              <span className="text-sm font-medium">Order sheet</span>
+              <span className="truncate text-sm font-medium">{enlarged.fileName}</span>
               <button
                 type="button"
-                onClick={() => setEnlarged(false)}
+                onClick={() => setEnlarged(null)}
                 aria-label="Close"
                 className="rounded p-1 text-white/90 hover:bg-white/10 hover:text-white"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <pre
-              className="mx-auto w-full max-w-[820px] flex-1 overflow-auto rounded-lg bg-white p-5 text-[calc(13px*var(--ui-scale))] leading-relaxed whitespace-pre-wrap"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {textContent}
-            </pre>
+            <div className="flex flex-1 items-center justify-center overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
+              <img
+                src={enlarged.fileUrl}
+                alt={enlarged.fileName}
+                className="max-h-full max-w-full rounded-lg object-contain"
+              />
+            </div>
           </div>,
           document.body,
         )}
+
+      <AlertDialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove attachment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{pendingDelete?.fileName}" will be permanently deleted from this job. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void confirmDelete()}
+              className="bg-danger text-white hover:bg-danger/90"
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
