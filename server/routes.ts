@@ -4522,14 +4522,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
               orderDestination: fields.destinationId,
               notes: fields.notes || null,
               source: "order_sheet",
-              ...(orderDate ? { statusChangedAt: orderDate } : {}),
               officeId: user.officeId,
               createdBy: user.id,
             });
-            // insertJobSchema strips createdAt (manual creates are always
-            // "now"), but the sheet carries the real order date — thread
-            // it through the same way the CSV importer does, so a Friday
-            // order processed on Monday ages correctly for overdue rules.
+            // Backdate `createdAt` to the sheet's order date so the worklist
+            // shows when the order was actually placed — but leave
+            // `statusChangedAt` to default to NOW (the moment Otto recorded
+            // the status). That way "Last Updated" / "Days in status" reflect
+            // when this computer added the job, not the EHR's order date.
+            // Without that split, a Friday order ingested on Monday would
+            // appear as "Last Updated last Friday" the instant it landed.
             const jobValues = orderDate ? ({ ...jobData, createdAt: orderDate } as typeof jobData) : jobData;
             createdJob = await storage.createJob(jobValues);
             record = await storage.updateOrderSheetImport(record.id, {
