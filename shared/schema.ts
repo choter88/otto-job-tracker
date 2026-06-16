@@ -615,6 +615,38 @@ export const orderSheetTemplates = sqliteTable(
   }),
 );
 
+// User-uploaded job attachments — documents staff attach to a job
+// (insurance cards, Rx scans, lab receipts, etc.). Separate from the
+// auto-imported order sheet (which lives on order_sheet_imports and is
+// managed by the automation): the job modal's ATTACHMENTS section unions
+// the two. Keyed by the stable jobOrderId (the ORD-… number that's
+// identical on active and archived rows), so an attachment stays resolvable
+// after a job is archived — uploads are kept through archive and removed
+// only when the order is permanently deleted. The file lives on disk at
+// <data>/job-attachments/<id>.<ext> (0600); only its relative path is on
+// the row.
+export const jobAttachments = sqliteTable(
+  "job_attachments",
+  {
+    id: text("id").primaryKey(),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    // Stable ORD-… handle, NOT jobs.id (which changes on archive).
+    jobOrderId: text("job_order_id").notNull(),
+    fileName: text("file_name").notNull(),
+    // Lowercase extension without the dot (pdf, png, …); drives the served
+    // mime type and the open-in-viewer flow.
+    ext: text("ext").notNull(),
+    mimeType: text("mime_type"),
+    size: integer("size"),
+    attachmentPath: text("attachment_path").notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    officeOrderIdx: index("job_attachments_office_order_idx").on(table.officeId, table.jobOrderId),
+  }),
+);
+
 // Relations
 export const userRelations = relations(users, ({ one, many }) => ({
   office: one(offices, {
@@ -807,6 +839,7 @@ export type OrderSheetImport = typeof orderSheetImports.$inferSelect;
 export type InsertOrderSheetImport = z.infer<typeof insertOrderSheetImportSchema>;
 export type OrderSheetWatcher = typeof orderSheetWatchers.$inferSelect;
 export type OrderSheetTemplate = typeof orderSheetTemplates.$inferSelect;
+export type JobAttachment = typeof jobAttachments.$inferSelect;
 export type PinResetRequest = typeof pinResetRequests.$inferSelect;
 
 // Custom type for PIN reset request with user details (returned by API)
