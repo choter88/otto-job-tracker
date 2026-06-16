@@ -237,6 +237,7 @@ export interface IStorage {
   deleteJobAttachment(officeId: string, id: string): Promise<boolean>;
   deleteJobAttachmentsByOrderId(officeId: string, jobOrderId: string): Promise<void>;
   orderIdExistsInOffice(officeId: string, orderId: string): Promise<boolean>;
+  getActiveJobIdByOrderId(officeId: string, orderId: string): Promise<string | null>;
 
   // Order-sheet watcher presence (heartbeats from each watching computer)
   upsertOrderSheetWatcher(record: {
@@ -2189,6 +2190,20 @@ export class DatabaseStorage implements IStorage {
 
   // True if the ORD-… handle names a real order in this office, active OR
   // archived. Gate for the attachment-upload route so a caller can't seed
+  // Return the active job's UUID for an orderId in this office, or null
+  // if no active job matches. Used by the attachments union endpoint as a
+  // jobOrderId-fallback path: an order_sheet_imports row whose jobOrderId
+  // column wasn't set (rare edge case or a partial-write race) can still
+  // be found via its jobId once we resolve the orderId → job.id mapping.
+  async getActiveJobIdByOrderId(officeId: string, orderId: string): Promise<string | null> {
+    const [row] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.officeId, officeId), eq(jobs.orderId, orderId)))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
   // orphan rows for arbitrary ids. Active and archived share the orderId.
   async orderIdExistsInOffice(officeId: string, orderId: string): Promise<boolean> {
     const [active] = await db

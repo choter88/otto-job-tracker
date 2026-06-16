@@ -4699,10 +4699,15 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       const orderId = String(req.params.orderId || "").trim();
       if (!orderId) return res.status(400).json({ error: "orderId is required" });
 
-      const record = await storage.getOrderSheetImportByJobOrderId(
-        getOfficeUser(req).officeId,
-        orderId,
-      );
+      const officeId = getOfficeUser(req).officeId;
+      // Same fallback as the attachments-union endpoint: primary lookup is
+      // by jobOrderId, but fall back to resolving orderId → jobId → sheet
+      // so a row whose jobOrderId column is missing still serves its file.
+      let record = await storage.getOrderSheetImportByJobOrderId(officeId, orderId);
+      if (!record) {
+        const jobId = await storage.getActiveJobIdByOrderId(officeId, orderId);
+        if (jobId) record = await storage.getOrderSheetImportByJobId(jobId);
+      }
       if (!record) return res.status(404).json({ error: "No attached order sheet for this job" });
 
       const absolutePath = storage.resolveOrderSheetAttachmentPath(record);
@@ -4838,7 +4843,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       // The auto-imported order sheet, if its file is still on disk (it's
       // unlinked on archive, so this naturally drops off once archived).
-      const sheet = await storage.getOrderSheetImportByJobOrderId(officeId, orderId);
+      // Primary lookup is by jobOrderId — what the ingest + review-create
+      // paths set. As a defensive fallback we ALSO check by jobId after
+      // resolving the orderId to a job UUID: if jobOrderId somehow ended
+      // up missing on a row whose jobId IS set, the sheet still surfaces
+      // here so the modal isn't silently empty.
+      let sheet = await storage.getOrderSheetImportByJobOrderId(officeId, orderId);
+      if (!sheet) {
+        const jobId = await storage.getActiveJobIdByOrderId(officeId, orderId);
+        if (jobId) sheet = await storage.getOrderSheetImportByJobId(jobId);
+      }
       if (sheet?.attachmentPath) {
         const sheetExt = (sheet.attachmentPath.split(".").pop() || "pdf").toLowerCase();
         items.push({
