@@ -1,6 +1,6 @@
 // Sentry must be initialized before all other imports to capture early errors.
 import { initSentryMain, setSentryAppMode, Sentry } from "./lib/sentry.js";
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage, screen, shell } from "electron";
+import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMain, nativeImage, safeStorage, screen, shell } from "electron";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -106,6 +106,8 @@ import {
   setAppMenu as setAppMenuRaw,
 } from "./lib/menu.js";
 
+import { isAlwaysOnHostCapable, isAlwaysOnHostActive } from "./lib/always-on.js";
+
 import { createOrderSheetWatcher } from "./lib/order-sheet-watcher.js";
 
 // --- Constants ---
@@ -135,6 +137,11 @@ let backupWarningShown = false;
 let mainWindow = null;
 let setupWindow = null;
 let orderSheetWatcher = null;
+// Always-on host (Workstream A). tray is created only when always-on is active
+// (Host mode + OTTO_ALWAYS_ON_HOST capability + not opted out); it stays null in
+// production so nothing changes there.
+let tray = null;
+let hiddenToTrayNoticeShown = false;
 let appReadyForOpenEvents = false;
 const pendingOpenUrls = [];
 const pendingOpenFiles = [];
@@ -473,6 +480,7 @@ function _createWindow(targetUrl, config) {
     registerTlsTrustForWindow,
     setupNoInternetNetworkGuard,
     createSetupWindow: _createSetupWindow,
+    handleMainWindowClose: _handleMainWindowClose,
   });
 }
 
@@ -543,6 +551,199 @@ function _setAppMenu(config) {
     checkForUpdates: _checkForUpdates,
     installUpdate: _installUpdate,
     getUpdateState,
+    alwaysOnHostCapable: isAlwaysOnHostCapable(),
+    alwaysOnHostEnabled: isAlwaysOnHostActive(config),
+    toggleAlwaysOnHost: _toggleAlwaysOnHost,
+    showUnattendedHostGuide: _showUnattendedHostGuide,
+  });
+}
+
+// --- Always-on host (Workstream A) ---
+//
+// All of the functions below are gated on isAlwaysOnHostActive(): when the
+// OTTO_ALWAYS_ON_HOST capability is unset (production), the gate is false, the
+// tray is never created, login items are never touched, and window/quit
+// behavior is unchanged.
+
+// Register (or clear) the per-user "open at login" item so the office machine
+// comes back up as the Host after a reboot or power blip. No elevation: macOS
+// uses a Login Item, Windows an HKCU Run entry. Idempotent so a user who turns
+// it off manually is not fought.
+function _reconcileLoginItem(config) {
+  if (!app.isPackaged) return; // never touch real login items in dev
+  if (!isAlwaysOnHostCapable()) return; // dark-shipped: stay completely inert
+  const shouldOpenAtLogin = isAlwaysOnHostActive(config);
+  try {
+    const current = app.getLoginItemSettings();
+    if (current.openAtLogin !== shouldOpenAtLogin) {
+      app.setLoginItemSettings({
+        openAtLogin: shouldOpenAtLogin,
+        openAsHidden: process.platform === "darwin",
+      });
+    }
+  } catch (error) {
+    _logStartup("Failed to reconcile login item", error);
+  }
+}
+
+// Build the tray context menu, including a live workstation count so the office
+// can glance at the menu-bar icon and see the server is up.
+function _updateTrayMenu() {
+  if (!tray) return;
+  let count = 0;
+  try {
+    const getCount = globalThis.__ottoGetConnectedClientCount;
+    if (typeof getCount === "function") count = getCount();
+  } catch {
+    count = 0;
+  }
+  const status = `${count} workstation${count !== 1 ? "s" : ""} connected`;
+  const menu = Menu.buildFromTemplate([
+    { label: "Open Otto", click: () => _showMainWindow() },
+    { type: "separator" },
+    { label: "Otto server is running", enabled: false },
+    { label: status, enabled: false },
+    { type: "separator" },
+    { label: "Quit Otto (take office offline)", click: () => _quitFromTray() },
+  ]);
+  tray.setContextMenu(menu);
+}
+
+// Create the tray icon. Returns the Tray or null if it could not be created;
+// callers must treat null as "no tray" and NOT trap the user behind a hidden
+// window (close-to-tray only engages when a tray exists).
+function createTray() {
+  if (tray) return tray;
+  try {
+    let image = nativeImage.createFromPath(path.join(__dirname, "assets", "tray-icon.png"));
+    if (image.isEmpty()) {
+      _logStartup("Tray icon image is empty; skipping tray");
+      return null;
+    }
+    if (process.platform === "darwin") {
+      image = image.resize({ width: 18, height: 18 });
+    }
+    tray = new Tray(image);
+    tray.setToolTip("Otto Tracker — office server");
+    _updateTrayMenu();
+    // On Windows a single click is the expected "reopen" gesture; on macOS the
+    // left-click opens the context menu, so wire double-click as a reopen too.
+    tray.on("click", () => _showMainWindow());
+    tray.on("double-click", () => _showMainWindow());
+    return tray;
+  } catch (error) {
+    _logStartup("Failed to create tray", error);
+    tray = null;
+    return null;
+  }
+}
+
+function _destroyTray() {
+  try {
+    if (tray) tray.destroy();
+  } catch {
+    // best-effort
+  }
+  tray = null;
+}
+
+function _showMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    if (process.platform === "darwin") app.dock?.show?.();
+    mainWindow.focus();
+    return;
+  }
+  // The window was destroyed (not just hidden) — relaunch it from config.
+  try {
+    const config = _readConfig();
+    void launchMainWindowForConfig(config, { showBootWindow: false });
+  } catch (error) {
+    _logStartup("Failed to reopen main window from tray", error);
+  }
+}
+
+function _quitFromTray() {
+  // Route through the normal before-quit teardown (client-connected warning +
+  // shutdown backup). __ottoQuitting tells the close interceptor this is a real
+  // quit, not a window-close-to-tray.
+  app.__ottoQuitting = true;
+  app.quit();
+}
+
+// One-shot reassurance the first time the window hides to the tray, so a
+// non-technical user doesn't think they closed (and broke) the office server.
+function _maybeShowHiddenToTrayNotice() {
+  if (hiddenToTrayNoticeShown) return;
+  hiddenToTrayNoticeShown = true;
+  try {
+    if (Notification.isSupported && !Notification.isSupported()) return;
+    new Notification({
+      title: "Otto is still running",
+      body: "Workstations stay connected. Click the Otto icon in the menu bar / taskbar to reopen this window.",
+    }).show();
+  } catch {
+    // notifications are best-effort
+  }
+}
+
+// Called from the main window's "close" event (wired via createWindow). Returns
+// true if it handled the close by hiding to tray; false to let the close
+// proceed normally (production, client mode, real quit, or no usable tray).
+function _handleMainWindowClose(event, win) {
+  if (app.__ottoQuitting) return false; // a real quit is in progress
+  let active = false;
+  try {
+    active = isAlwaysOnHostActive(_readConfig());
+  } catch {
+    active = false;
+  }
+  if (!active) return false;
+  // No tray means no way to reopen — never trap the user behind a hidden
+  // window; fall back to a normal close instead.
+  if (!tray) return false;
+  event.preventDefault();
+  win.hide();
+  if (process.platform === "darwin") app.dock?.hide?.();
+  _updateTrayMenu();
+  _maybeShowHiddenToTrayNotice();
+  return true;
+}
+
+// Host menu toggle: flip this machine's always-on preference and apply it live.
+function _toggleAlwaysOnHost() {
+  try {
+    const config = _readConfig();
+    const next = !isAlwaysOnHostActive(config);
+    config.alwaysOnHost = next;
+    _writeConfig(config);
+    _reconcileLoginItem(config);
+    if (next) {
+      createTray();
+    } else {
+      _destroyTray();
+    }
+    _setAppMenu(config);
+  } catch (error) {
+    _logStartup("Failed to toggle always-on host", error);
+  }
+}
+
+function _showUnattendedHostGuide() {
+  const isMac = process.platform === "darwin";
+  const steps = isMac
+    ? "1. Open System Settings → Users & Groups.\n2. Set “Automatically log in as” to this computer’s user.\n3. Set the display to never sleep (System Settings → Displays / Battery)."
+    : "1. Press Win+R, type netplwiz, press Enter.\n2. Uncheck “Users must enter a user name and password,” click OK, then enter the password.\n3. Set the power plan to never sleep (Settings → System → Power).";
+  dialog.showMessageBox({
+    type: "info",
+    title: "Set Up an Unattended Host",
+    message: "Keep this computer serving Otto even when no one is signed in.",
+    detail:
+      "For a back-office computer that nobody uses directly:\n\n" +
+      steps +
+      "\n\nWith those set, this computer starts Otto automatically and keeps workstations connected without anyone logging in.",
+    buttons: ["OK"],
   });
 }
 
@@ -2820,6 +3021,15 @@ app.whenReady().then(async () => {
   setSentryAppMode(config.mode || "unknown");
   await launchMainWindowForConfig(config, { showBootWindow: true });
 
+  // Always-on host (Workstream A): keep the office machine coming back up as the
+  // Host after a reboot, and put a tray icon up so closing the window hides
+  // instead of taking the office offline. Both are inert unless the
+  // OTTO_ALWAYS_ON_HOST capability is enabled and this machine is a Host.
+  _reconcileLoginItem(config);
+  if (isAlwaysOnHostActive(config)) {
+    createTray();
+  }
+
   // Start silent auto-update checks (no-ops in dev / unpackaged mode).
   initAutoUpdater();
 
@@ -2867,7 +3077,16 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform === "darwin") return;
+  // Always-on host: keep the embedded server alive (and the office online) even
+  // when every window is gone. In production (capability off) this is false and
+  // the app quits on last-window-close exactly as before.
+  try {
+    if (!app.__ottoQuitting && isAlwaysOnHostActive(_readConfig())) return;
+  } catch {
+    // fall through to the default quit
+  }
+  app.quit();
 });
 
 /**
@@ -2947,8 +3166,10 @@ app.on("before-quit", async (event) => {
         });
         if (response !== 0) {
           // User canceled — leave auto-updater running and let the app
-          // continue normally.
+          // continue normally. Clear the quit flag so a later window-close
+          // hides to tray again instead of being treated as a real quit.
           beforeQuitInProgress = false;
+          app.__ottoQuitting = false;
           return;
         }
       } else {
@@ -2962,7 +3183,9 @@ app.on("before-quit", async (event) => {
     // proceed with quit
   }
 
-  // We're committed to quitting — safe to stop the auto-updater now.
+  // We're committed to quitting — mark it so the close interceptor and
+  // window-all-closed treat this as a real quit, and stop the auto-updater.
+  app.__ottoQuitting = true;
   stopAutoUpdater();
 
   if (isHost) {

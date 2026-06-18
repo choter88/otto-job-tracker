@@ -130,7 +130,7 @@ export function setMainWindowMinWidth(win, widthInput) {
   return { ok: true, minWidth: nextMinWidth, maxWidth: displayWidth };
 }
 
-export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLAY_NAME, setMainWindow, setupContextMenu, registerTlsTrustForWindow, setupNoInternetNetworkGuard, createSetupWindow }) {
+export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLAY_NAME, setMainWindow, setupContextMenu, registerTlsTrustForWindow, setupNoInternetNetworkGuard, createSetupWindow, handleMainWindowClose }) {
   const isClient = config.mode === "client";
   const baselineSize = getMainWindowBaselineSize();
 
@@ -154,6 +154,18 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
   });
 
   setMainWindow(win);
+  // Always-on host: give the owner a chance to hide-to-tray instead of closing.
+  // When handleMainWindowClose returns false (production, client mode, real
+  // quit, or no tray) the close proceeds normally — unchanged behavior.
+  if (typeof handleMainWindowClose === "function") {
+    win.on("close", (event) => {
+      try {
+        handleMainWindowClose(event, win);
+      } catch {
+        // never let a close-handler error trap the window
+      }
+    });
+  }
   win.on("closed", () => {
     setMainWindow(null, win);
   });
