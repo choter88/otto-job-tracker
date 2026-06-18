@@ -3,10 +3,11 @@
 // Deliberately Electron-free (plain logic only) so it is unit-testable and so
 // the gate can be reasoned about in one place. Two layers:
 //
-//   1. Capability — the dark-ship master switch. OTTO_ALWAYS_ON_HOST must be
-//      "true" for ANY always-on behavior to exist. Unset (the production
-//      default) means every always-on code path is inert and the app behaves
-//      byte-for-byte as before: quit-on-close, no login item, no tray.
+//   1. Capability — OTTO_ALWAYS_ON_HOST must be "true" for ANY always-on
+//      behavior to exist. The app turns this ON by default for installed builds
+//      (applyOfflineDefaults), so the gate is normally satisfied; setting
+//      OTTO_ALWAYS_ON_HOST=false opts a whole build out and makes every
+//      always-on code path inert (quit-on-close, no login item, no tray).
 //   2. Per-machine preference — once capable, the behavior is ON for a Host by
 //      default and a user can opt this machine out via the Host menu, which
 //      writes config.alwaysOnHost = false. A shared front-desk machine can thus

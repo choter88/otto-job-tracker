@@ -171,6 +171,9 @@ export function applyOfflineDefaults(app) {
   if (!process.env.OTTO_LISTEN_HOST) process.env.OTTO_LISTEN_HOST = "0.0.0.0";
   if (!process.env.OTTO_AIRGAP) process.env.OTTO_AIRGAP = "true";
   if (!process.env.OTTO_LAN_ONLY) process.env.OTTO_LAN_ONLY = "true";
+  // Always-on host (Workstream A) is ON by default. Set OTTO_ALWAYS_ON_HOST=false
+  // to opt a whole build out, or use the Host menu to opt a single machine out.
+  if (!process.env.OTTO_ALWAYS_ON_HOST) process.env.OTTO_ALWAYS_ON_HOST = "true";
   if (!process.env.OTTO_DATA_DIR) process.env.OTTO_DATA_DIR = getDataDir(app);
   if (!process.env.OTTO_SQLITE_PATH) process.env.OTTO_SQLITE_PATH = getSqlitePath(app);
   // ensureSessionSecret is called separately by TLS module
