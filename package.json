@@ -49,7 +49,8 @@
     "test:always-on-host": "node --import tsx --test tests/always-on-host.test.ts",
     "test:always-on-packaging": "node --import tsx --test tests/always-on-packaging.test.ts",
     "test:always-on": "npm run test:always-on-host && npm run test:always-on-packaging",
-    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets && npm run test:always-on",
+    "test:update-prompt": "node --import tsx --test tests/update-prompt.test.ts",
+    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets && npm run test:always-on && npm run test:update-prompt",
     "db:push": "drizzle-kit push"
   },
   "build": {

@@ -108,6 +108,8 @@ import {
 
 import { isAlwaysOnHostCapable, isAlwaysOnHostActive } from "./lib/always-on.js";
 
+import { buildUpdateInstallPrompt } from "./lib/update-prompt.js";
+
 import { createOrderSheetWatcher } from "./lib/order-sheet-watcher.js";
 
 // --- Constants ---
@@ -142,6 +144,10 @@ let orderSheetWatcher = null;
 // production so nothing changes there.
 let tray = null;
 let hiddenToTrayNoticeShown = false;
+// Set while an update install is driving the quit (Phase 2). Tells before-quit
+// to step aside so electron-updater's quitAndInstall can install + relaunch,
+// instead of the host path's app.exit(0) which would skip the install.
+let updateInstallInProgress = false;
 let appReadyForOpenEvents = false;
 const pendingOpenUrls = [];
 const pendingOpenFiles = [];
@@ -766,15 +772,7 @@ async function _checkForUpdates() {
   const result = await checkForUpdatesManual();
 
   if (result.status === "ready") {
-    const { response } = await dialog.showMessageBox({
-      type: "info",
-      title: "Update Ready",
-      message: `Version ${result.version} is ready to install.`,
-      detail: "Would you like to install it now? Otto will restart.",
-      buttons: ["Install Now", "Later"],
-      defaultId: 0,
-    });
-    if (response === 0) _installUpdate();
+    await _performUpdateInstall();
   } else if (result.status === "downloading") {
     dialog.showMessageBox({
       type: "info",
@@ -811,7 +809,6 @@ async function _checkForUpdates() {
 }
 
 async function _installUpdate() {
-  const { dialog } = await import("electron");
   const state = getUpdateState();
 
   if (state.status !== "ready") {
@@ -824,19 +821,53 @@ async function _installUpdate() {
     return;
   }
 
-  const { response } = await dialog.showMessageBox({
-    type: "question",
-    title: "Install Update",
-    message: `Install version ${state.version}?`,
-    detail: "Otto will close, install the update, and reopen. Make sure your work is saved.",
-    buttons: ["Install & Restart", "Cancel"],
-    defaultId: 0,
-    cancelId: 1,
-  });
+  await _performUpdateInstall();
+}
 
-  if (response === 0) {
-    installUpdateRaw();
+// Single chokepoint for installing a downloaded update. Confirms (unless
+// silent), then runs the SAME graceful teardown the normal quit does — a final
+// backup + server shutdown — BEFORE handing off to electron-updater's
+// quitAndInstall. Doing the teardown here (rather than in before-quit) lets the
+// update's quit proceed normally so the installer runs and the app relaunches;
+// the always-on Host's before-quit path would otherwise app.exit(0) and skip
+// the install entirely.
+async function _performUpdateInstall(options = {}) {
+  if (updateInstallInProgress) return;
+  if (getUpdateState().status !== "ready") return;
+
+  const silent = options?.silent === true;
+  if (!silent) {
+    let clientCount = 0;
+    try {
+      const getCount = globalThis.__ottoGetConnectedClientCount;
+      if (typeof getCount === "function") clientCount = getCount();
+    } catch {
+      clientCount = 0;
+    }
+    const { response } = await dialog.showMessageBox(
+      buildUpdateInstallPrompt(clientCount, getUpdateState().version),
+    );
+    if (response !== 0) return; // "Later" — keep the cached download for next time
   }
+
+  // Commit. These flags make the window close-interceptor and before-quit step
+  // aside, so quitAndInstall's quit + relaunch isn't turned into a hide-to-tray
+  // or a hard app.exit(0).
+  updateInstallInProgress = true;
+  app.__ottoQuitting = true;
+  stopAutoUpdater();
+
+  // Land a final backup and free the port/connections (both no-op for a
+  // Client), then let electron-updater drive the quit, install, and relaunch.
+  try {
+    await _runShutdownBackup();
+  } catch (error) {
+    console.error("Pre-update backup failed:", error?.message || error);
+    try { Sentry.captureException(error); } catch { /* sentry not configured */ }
+  }
+  _runShutdown();
+
+  installUpdateRaw();
 }
 
 // --- Exception handlers ---
@@ -3048,18 +3079,10 @@ app.whenReady().then(async () => {
     }
 
     // Notify user when a background download completes — but NOT if the
-    // launch-time auto-install already handled this update.
+    // launch-time auto-install already handled this update. _performUpdateInstall
+    // shows the confirm (with a connected-workstations warning when relevant).
     if (state.status === "ready" && state.version && !launchInstallHandled) {
-      dialog.showMessageBox({
-        type: "info",
-        title: "Update Ready",
-        message: `Version ${state.version} is ready to install.`,
-        detail: "Would you like to install it now? Otto will restart.",
-        buttons: ["Install Now", "Later"],
-        defaultId: 0,
-      }).then(({ response }) => {
-        if (response === 0) installUpdateRaw();
-      }).catch(() => {});
+      void _performUpdateInstall();
     }
   });
 
@@ -3069,9 +3092,10 @@ app.whenReady().then(async () => {
   onUpdateReadyAtLaunch(async (version) => {
     launchInstallHandled = true;
     console.log(`[auto-updater] Update v${version} ready at launch — auto-installing.`);
-    // Small delay for the app window to settle, then install silently
+    // Small delay for the app window to settle, then install silently (no
+    // prompt at launch; this runs the graceful teardown before relaunching).
     setTimeout(() => {
-      installUpdateRaw();
+      void _performUpdateInstall({ silent: true });
     }, 2000);
   });
 });
@@ -3136,6 +3160,13 @@ function _runShutdown() {
 let beforeQuitInProgress = false;
 
 app.on("before-quit", async (event) => {
+  if (updateInstallInProgress) {
+    // _performUpdateInstall already ran the graceful teardown (final backup +
+    // server shutdown) and is driving the quit via electron-updater. Step
+    // aside: do NOT preventDefault and do NOT app.exit(0), or the installer and
+    // relaunch are skipped.
+    return;
+  }
   if (beforeQuitInProgress) {
     // The first invocation already started teardown — block any subsequent
     // quit attempts (e.g., second Cmd-Q during the shutdown backup) so the
