@@ -1,6 +1,6 @@
 import { Menu } from "electron";
 
-export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetworkBackupFolder, scheduleAutomaticBackups, runBackupToNetworkFolder, restoreDatabase, resetHost, repairLicense, createSetupWindow, showDiagnostics, exportSupportBundle, checkForUpdates, installUpdate, getUpdateState, alwaysOnHostCapable, alwaysOnHostEnabled, toggleAlwaysOnHost, showUnattendedHostGuide }) {
+export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetworkBackupFolder, scheduleAutomaticBackups, runBackupToNetworkFolder, restoreDatabase, resetHost, repairLicense, createSetupWindow, showDiagnostics, exportSupportBundle, checkForUpdates, installUpdate, getUpdateState, alwaysOnHostCapable, residentEnabled, toggleResidentMode, showUnattendedHostGuide }) {
   const isHost = config.mode === "host";
   const isDev = !app.isPackaged || process.env.NODE_ENV === "development";
 
@@ -39,14 +39,6 @@ export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetwor
                 ? [
                     { type: "separator" },
                     {
-                      label: "Keep Otto Running in the Background",
-                      type: "checkbox",
-                      checked: !!alwaysOnHostEnabled,
-                      click: () => {
-                        if (typeof toggleAlwaysOnHost === "function") toggleAlwaysOnHost();
-                      },
-                    },
-                    {
                       label: "Set Up Unattended Host\u2026",
                       click: () => {
                         if (typeof showUnattendedHostGuide === "function") showUnattendedHostGuide();
@@ -54,6 +46,19 @@ export function setAppMenu(config, { app, shell, showHostAddresses, chooseNetwor
                     },
                   ]
                 : []),
+              { type: "separator" },
+            ]
+          : []),
+        ...(alwaysOnHostCapable
+          ? [
+              {
+                label: "Keep Otto Running in the Background",
+                type: "checkbox",
+                checked: !!residentEnabled,
+                click: () => {
+                  if (typeof toggleResidentMode === "function") toggleResidentMode();
+                },
+              },
               { type: "separator" },
             ]
           : []),

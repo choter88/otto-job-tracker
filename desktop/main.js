@@ -106,7 +106,7 @@ import {
   setAppMenu as setAppMenuRaw,
 } from "./lib/menu.js";
 
-import { isAlwaysOnHostCapable, isAlwaysOnHostActive } from "./lib/always-on.js";
+import { isAlwaysOnHostCapable, shouldStartHostServer, isResidentApp, residentToggleField, residentCopy } from "./lib/always-on.js";
 
 import { buildUpdateInstallPrompt } from "./lib/update-prompt.js";
 
@@ -558,33 +558,38 @@ function _setAppMenu(config) {
     installUpdate: _installUpdate,
     getUpdateState,
     alwaysOnHostCapable: isAlwaysOnHostCapable(),
-    alwaysOnHostEnabled: isAlwaysOnHostActive(config),
-    toggleAlwaysOnHost: _toggleAlwaysOnHost,
+    residentEnabled: isResidentApp(config),
+    toggleResidentMode: _toggleResidentMode,
     showUnattendedHostGuide: _showUnattendedHostGuide,
   });
 }
 
-// --- Always-on host (Workstream A) ---
+// --- Resident app (always-on host + client parity) ---
 //
-// All of the functions below are gated on isAlwaysOnHostActive(): when the
-// OTTO_ALWAYS_ON_HOST capability is unset (production), the gate is false, the
-// tray is never created, login items are never touched, and window/quit
-// behavior is unchanged.
+// The functions below gate resident behavior on isResidentApp() — tray,
+// close-to-tray, login item, and stay-alive — for BOTH an always-on Host and a
+// Client (default-on, per-machine opt-out). It all stays behind the
+// OTTO_ALWAYS_ON_HOST capability: when that is unset (production), isResidentApp
+// is false, the tray is never created, login items are never touched, and
+// window/quit behavior is unchanged. Host-SERVER semantics (shutdown backup,
+// connected-client quit warning) gate on config.mode === "host", not this.
 
-// Register (or clear) the per-user "open at login" item so the office machine
-// comes back up as the Host after a reboot or power blip. No elevation: macOS
-// uses a Login Item, Windows an HKCU Run entry. Idempotent so a user who turns
-// it off manually is not fought.
+// Register (or clear) the per-user "open at login" item so a resident machine
+// (Host or Client) comes back up after a reboot or power blip. No elevation:
+// macOS uses a Login Item, Windows an HKCU Run entry. Idempotent so a user who
+// turns it off manually is not fought.
 function _reconcileLoginItem(config) {
   if (!app.isPackaged) return; // never touch real login items in dev
   if (!isAlwaysOnHostCapable()) return; // dark-shipped: stay completely inert
-  const shouldOpenAtLogin = isAlwaysOnHostActive(config);
+  const shouldOpenAtLogin = isResidentApp(config);
   try {
     const current = app.getLoginItemSettings();
     if (current.openAtLogin !== shouldOpenAtLogin) {
       app.setLoginItemSettings({
         openAtLogin: shouldOpenAtLogin,
-        openAsHidden: process.platform === "darwin",
+        // Hosts launch hidden (back-office server); clients launch visibly so
+        // the user sees their workspace after reboot. openAsHidden is darwin-only.
+        openAsHidden: config.mode === "host" && process.platform === "darwin",
       });
     }
   } catch (error) {
@@ -592,27 +597,32 @@ function _reconcileLoginItem(config) {
   }
 }
 
-// Build the tray context menu, including a live workstation count so the office
-// can glance at the menu-bar icon and see the server is up.
+// Build the tray context menu. Copy branches on mode via residentCopy: a Host
+// shows the server status and a live workstation count; a Client shows its
+// connection status (no server / no count).
 function _updateTrayMenu() {
   if (!tray) return;
-  let count = 0;
-  try {
-    const getCount = globalThis.__ottoGetConnectedClientCount;
-    if (typeof getCount === "function") count = getCount();
-  } catch {
-    count = 0;
-  }
-  const status = `${count} workstation${count !== 1 ? "s" : ""} connected`;
-  const menu = Menu.buildFromTemplate([
+  let mode = "host";
+  try { mode = _readConfig().mode || "host"; } catch { /* default host */ }
+  const copy = residentCopy(mode);
+  const items = [
     { label: "Open Otto", click: () => _showMainWindow() },
     { type: "separator" },
-    { label: "Otto server is running", enabled: false },
-    { label: status, enabled: false },
-    { type: "separator" },
-    { label: "Quit Otto (take office offline)", click: () => _quitFromTray() },
-  ]);
-  tray.setContextMenu(menu);
+    { label: copy.trayStatusLabel, enabled: false },
+  ];
+  if (copy.showWorkstationCount) {
+    let count = 0;
+    try {
+      const getCount = globalThis.__ottoGetConnectedClientCount;
+      if (typeof getCount === "function") count = getCount();
+    } catch {
+      count = 0;
+    }
+    items.push({ label: `${count} workstation${count !== 1 ? "s" : ""} connected`, enabled: false });
+  }
+  items.push({ type: "separator" });
+  items.push({ label: copy.trayQuitLabel, click: () => _quitFromTray() });
+  tray.setContextMenu(Menu.buildFromTemplate(items));
 }
 
 // Create the tray icon. Returns the Tray or null if it could not be created;
@@ -630,7 +640,9 @@ function createTray() {
       image = image.resize({ width: 18, height: 18 });
     }
     tray = new Tray(image);
-    tray.setToolTip("Otto Tracker — office server");
+    let trayMode = "host";
+    try { trayMode = _readConfig().mode || "host"; } catch { /* default host */ }
+    tray.setToolTip(residentCopy(trayMode).trayTooltip);
     _updateTrayMenu();
     // On Windows a single click is the expected "reopen" gesture; on macOS the
     // left-click opens the context menu, so wire double-click as a reopen too.
@@ -657,7 +669,11 @@ function _showMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
-    if (process.platform === "darwin") app.dock?.show?.();
+    if (process.platform === "darwin") {
+      let isHost = false;
+      try { isHost = _readConfig().mode === "host"; } catch { /* default false */ }
+      if (isHost) app.dock?.show?.();
+    }
     mainWindow.focus();
     return;
   }
@@ -685,9 +701,11 @@ function _maybeShowHiddenToTrayNotice() {
   hiddenToTrayNoticeShown = true;
   try {
     if (Notification.isSupported && !Notification.isSupported()) return;
+    let noticeMode = "host";
+    try { noticeMode = _readConfig().mode || "host"; } catch { /* default host */ }
     new Notification({
       title: "Otto is still running",
-      body: "Workstations stay connected. Click the Otto icon in the menu bar / taskbar to reopen this window.",
+      body: residentCopy(noticeMode).hiddenNoticeBody,
     }).show();
   } catch {
     // notifications are best-effort
@@ -699,40 +717,52 @@ function _maybeShowHiddenToTrayNotice() {
 // proceed normally (production, client mode, real quit, or no usable tray).
 function _handleMainWindowClose(event, win) {
   if (app.__ottoQuitting) return false; // a real quit is in progress
-  let active = false;
+  let config;
   try {
-    active = isAlwaysOnHostActive(_readConfig());
+    config = _readConfig();
   } catch {
-    active = false;
+    return false;
   }
-  if (!active) return false;
+  if (!isResidentApp(config)) return false;
   // No tray means no way to reopen — never trap the user behind a hidden
   // window; fall back to a normal close instead.
   if (!tray) return false;
   event.preventDefault();
   win.hide();
-  if (process.platform === "darwin") app.dock?.hide?.();
+  // Only a back-office HOST hides from the Dock; a client is user-facing and
+  // stays in the Dock / Cmd-Tab.
+  if (process.platform === "darwin" && config.mode === "host") app.dock?.hide?.();
   _updateTrayMenu();
   _maybeShowHiddenToTrayNotice();
   return true;
 }
 
-// Host menu toggle: flip this machine's always-on preference and apply it live.
-function _toggleAlwaysOnHost() {
+// Menu toggle: flip THIS machine's resident preference (host or client) and
+// apply it live. Writes the per-mode opt-out field so a client toggle never
+// touches host semantics.
+function _toggleResidentMode() {
   try {
     const config = _readConfig();
-    const next = !isAlwaysOnHostActive(config);
-    config.alwaysOnHost = next;
+    const next = !isResidentApp(config);
+    config[residentToggleField(config.mode)] = next;
     _writeConfig(config);
     _reconcileLoginItem(config);
     if (next) {
       createTray();
     } else {
+      // Turning resident OFF: if the window is hidden to tray, bring it back
+      // BEFORE destroying the tray, or the user is stranded with no way to
+      // reopen (no tray, hidden window — true on Windows with no Dock fallback).
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        mainWindow.show();
+        if (process.platform === "darwin" && config.mode === "host") app.dock?.show?.();
+        mainWindow.focus();
+      }
       _destroyTray();
     }
     _setAppMenu(config);
   } catch (error) {
-    _logStartup("Failed to toggle always-on host", error);
+    _logStartup("Failed to toggle resident mode", error);
   }
 }
 
@@ -1653,6 +1683,13 @@ async function launchMainWindowForConfig(config, options = {}) {
   const showBootWindow = options?.showBootWindow !== false;
   _setAppMenu(config);
 
+  // Decide ONCE — before maybeStartHostServer flips hostServerStarted — whether
+  // this launch must bring the host server up. On a reopen (the window was
+  // destroyed but the always-on server kept running) this is false, so we skip
+  // the port pre-flight that would otherwise collide with our own server and
+  // show a spurious "port in use" error. See shouldStartHostServer.
+  const needHostBringUp = shouldStartHostServer(config, hostServerStarted);
+
   let bootWindow = null;
   if (config.mode === "host" && showBootWindow) {
     bootWindow = _createBootWindow();
@@ -1667,7 +1704,7 @@ async function launchMainWindowForConfig(config, options = {}) {
       _applyHostTlsEnv();
     }
 
-    if (config.mode === "host") {
+    if (needHostBringUp) {
       const port = Number(process.env.PORT || "5150");
       let available = await isPortAvailable(port, "0.0.0.0");
       if (!available) {
@@ -1689,9 +1726,11 @@ async function launchMainWindowForConfig(config, options = {}) {
       }
     }
 
-    await maybeStartHostServer();
+    if (needHostBringUp) {
+      await maybeStartHostServer();
+    }
 
-    if (config.mode === "host") {
+    if (needHostBringUp) {
       const protocol = app.isPackaged ? "https" : "http";
       const port = process.env.PORT || "5150";
       let readiness = await waitForHostReady({
@@ -3057,7 +3096,7 @@ app.whenReady().then(async () => {
   // instead of taking the office offline. Both are inert unless the
   // OTTO_ALWAYS_ON_HOST capability is enabled and this machine is a Host.
   _reconcileLoginItem(config);
-  if (isAlwaysOnHostActive(config)) {
+  if (isResidentApp(config)) {
     createTray();
   }
 
@@ -3106,7 +3145,7 @@ app.on("window-all-closed", () => {
   // when every window is gone. In production (capability off) this is false and
   // the app quits on last-window-close exactly as before.
   try {
-    if (!app.__ottoQuitting && isAlwaysOnHostActive(_readConfig())) return;
+    if (!app.__ottoQuitting && isResidentApp(_readConfig())) return;
   } catch {
     // fall through to the default quit
   }
@@ -3250,7 +3289,13 @@ app.on("second-instance", (_event, argv) => {
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
     mainWindow.focus();
+  } else {
+    // Window was destroyed while the app stayed resident (e.g. a Windows client
+    // closed to tray and the user relaunched the exe). Reopen it from config —
+    // _showMainWindow handles the destroyed → relaunch path.
+    _showMainWindow();
   }
 });
 
