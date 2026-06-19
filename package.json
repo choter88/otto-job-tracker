@@ -50,7 +50,9 @@
     "test:always-on-packaging": "node --import tsx --test tests/always-on-packaging.test.ts",
     "test:always-on": "npm run test:always-on-host && npm run test:always-on-packaging",
     "test:update-prompt": "node --import tsx --test tests/update-prompt.test.ts",
-    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets && npm run test:always-on && npm run test:update-prompt",
+    "test:reconnect": "node --import tsx --test tests/reconnect.test.ts",
+    "test:login-ids": "node --import tsx --test tests/login-ids.test.ts",
+    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets && npm run test:always-on && npm run test:update-prompt && npm run test:reconnect && npm run test:login-ids",
     "db:push": "drizzle-kit push"
   },
   "build": {

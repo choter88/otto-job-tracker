@@ -668,6 +668,9 @@ function _destroyTray() {
 function _showMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
+    // Reopen always reloads: after auto-logout this lands on a fresh login, and
+    // it recovers a stale/offline renderer that closing-to-tray left behind.
+    try { mainWindow.loadURL(_getTargetUrlForConfig(_readConfig()), { extraHeaders: "pragma: no-cache\n" }); } catch { /* ignore */ }
     mainWindow.show();
     if (process.platform === "darwin") {
       let isHost = false;
@@ -732,6 +735,17 @@ function _handleMainWindowClose(event, win) {
   // Only a back-office HOST hides from the Dock; a client is user-facing and
   // stays in the Dock / Cmd-Tab.
   if (process.platform === "darwin" && config.mode === "host") app.dock?.hide?.();
+  // HIPAA: end the session on hide so reopening requires re-login (shared
+  // machines). Ask the renderer to POST /api/logout (server invalidation +
+  // audit) while it still has its cookie, then clear the partition's auth
+  // state as a backstop in case the renderer is unresponsive/offline.
+  try { win.webContents.send("otto:auto-logout"); } catch { /* best-effort */ }
+  try {
+    const ses = win.webContents.session;
+    setTimeout(() => {
+      try { ses.clearStorageData({ storages: ["cookies", "localStorage", "sessionStorage"] }); } catch { /* best-effort */ }
+    }, 1500);
+  } catch { /* best-effort */ }
   _updateTrayMenu();
   _maybeShowHiddenToTrayNotice();
   return true;
@@ -3040,6 +3054,18 @@ ipcMain.handle("otto:portal:client-register", async (_event, payload) => {
     _logStartup("client-register IPC error", err?.message, err?.stack);
     return { ok: false, error: err?.message || "Could not reach the Host computer." };
   }
+});
+
+ipcMain.handle("otto:reconnect:now", (event) => {
+  try {
+    const w = BrowserWindow.fromWebContents(event.sender);
+    if (w && !w.isDestroyed()) {
+      w.loadURL(_getTargetUrlForConfig(_readConfig()), { extraHeaders: "pragma: no-cache\n" });
+    }
+  } catch (error) {
+    _logStartup("reconnect:now failed", error);
+  }
+  return { ok: true };
 });
 
 // --- App lifecycle ---

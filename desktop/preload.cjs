@@ -54,4 +54,20 @@ contextBridge.exposeInMainWorld("otto", {
     ipcRenderer.on("otto:orderSheets:event", listener);
     return () => ipcRenderer.removeListener("otto:orderSheets:event", listener);
   },
+
+  // Immediate reconnect, used by the offline page's "Try now" button.
+  reconnectNow: () => ipcRenderer.invoke("otto:reconnect:now"),
+  // Main → renderer push: the window was hidden, so end the session.
+  // Returns an unsubscribe function for React effect cleanup.
+  onAutoLogout: (callback) => {
+    const listener = () => {
+      try {
+        callback();
+      } catch {
+        // never let a renderer callback error break the IPC listener
+      }
+    };
+    ipcRenderer.on("otto:auto-logout", listener);
+    return () => ipcRenderer.removeListener("otto:auto-logout", listener);
+  },
 });

@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useContext } from "react";
+import { createContext, ReactNode, useContext, useEffect } from "react";
 import {
   useQuery,
   useMutation,
@@ -114,6 +114,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     },
   });
+
+  // The Electron main process clears the window's session and fires this when
+  // the window is hidden to tray (HIPAA: shared machines). POST the logout so
+  // the server invalidates the session and records it.
+  useEffect(() => {
+    const otto = (window as any).otto;
+    if (!otto?.onAutoLogout) return;
+    const unsubscribe = otto.onAutoLogout(() => {
+      try { logoutMutation.mutate(); } catch { /* best-effort */ }
+    });
+    return () => { try { unsubscribe?.(); } catch { /* ignore */ } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <AuthContext.Provider

@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+    <title>Otto — reconnecting</title>
+    <style>
+      html, body { margin: 0; height: 100%; }
+      body { display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif; background: #f8fafc; color: #374151; text-align: center; padding: 2rem; box-sizing: border-box; }
+      h2 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.5rem; }
+      p { font-size: 0.875rem; color: #6b7280; margin: 0.25rem 0; }
+      .muted { font-size: 0.75rem; color: #9ca3af; margin-top: 0.75rem; }
+      button { margin-top: 1.25rem; padding: 0.5rem 1.5rem; background: #2563eb; color: #fff;
+        border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h2>Can't reach the office server</h2>
+      <p>Otto is read-only until it's opened back up on the main computer.</p>
+      <p class="muted">Reconnecting automatically…</p>
+      <button id="retry" type="button">Try now</button>
+    </div>
+    <script>
+      document.getElementById("retry").addEventListener("click", function () {
+        try { if (window.otto && window.otto.reconnectNow) window.otto.reconnectNow(); } catch (e) {}
+      });
+    </script>
+  </body>
+</html>

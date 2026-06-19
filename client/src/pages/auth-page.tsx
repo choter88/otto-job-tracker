@@ -11,6 +11,7 @@ import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Glasses, MonitorCog, Building2, UserPlus } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import { useLoginIds } from "@/hooks/use-login-ids";
 
 const pinLoginSchema = z.object({
   loginId: z
@@ -153,6 +154,8 @@ export default function AuthPage() {
     if (desktopMode === "host" || desktopMode === "client") return desktopMode;
     return isLocalHost ? "host" : "client";
   }, [desktopMode, isLocalHost]);
+
+  const loginIds = useLoginIds();
 
   const pinLoginForm = useForm<PinLoginFormData>({
     resolver: zodResolver(pinLoginSchema),
@@ -430,12 +433,18 @@ export default function AuthPage() {
                             <Input
                               id="pin-login-id"
                               type="text"
+                              list="otto-login-ids"
                               autoCapitalize="none"
                               autoCorrect="off"
                               placeholder="jane.cho"
                               {...pinLoginForm.register("loginId")}
                               data-testid="input-pin-login-id"
                             />
+                            <datalist id="otto-login-ids">
+                              {loginIds.map((id) => (
+                                <option key={id} value={id} />
+                              ))}
+                            </datalist>
                             {pinLoginForm.formState.errors.loginId && (
                               <p className="text-sm text-destructive">{pinLoginForm.formState.errors.loginId.message}</p>
                             )}

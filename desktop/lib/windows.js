@@ -1,5 +1,6 @@
 import path from "path";
 import { BrowserWindow, Menu, screen } from "electron";
+import { getReconnectDelay, isOnlineLoad } from "./reconnect.js";
 
 /**
  * In a packaged build, DevTools are disabled by default. Open them when:
@@ -210,28 +211,31 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
     }
   });
 
-  // Auto-reconnect with exponential backoff.
-  // Clients retry indefinitely in the background — the Host may be
-  // restarting, and the user's offline changes are safe in the outbox.
-  // After several silent retries, show a non-blocking notification so
-  // the user knows we're still trying.
+  // Connection controller. Load the app; on a main-frame failure show a local
+  // offline page (always renders — no blank) and keep retrying with backoff.
+  // Only a successful load of the TARGET origin counts as "online" — a finished
+  // offline-page load must NOT stop the loop (see isOnlineLoad).
   let loadFailCount = 0;
   let reconnectTimer = null;
-  const MAX_BACKOFF_MS = 15000; // cap at 15 seconds between retries
+  const offlinePath = path.join(dirName, "assets", "offline.html");
 
-  function getBackoffDelay(attempt) {
-    return Math.min(MAX_BACKOFF_MS, 2000 * Math.pow(1.5, Math.min(attempt, 10)));
+  function loadApp() {
+    if (win.isDestroyed()) return;
+    try { win.loadURL(targetUrl, { extraHeaders: "pragma: no-cache\n" }); } catch { /* ignore */ }
+  }
+  function scheduleReconnect() {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => { if (!win.isDestroyed()) loadApp(); }, getReconnectDelay(loadFailCount));
   }
 
   win.webContents.on(
     "did-fail-load",
-    async (_event, _errorCode, errorDescription, validatedURL, isMainFrame) => {
+    async (_event, _errorCode, _errorDescription, _validatedURL, isMainFrame) => {
       if (!isMainFrame || win.isDestroyed()) return;
-
       loadFailCount++;
-      const delay = getBackoffDelay(loadFailCount);
 
-      // For Host mode, show dialog after 3 failures (server might be genuinely broken)
+      // Host: after a few failures the embedded server is likely genuinely
+      // broken — keep the existing Retry / Close dialog.
       if (config.mode === "host" && loadFailCount >= 3) {
         const { dialog } = await import("electron");
         const { response } = await dialog.showMessageBox(win, {
@@ -242,51 +246,35 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
           message: "Otto is still starting up",
           detail: "This may take a moment. Click Retry to try again.",
         }).catch(() => ({ response: 0 }));
-
         if (win.isDestroyed()) return;
-        if (response === 0) {
-          loadFailCount = 0;
-          try { win.loadURL(targetUrl); } catch { /* ignore */ }
-        } else {
-          try { win.close(); } catch { /* ignore */ }
-        }
+        if (response === 0) { loadFailCount = 0; loadApp(); } else { try { win.close(); } catch { /* ignore */ } }
         return;
       }
 
-      // For Client mode, keep retrying silently with backoff
-      console.log(`[reconnect] Load failed (attempt ${loadFailCount}), retrying in ${Math.round(delay / 1000)}s...`);
-
-      // After 5 silent failures, show a small in-window message (not a blocking dialog)
-      if (isClient && loadFailCount === 5) {
-        try {
-          win.webContents.executeJavaScript(`
-            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui;background:#f8fafc;color:#374151;text-align:center;padding:2rem;">' +
-              '<div><h2 style="font-size:1.25rem;font-weight:600;margin-bottom:0.5rem;">Host is offline</h2>' +
-              '<p style="font-size:0.875rem;color:#6b7280;">Otto is read-only until Otto is opened back up on the main computer.</p>' +
-              '<p style="font-size:0.75rem;color:#9ca3af;margin-top:0.75rem;">Reconnecting automatically every few seconds</p>' +
-              '<button onclick="window.location.reload()" style="margin-top:1.25rem;padding:0.5rem 1.5rem;background:#2563eb;color:white;border:none;border-radius:0.5rem;font-size:0.875rem;font-weight:500;cursor:pointer;">Try Now</button>' +
-              '</div></div>';
-          `).catch(() => {});
-        } catch { /* ignore */ }
-      }
-
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(() => {
-        if (!win.isDestroyed()) {
-          try { win.loadURL(targetUrl); } catch { /* ignore */ }
-        }
-      }, delay);
+      // Client: show the local offline page immediately (only if not already
+      // on it — a failed loadURL leaves the last committed page in place, so
+      // we avoid re-navigating and flickering every retry), then schedule a retry.
+      try {
+        const cur = win.webContents.getURL() || "";
+        if (isClient && !cur.startsWith("file:") && !win.isDestroyed()) win.loadFile(offlinePath);
+      } catch { /* ignore */ }
+      scheduleReconnect();
     },
   );
 
-  // Reset fail counter on successful load
   win.webContents.on("did-finish-load", () => {
-    loadFailCount = 0;
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    // Back online ONLY when the real app origin loaded; an offline-page load
+    // (file://) must not reset the counter or clear the retry timer.
+    let online = false;
+    try { online = isOnlineLoad(win.webContents.getURL(), targetUrl); } catch { online = false; }
+    if (online) {
+      loadFailCount = 0;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
   });
 
   registerTlsTrustForWindow(win, targetUrl, config);
-  win.loadURL(targetUrl);
+  loadApp();
   setupNoInternetNetworkGuard(win.webContents.session, new URL(targetUrl).origin);
   injectCspOnSession(win.webContents.session);
   return win;

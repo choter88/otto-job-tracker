@@ -84,6 +84,7 @@ import { buildLocalAuthEmail, isValidSixDigitPin, normalizeLoginId, validateLogi
 import { registerTabletRoutes } from "./tablet-routes";
 import { invalidateTabletSessionsForUser } from "./tablet-auth";
 import type { User } from "@shared/schema";
+import { toLoginIds } from "./login-ids";
 
 // ── Tablet session tracking (delegated to tablet-auth module) ──
 export { getActiveTabletSessionCount } from "./tablet-auth";
@@ -1204,6 +1205,33 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Failed to read setup status" });
+    }
+  });
+
+  // Public, pre-auth: login IDs for the host's office, to populate the login
+  // dropdown. Exposes login IDs ONLY (no names/PINs). LAN-only app; lightly
+  // rate-limited per IP to discourage scraping.
+  const loginIdHits = new Map<string, { count: number; resetAt: number }>();
+  app.get("/api/login-ids", async (req, res) => {
+    try {
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const now = Date.now();
+      const slot = loginIdHits.get(ip);
+      if (!slot || now > slot.resetAt) {
+        loginIdHits.set(ip, { count: 1, resetAt: now + 60_000 });
+      } else if (slot.count >= 60) {
+        return res.status(429).json({ loginIds: [] });
+      } else {
+        slot.count++;
+      }
+
+      const offices = await storage.getAllOffices();
+      const office = offices[0];
+      if (!office) return res.json({ loginIds: [] });
+      const users = await storage.getUsersInOffice(office.id);
+      return res.json({ loginIds: toLoginIds(users) });
+    } catch {
+      return res.json({ loginIds: [] }); // non-fatal: the login screen falls back to a text field
     }
   });
 
