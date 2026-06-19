@@ -107,6 +107,7 @@ import {
 } from "./lib/menu.js";
 
 import { isAlwaysOnHostCapable, shouldStartHostServer, isResidentApp, residentToggleField, residentCopy } from "./lib/always-on.js";
+import { parseHostPort, probeHost } from "./lib/host-probe.js";
 
 import { buildUpdateInstallPrompt } from "./lib/update-prompt.js";
 
@@ -471,6 +472,103 @@ function _createSetupWindow() {
   });
 }
 
+// Client offline recovery. An in-window reload cannot recover a wedged
+// connection (only a fresh process does — the user's quit+reopen). So when a
+// CLIENT window fails to load, we probe the host from the MAIN process (a raw
+// TCP connect, independent of the renderer) and, once it actually answers,
+// relaunch the client — the automated equivalent of quit+reopen. Clients are
+// stateless, so relaunching is safe.
+const RECONNECT_RELAUNCH_ARG = "--otto-reconnect-relaunches=";
+const MAX_RECONNECT_RELAUNCHES = 3;
+let clientReconnectTimer = null;
+let clientReconnectAttempt = 0;
+// Consecutive auto-relaunches that have NOT yet led to a good connection.
+// Seeded from the relaunch arg so it survives the restart (in-memory state dies
+// with the process); reset to 0 on a successful load or an explicit "Try now".
+// Bounds a restart storm if relaunching somehow fails to recover.
+let reconnectRelaunchChain = (() => {
+  try {
+    const a = process.argv.find((x) => typeof x === "string" && x.startsWith(RECONNECT_RELAUNCH_ARG));
+    const n = a ? Number(a.slice(RECONNECT_RELAUNCH_ARG.length)) : 0;
+    return Number.isInteger(n) && n > 0 ? n : 0;
+  } catch { return 0; }
+})();
+
+function _stopClientReconnectWatch() {
+  if (clientReconnectTimer) { clearTimeout(clientReconnectTimer); clientReconnectTimer = null; }
+  clientReconnectAttempt = 0;
+}
+
+function _relaunchClientToReconnect() {
+  try {
+    const args = process.argv
+      .slice(1)
+      .filter((a) => typeof a === "string" && !a.startsWith(RECONNECT_RELAUNCH_ARG))
+      .concat(`${RECONNECT_RELAUNCH_ARG}${reconnectRelaunchChain + 1}`);
+    app.relaunch({ args });
+    app.exit(0);
+  } catch (error) {
+    _logStartup("[reconnect] relaunch failed", error);
+  }
+}
+
+function _startClientReconnectWatch(win, immediate) {
+  if (clientReconnectTimer && !immediate) return; // already watching
+  if (clientReconnectTimer) { clearTimeout(clientReconnectTimer); clientReconnectTimer = null; }
+  clientReconnectAttempt = 0;
+  if (immediate) reconnectRelaunchChain = 0; // explicit "Try now" — earn fresh relaunches
+
+  const tick = async () => {
+    // Only ever act for the CURRENT client window. A stale/superseded window or
+    // a host must never reach the relaunch.
+    if (!win || win.isDestroyed() || win !== mainWindow || app.__ottoQuitting) { _stopClientReconnectWatch(); return; }
+    let config;
+    try { config = _readConfig(); } catch { config = null; }
+    if (!config || config.mode !== "client") { _stopClientReconnectWatch(); return; }
+
+    const target = _getTargetUrlForConfig(config);
+    const hp = parseHostPort(target);
+    const reachable = hp ? await probeHost({ host: hp.host, port: hp.port, timeoutMs: 3000 }) : false;
+    _logStartup(`[reconnect] probe ${hp ? `${hp.host}:${hp.port}` : target} -> ${reachable ? "reachable" : "down"} (uptime ${Math.round(process.uptime())}s, chain ${reconnectRelaunchChain})`);
+
+    if (win.isDestroyed() || win !== mainWindow || app.__ottoQuitting) { _stopClientReconnectWatch(); return; }
+
+    // Relaunch only when: host actually answers, the process has lived long
+    // enough that we won't tight-loop, the window is VISIBLE (don't yank a
+    // tray-hidden client back open), and we haven't already burned the relaunch
+    // budget without recovering.
+    if (reachable && process.uptime() > 8 && win.isVisible()) {
+      if (reconnectRelaunchChain >= MAX_RECONNECT_RELAUNCHES) {
+        _logStartup(`[reconnect] reachable but ${reconnectRelaunchChain} relaunches did not recover — leaving offline page; use Try now`);
+        _stopClientReconnectWatch();
+        return;
+      }
+      _logStartup("[reconnect] host reachable — relaunching client to reconnect");
+      _stopClientReconnectWatch();
+      _relaunchClientToReconnect();
+      return;
+    }
+
+    clientReconnectAttempt++;
+    const delay = Math.min(15000, 2000 * Math.pow(1.5, Math.min(clientReconnectAttempt, 10)));
+    clientReconnectTimer = setTimeout(tick, delay);
+  };
+
+  // "Try now" probes immediately; a load failure probes shortly after.
+  clientReconnectTimer = setTimeout(tick, immediate ? 0 : 1500);
+}
+
+// Wired into createWindow: the client window reports load failures / successes.
+function _onClientOffline(win, errorCode, errorDescription) {
+  _logStartup(`[reconnect] client load failed: ${errorCode} ${errorDescription || ""}`.trim());
+  _startClientReconnectWatch(win, false);
+}
+
+function _onClientOnline() {
+  reconnectRelaunchChain = 0; // a real connection succeeded — reset the relaunch budget
+  _stopClientReconnectWatch();
+}
+
 function _createWindow(targetUrl, config) {
   return createWindowRaw(targetUrl, config, {
     __dirname,
@@ -487,6 +585,8 @@ function _createWindow(targetUrl, config) {
     setupNoInternetNetworkGuard,
     createSetupWindow: _createSetupWindow,
     handleMainWindowClose: _handleMainWindowClose,
+    onClientOffline: _onClientOffline,
+    onClientOnline: _onClientOnline,
   });
 }
 
@@ -3057,11 +3157,12 @@ ipcMain.handle("otto:portal:client-register", async (_event, payload) => {
 });
 
 ipcMain.handle("otto:reconnect:now", (event) => {
+  // "Try now" on the offline page. An in-window loadURL can't recover a wedged
+  // client connection, so probe the host immediately instead; if it answers,
+  // the watch relaunches the client.
   try {
     const w = BrowserWindow.fromWebContents(event.sender);
-    if (w && !w.isDestroyed()) {
-      w.loadURL(_getTargetUrlForConfig(_readConfig()), { extraHeaders: "pragma: no-cache\n" });
-    }
+    if (w && !w.isDestroyed()) _startClientReconnectWatch(w, true);
   } catch (error) {
     _logStartup("reconnect:now failed", error);
   }

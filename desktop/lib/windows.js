@@ -131,7 +131,7 @@ export function setMainWindowMinWidth(win, widthInput) {
   return { ok: true, minWidth: nextMinWidth, maxWidth: displayWidth };
 }
 
-export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLAY_NAME, setMainWindow, setupContextMenu, registerTlsTrustForWindow, setupNoInternetNetworkGuard, createSetupWindow, handleMainWindowClose }) {
+export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLAY_NAME, setMainWindow, setupContextMenu, registerTlsTrustForWindow, setupNoInternetNetworkGuard, createSetupWindow, handleMainWindowClose, onClientOffline, onClientOnline }) {
   const isClient = config.mode === "client";
   const baselineSize = getMainWindowBaselineSize();
 
@@ -230,35 +230,42 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
 
   win.webContents.on(
     "did-fail-load",
-    async (_event, _errorCode, _errorDescription, _validatedURL, isMainFrame) => {
+    async (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
       if (!isMainFrame || win.isDestroyed()) return;
       loadFailCount++;
 
       // Host: after a few failures the embedded server is likely genuinely
-      // broken — keep the existing Retry / Close dialog.
-      if (config.mode === "host" && loadFailCount >= 3) {
-        const { dialog } = await import("electron");
-        const { response } = await dialog.showMessageBox(win, {
-          type: "error",
-          buttons: ["Retry", "Close"],
-          defaultId: 0,
-          cancelId: 1,
-          message: "Otto is still starting up",
-          detail: "This may take a moment. Click Retry to try again.",
-        }).catch(() => ({ response: 0 }));
-        if (win.isDestroyed()) return;
-        if (response === 0) { loadFailCount = 0; loadApp(); } else { try { win.close(); } catch { /* ignore */ } }
+      // broken — keep the existing Retry / Close dialog, and keep retrying
+      // in-window until then (the host loads localhost, which doesn't wedge).
+      if (config.mode === "host") {
+        if (loadFailCount >= 3) {
+          const { dialog } = await import("electron");
+          const { response } = await dialog.showMessageBox(win, {
+            type: "error",
+            buttons: ["Retry", "Close"],
+            defaultId: 0,
+            cancelId: 1,
+            message: "Otto is still starting up",
+            detail: "This may take a moment. Click Retry to try again.",
+          }).catch(() => ({ response: 0 }));
+          if (win.isDestroyed()) return;
+          if (response === 0) { loadFailCount = 0; loadApp(); } else { try { win.close(); } catch { /* ignore */ } }
+          return;
+        }
+        scheduleReconnect();
         return;
       }
 
-      // Client: show the local offline page immediately (only if not already
-      // on it — a failed loadURL leaves the last committed page in place, so
-      // we avoid re-navigating and flickering every retry), then schedule a retry.
+      // Client: an in-window loadURL can't recover a wedged connection, so do
+      // NOT loop loadURL here. Show the local offline page (only if not already
+      // on it — a failed load leaves the last committed page in place) and hand
+      // off to the main process, which probes the host directly and relaunches
+      // the client when it's actually reachable.
       try {
         const cur = win.webContents.getURL() || "";
-        if (isClient && !cur.startsWith("file:") && !win.isDestroyed()) win.loadFile(offlinePath);
+        if (!cur.startsWith("file:") && !win.isDestroyed()) win.loadFile(offlinePath);
       } catch { /* ignore */ }
-      scheduleReconnect();
+      try { if (typeof onClientOffline === "function") onClientOffline(win, errorCode, errorDescription); } catch { /* ignore */ }
     },
   );
 
@@ -270,6 +277,9 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
     if (online) {
       loadFailCount = 0;
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      // A real load succeeded (e.g. reload-on-reopen caught the host back up) —
+      // cancel any pending client reconnect watch so we don't relaunch.
+      try { if (typeof onClientOnline === "function") onClientOnline(); } catch { /* ignore */ }
     }
   });
 
