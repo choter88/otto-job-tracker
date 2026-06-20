@@ -12,12 +12,6 @@ export const LABEL_LABS = "Labs";
 export const LABEL_LAB_LOWER = "lab";
 export const LABEL_LABS_LOWER = "labs";
 
-/** Used for description copy — "Where finished work goes". */
-export const LABEL_LABS_DESCRIPTION =
-  "Where finished work goes — your in-house lab or external partners. Used to route and report on jobs.";
-
-export const LABEL_LABS_TAB_TITLE = "Order Labs";
-
 export const LABEL_LABS_FIELD = "Send to lab";
 
 export const LABEL_LABS_FILTER = "Lab";

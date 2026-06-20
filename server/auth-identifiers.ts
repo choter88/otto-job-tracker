@@ -12,11 +12,6 @@ export function normalizeLoginId(value: string): string {
     .replace(/[._-]+$/, "");
 }
 
-export function isValidLoginId(value: string): boolean {
-  const normalized = normalizeLoginId(value);
-  return LOGIN_ID_REGEX.test(normalized);
-}
-
 export function validateLoginId(value: string): string | null {
   const normalized = normalizeLoginId(value);
   if (!normalized) return "Login ID is required";

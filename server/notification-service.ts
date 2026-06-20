@@ -1,5 +1,5 @@
 import type { Job, User, JobComment, NotificationRule } from "@shared/schema";
-import type { IStorage } from "./storage";
+import type { DatabaseStorage } from "./storage";
 import { broadcastToOffice } from "./sync-websocket";
 
 function debugLog(message: string): void {
@@ -12,7 +12,7 @@ export async function notifyJobStatusChange(
   job: Job,
   oldStatus: string,
   changedBy: User,
-  storage: IStorage
+  storage: DatabaseStorage
 ): Promise<void> {
   try {
     debugLog(`[notifyJobStatusChange] jobId=${job.id} status=${oldStatus}→${job.status}`);
@@ -65,7 +65,7 @@ export async function notifyNewComment(
   job: Job,
   comment: JobComment,
   author: User,
-  storage: IStorage
+  storage: DatabaseStorage
 ): Promise<void> {
   try {
     // Recipient set = "everyone with skin in the game on this job":
@@ -127,7 +127,7 @@ export async function notifyNewComment(
 export async function notifyJobStarred(
   job: Job,
   starredBy: User,
-  storage: IStorage,
+  storage: DatabaseStorage,
   importantNote?: string,
 ): Promise<void> {
   try {
@@ -190,7 +190,7 @@ export async function notifyJobStarred(
 export async function notifyJobAutoCreated(
   job: Job,
   fileName: string,
-  storage: IStorage,
+  storage: DatabaseStorage,
 ): Promise<void> {
   try {
     const officeUsers = await storage.getUsersInOffice(job.officeId);
@@ -227,7 +227,7 @@ export async function notifyJobAutoCreated(
 export async function notifyOverdueJob(
   job: Job,
   rule: NotificationRule,
-  storage: IStorage
+  storage: DatabaseStorage
 ): Promise<void> {
   try {
     const officeUsers = await storage.getUsersInOffice(job.officeId);

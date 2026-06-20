@@ -411,8 +411,6 @@ export const usageEvents = sqliteTable("usage_events", {
   sourceCreatedAtIdx: index("usage_events_source_created_at_idx").on(table.source, table.createdAt),
 }));
 
-export type UsageEvent = typeof usageEvents.$inferSelect;
-
 // Patient-tracking-link notes. Local-only by design: the portal stores
 // nothing about them. Keyed by the portal's opaque token (not the
 // portal-side UUID) since the token is the durable identifier this
@@ -427,8 +425,6 @@ export const trackingLinkNotesLocal = sqliteTable("tracking_link_notes_local", {
   tokenCreatedIdx: index("tracking_link_notes_local_token_created_idx").on(table.linkToken, table.createdAt),
 }));
 
-export type TrackingLinkNoteLocal = typeof trackingLinkNotesLocal.$inferSelect;
-
 // Per-link patient-status visibility. The office picks which canonical
 // statuses each tracking link surfaces to its patient; absence of a row
 // for (link_token, status) means hidden — the desktop's event-emit code
@@ -442,8 +438,6 @@ export const trackingLinkVisibilityLocal = sqliteTable("tracking_link_visibility
   pk: uniqueIndex("tracking_link_visibility_local_pk").on(table.linkToken, table.status),
   tokenIdx: index("tracking_link_visibility_local_token_idx").on(table.linkToken),
 }));
-
-export type TrackingLinkVisibilityLocal = typeof trackingLinkVisibilityLocal.$inferSelect;
 
 // Client device registry — tracks which computers connect as clients
 export const clientDevices = sqliteTable("client_devices", {
@@ -468,8 +462,6 @@ export const clientDevices = sqliteTable("client_devices", {
   recoveryId: text("recovery_id"),
 });
 
-export type ClientDevice = typeof clientDevices.$inferSelect;
-
 // Tablet sessions — per-user auth tokens for the tablet lab board
 export const tabletSessions = sqliteTable(
   "tablet_sessions",
@@ -488,8 +480,6 @@ export const tabletSessions = sqliteTable(
     userIdx: index("tablet_sessions_user_idx").on(table.userId),
   }),
 );
-
-export type TabletSession = typeof tabletSessions.$inferSelect;
 
 // Order-sheet automation ledger. One row per file the folder watcher has
 // seen, keyed by content hash so the same sheet is never imported twice —
@@ -826,11 +816,6 @@ export type SmsOptIn = typeof smsOptIns.$inferSelect;
 export type InsertSmsOptIn = z.infer<typeof insertSmsOptInSchema>;
 export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
 export type InsertAdminAuditLog = z.infer<typeof insertAdminAuditLogSchema>;
-export type JobAnalytics = typeof jobAnalytics.$inferSelect;
-export type InsertJobAnalytics = z.infer<typeof insertJobAnalyticsSchema>;
-export type PlatformAnalytics = typeof platformAnalytics.$inferSelect;
-export type InsertPlatformAnalytics = z.infer<typeof insertPlatformAnalyticsSchema>;
-export type JoinRequest = typeof joinRequests.$inferSelect;
 export type AccountSignupRequest = typeof accountSignupRequests.$inferSelect;
 export type InsertAccountSignupRequest = z.infer<typeof insertAccountSignupRequestSchema>;
 export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
@@ -840,7 +825,6 @@ export type InsertOrderSheetImport = z.infer<typeof insertOrderSheetImportSchema
 export type OrderSheetWatcher = typeof orderSheetWatchers.$inferSelect;
 export type OrderSheetTemplate = typeof orderSheetTemplates.$inferSelect;
 export type JobAttachment = typeof jobAttachments.$inferSelect;
-export type PinResetRequest = typeof pinResetRequests.$inferSelect;
 
 // Custom type for PIN reset request with user details (returned by API)
 export type PinResetRequestWithUser = {

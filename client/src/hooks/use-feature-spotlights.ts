@@ -251,5 +251,3 @@ export function useFeatureSpotlights() {
       }),
   };
 }
-
-export type UseFeatureSpotlightsReturn = ReturnType<typeof useFeatureSpotlights>;

@@ -145,10 +145,6 @@ export const FEATURE_SPOTLIGHTS: FeatureSpotlight[] = [
   },
 ];
 
-export function getSpotlightById(id: string): FeatureSpotlight | undefined {
-  return FEATURE_SPOTLIGHTS.find((f) => f.id === id);
-}
-
 // ── Per-feature user state shape (stored in user.preferences) ────────
 //
 // preferences.featureSpotlights = {

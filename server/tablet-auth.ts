@@ -114,10 +114,6 @@ export async function validateTabletToken(
   };
 }
 
-export async function invalidateTabletSession(sessionId: string): Promise<void> {
-  db.delete(tabletSessions).where(eq(tabletSessions.id, sessionId)).run();
-}
-
 export async function invalidateTabletSessionByToken(token: string): Promise<void> {
   db.delete(tabletSessions).where(eq(tabletSessions.token, token)).run();
 }

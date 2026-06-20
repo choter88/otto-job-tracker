@@ -63,6 +63,3 @@ export function SubAccent({ children }: { children: ReactNode }) {
 export function SubDanger({ children }: { children: ReactNode }) {
   return <span className="text-danger font-medium">{children}</span>;
 }
-export function SubSuccess({ children }: { children: ReactNode }) {
-  return <span className="text-otto-accent-ink font-medium">{children}</span>;
-}

@@ -226,24 +226,6 @@ export async function portalActivate(payload: {
   return parseActivationPayload(json, "Activation response was missing required fields.");
 }
 
-/** @deprecated Use portalActivate() instead — kept for backward compatibility. */
-export async function portalIssueAndConsume(payload: {
-  portalToken: string;
-  officeId: string;
-  installationId: string;
-  hostFingerprint256: string;
-  appVersion?: string;
-  idempotencyKey?: string;
-}): Promise<LicenseActivateResult | { ok: false; error: LicenseRequestError }> {
-  const base = getLicenseBaseUrl();
-  const url = new URL("/portal/api/desktop/claims/issue-and-consume", base);
-  const { portalToken, ...body } = payload;
-  const { status, json, networkError } = await fetchJson(url, body, portalToken);
-  if (networkError) return { ok: false, error: networkError };
-  if (status < 200 || status >= 300) return { ok: false, error: errorFromResponse(status, json) };
-  return parseActivationPayload(json, "Issue-and-consume response was missing required fields.");
-}
-
 export type DailyActivitySummary = {
   date: string;
   actions: Record<string, number>;
@@ -339,37 +321,6 @@ export async function portalCheckin(payload: {
 export type InviteCodeValidationResult =
   | { ok: true; officeName: string; officeId: string }
   | { ok: false; error: LicenseRequestError };
-
-export async function portalValidateInviteCode(payload: {
-  inviteCode: string;
-  installationId: string;
-}): Promise<InviteCodeValidationResult> {
-  const base = getLicenseBaseUrl();
-  const url = new URL("/portal/api/invite-codes/validate", base);
-  const { status, json, networkError } = await fetchJson(url, payload);
-  if (networkError) return { ok: false, error: networkError };
-
-  if (status < 200 || status >= 300) {
-    return { ok: false, error: errorFromResponse(status, json) };
-  }
-
-  if (!json?.valid) {
-    return {
-      ok: false,
-      error: {
-        statusCode: 403,
-        code: "INVALID_INVITE_CODE",
-        message: json?.message || "Invalid or expired invite code",
-      },
-    };
-  }
-
-  return {
-    ok: true,
-    officeName: String(json.officeName || ""),
-    officeId: String(json.officeId || ""),
-  };
-}
 
 // --- Invite code management (Host-side, requires hostToken) ---
 

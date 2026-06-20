@@ -182,12 +182,6 @@ export function trackEvent(opts: {
   }
 }
 
-/** @deprecated No-op. Events are now written directly to SQLite. Kept for backward compatibility. */
-export function startEventFlusher(): void {}
-
-/** @deprecated No-op. Events are now written directly to SQLite. Kept for backward compatibility. */
-export function stopEventFlusher(): void {}
-
 // ── Aggregation (for check-in) ───────────────────────────────────────
 
 export type DailyActivitySummary = {

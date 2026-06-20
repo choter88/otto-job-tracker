@@ -371,8 +371,3 @@ export function startLicenseScheduler(): void {
     void maybeCheckin();
   }, POLL_INTERVAL_MS);
 }
-
-export function stopLicenseScheduler(): void {
-  if (checkinTimer) clearInterval(checkinTimer);
-  checkinTimer = null;
-}

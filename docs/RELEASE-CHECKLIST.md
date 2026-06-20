@@ -4,10 +4,12 @@ A renderer crash or a dead license check-in both pass `tsc` and the build — so
 can only be caught by lint + actually launching the app. Run these before publishing
 a GitHub release that offices auto-update into.
 
-## Automated gates (run by `npm run build`)
+## Pre-release checks (run these manually before publishing)
+These are **not** run by `npm run build` (which only does `vite build`, `build:tablet`,
+and the esbuild server bundle). There is no `prebuild` hook, so nothing here gates the
+build automatically — you must run them yourself and treat a failure as a release blocker.
 - **`npm run lint`** — `eslint client` with `react-hooks/rules-of-hooks: error`. Catches
   hooks-after-early-return (the v1.7.16 "React #310" crash class) that `tsc` cannot.
-  Wired as `prebuild`, so **a violation fails the build** and can't ship.
 - **`npm run check`** — `tsc` typecheck.
 - **`npm run test:all`** — unit/integration suite.
 

@@ -56,15 +56,6 @@ export type OrderSheetLearnableField =
   | "jobType"
   | "destination";
 
-export const ORDER_SHEET_LEARNABLE_FIELDS: OrderSheetLearnableField[] = [
-  "patientName",
-  "trayNumber",
-  "phone",
-  "orderDate",
-  "jobType",
-  "destination",
-];
-
 export interface OrderSheetAnchorRule {
   field: OrderSheetLearnableField;
   /** Normalized text of the printed label the value sits next to ("" for

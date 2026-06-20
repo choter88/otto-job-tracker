@@ -108,7 +108,3 @@ export function mapStatusToEnum(
 
   return STANDARD_ID_TO_ENUM[trimmed] ?? null;
 }
-
-export function isPatientStatus(value: unknown): value is PatientStatus {
-  return typeof value === "string" && (PATIENT_STATUS_VALUES as readonly string[]).includes(value);
-}
