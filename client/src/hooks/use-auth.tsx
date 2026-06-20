@@ -100,10 +100,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     mutationFn: async () => {
       await apiRequest("POST", "/api/logout");
     },
-    onMutate: () => {
-      queryClient.clear();
-    },
     onSuccess: () => {
+      // Clear cached data AFTER the server session is destroyed, then pin the
+      // user to null. Clearing in onMutate (before the POST) refetched
+      // /api/user with the still-valid cookie and repopulated the user — which
+      // silently defeated logout, including the inactivity timeout.
+      queryClient.clear();
       queryClient.setQueryData(["/api/user"], null);
     },
     onError: (error: Error) => {
