@@ -513,18 +513,26 @@ function _relaunchClientToReconnect() {
 }
 
 function _startClientReconnectWatch(win, immediate) {
+  _logStartup(`[reconnect] watch start immediate=${!!immediate} alreadyWatching=${!!clientReconnectTimer} winIsMain=${win === mainWindow}`); // ponytail: diagnostic, remove once root cause confirmed
   if (clientReconnectTimer && !immediate) return; // already watching
   if (clientReconnectTimer) { clearTimeout(clientReconnectTimer); clientReconnectTimer = null; }
   clientReconnectAttempt = 0;
   if (immediate) reconnectRelaunchChain = 0; // explicit "Try now" — earn fresh relaunches
 
   const tick = async () => {
+    _logStartup(`[reconnect] tick fired (uptime ${Math.round(process.uptime())}s)`); // ponytail: diagnostic, remove once root cause confirmed
     // Only ever act for the CURRENT client window. A stale/superseded window or
     // a host must never reach the relaunch.
-    if (!win || win.isDestroyed() || win !== mainWindow || app.__ottoQuitting) { _stopClientReconnectWatch(); return; }
+    if (!win || win.isDestroyed() || win !== mainWindow || app.__ottoQuitting) {
+      _logStartup(`[reconnect] tick bail guard1: win=${!!win} destroyed=${!!(win && win.isDestroyed && win.isDestroyed())} isMain=${win === mainWindow} quitting=${!!app.__ottoQuitting}`); // ponytail: diagnostic
+      _stopClientReconnectWatch(); return;
+    }
     let config;
-    try { config = _readConfig(); } catch { config = null; }
-    if (!config || config.mode !== "client") { _stopClientReconnectWatch(); return; }
+    try { config = _readConfig(); } catch (e) { config = null; _logStartup(`[reconnect] tick readConfig threw: ${(e && e.message) || e}`); } // ponytail: diagnostic
+    if (!config || config.mode !== "client") {
+      _logStartup(`[reconnect] tick bail guard2: mode=${config ? config.mode : "<null>"}`); // ponytail: diagnostic
+      _stopClientReconnectWatch(); return;
+    }
 
     const target = _getTargetUrlForConfig(config);
     const hp = parseHostPort(target);
