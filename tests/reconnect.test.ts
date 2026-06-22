@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getReconnectDelay, isOnlineLoad } from "../desktop/lib/reconnect.js";
+import { getReconnectDelay, isOnlineLoad, cspAllowsInline } from "../desktop/lib/reconnect.js";
 
 test("getReconnectDelay grows then caps at 15s", () => {
   assert.equal(getReconnectDelay(0), 2000);
@@ -21,4 +21,18 @@ test("isOnlineLoad never throws on garbage", () => {
   assert.equal(isOnlineLoad("", "https://x:5150"), false);
   assert.equal(isOnlineLoad("not a url", "also not"), false);
   assert.equal(isOnlineLoad(null, undefined), false);
+});
+
+test("cspAllowsInline: file:// (offline.html) gets the inline-allowing policy, the app does not", () => {
+  // The bug: the strict header CSP (script-src 'self') was stamped on the
+  // file:// offline page too, blocking its inline "Try now" handler.
+  assert.equal(cspAllowsInline("file:///C:/Users/x/AppData/.../offline.html", false), true);
+  assert.equal(cspAllowsInline("https://192.168.1.16:5150/", false), false);
+  assert.equal(cspAllowsInline("https://192.168.1.16:5150/auth", false), false);
+  // explicit opt-in (boot.html-style) still works regardless of scheme
+  assert.equal(cspAllowsInline("https://x:5150/", true), true);
+  // garbage never throws, defaults to strict
+  assert.equal(cspAllowsInline("", false), false);
+  assert.equal(cspAllowsInline(null, false), false);
+  assert.equal(cspAllowsInline(undefined, undefined), false);
 });

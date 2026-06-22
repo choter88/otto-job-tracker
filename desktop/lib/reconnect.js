@@ -17,3 +17,11 @@ export function isOnlineLoad(loadedUrl, targetUrl) {
     return false;
   }
 }
+
+// Which session-CSP policy a response should get: the relaxed (inline-allowing)
+// one for local packaged HTML loaded via file:// (offline.html's "Try now"
+// button is an inline <script>), the strict one for the real app over https.
+// Lives here (electron-free) so the security-relevant choice is unit-testable.
+export function cspAllowsInline(url, allowInlineScripts) {
+  return !!allowInlineScripts || String(url || "").startsWith("file:");
+}

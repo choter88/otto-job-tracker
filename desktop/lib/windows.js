@@ -1,6 +1,6 @@
 import path from "path";
 import { BrowserWindow, Menu, screen } from "electron";
-import { getReconnectDelay, isOnlineLoad } from "./reconnect.js";
+import { getReconnectDelay, isOnlineLoad, cspAllowsInline } from "./reconnect.js";
 
 /**
  * In a packaged build, DevTools are disabled by default. Open them when:
@@ -60,8 +60,11 @@ const CSP_LOCAL_HTML =
 function injectCspOnSession(ses, { allowInlineScripts = false } = {}) {
   if (!ses || ses.__ottoCspInjected) return;
   ses.__ottoCspInjected = true;
-  const policy = allowInlineScripts ? CSP_LOCAL_HTML : CSP_APP;
   ses.webRequest.onHeadersReceived((details, callback) => {
+    // Per-request: local packaged HTML (offline.html, loaded via file://) needs
+    // its inline <script> to run; the app (https) keeps the strict policy. The
+    // main client window shares one session for both, so we can't pick once.
+    const policy = cspAllowsInline(details.url, allowInlineScripts) ? CSP_LOCAL_HTML : CSP_APP;
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -256,15 +259,21 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
         return;
       }
 
-      // Client: an in-window loadURL can't recover a wedged connection, so do
-      // NOT loop loadURL here. Show the local offline page (only if not already
-      // on it — a failed load leaves the last committed page in place) and hand
-      // off to the main process, which probes the host directly and relaunches
-      // the client when it's actually reachable.
+      // Client: show the local offline page (only if not already on it — a
+      // failed load leaves the last committed page in place), then recover via
+      // TWO independent paths so one mechanism failing can't strand the client:
+      //   1. in-window loadURL backoff (scheduleReconnect) — the same path the
+      //      Host uses; it reconnects the instant the host answers, with no
+      //      dependency on the main-process probe/relaunch timer. A fresh page
+      //      load establishes a fresh connection, so it recovers a down host.
+      //   2. the main-process host-probe + relaunch watch (onClientOffline), as
+      //      a backstop. Whichever recovers first wins (a real load -> online
+      //      cancels both).
       try {
         const cur = win.webContents.getURL() || "";
         if (!cur.startsWith("file:") && !win.isDestroyed()) win.loadFile(offlinePath);
       } catch { /* ignore */ }
+      scheduleReconnect();
       try { if (typeof onClientOffline === "function") onClientOffline(win, errorCode, errorDescription); } catch { /* ignore */ }
     },
   );

@@ -19,8 +19,10 @@ export function logStartup(app, message, error) {
           : "";
     fs.mkdirSync(path.dirname(getStartupLogPath(app)), { recursive: true, mode: 0o700 });
     fs.appendFileSync(getStartupLogPath(app), `[${stamp}] ${message}\n${details}\n\n`, { mode: 0o600 });
-  } catch {
-    // ignore
+  } catch (err) {
+    // Don't let logging crash anything, but don't hide log loss either — a
+    // silently-dropped line once sent a reconnect debug session in circles.
+    try { process.stderr.write(`[startup-log failed] ${message}: ${(err && err.message) || err}\n`); } catch { /* truly nothing */ }
   }
 }
 
