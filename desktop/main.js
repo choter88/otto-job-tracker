@@ -19,6 +19,7 @@ import {
   getErrorLogPath,
   loadDevDotEnv,
   getDefaultConfig,
+  setupState,
   getConfigPath,
   getDataDir,
   getOutboxPath,
@@ -189,6 +190,21 @@ function _readConfig() {
 
 function _writeConfig(config) {
   writeConfigRaw(app, config);
+}
+
+// True only when first-run setup actually finished — NOT just because a config
+// file exists (setup writes one mid-flow). An abandoned setup leaves an
+// "incomplete" config and should re-open to the setup window. Legacy configs
+// (written before the flag existed) are assumed complete and stamped on read.
+function _isSetupComplete() {
+  if (!fs.existsSync(_getConfigPath())) return false;
+  const config = _readConfig();
+  const state = setupState(config);
+  if (state === "legacy") {
+    _writeConfig({ ...config, setupComplete: true });
+    return true;
+  }
+  return state === "complete";
 }
 
 function _getHostTlsInfo() {
@@ -2516,6 +2532,11 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
   const previous = _readConfig();
   const config = { ...getDefaultConfig(), ...previous, ...configInput };
 
+  // A first-time setup save is partial (host server not bootstrapped yet) — mark
+  // it incomplete so an abandoned setup re-opens to the setup window. Stays true
+  // once setup has finished (carried through via ...previous on later saves).
+  if (config.setupComplete !== true) config.setupComplete = false;
+
   if (config.mode !== "client") {
     config.pairingCode = "";
     config.trustedFingerprint256 = "";
@@ -2596,6 +2617,10 @@ ipcMain.handle("otto:config:set", async (_event, configInput) => {
         message: "Could not start Otto Tracker with the selected setup. Please review your details and try again.",
       };
     }
+    // Client setup finishes here: it connects to an existing host (no bootstrap
+    // step), and not every client path calls otto:setup:complete. Stamp it so a
+    // reopen lands on the app, not back in setup.
+    _writeConfig({ ...config, setupComplete: true });
     if (setupWindow && !setupWindow.isDestroyed()) {
       setupWindow.close();
     }
@@ -2735,6 +2760,12 @@ ipcMain.handle("otto:setup:import-snapshot", async (_event, payload) => {
 
 ipcMain.handle("otto:setup:complete", async (_event, payload) => {
   const config = _readConfig();
+  // This fires only after setup truly finishes (host bootstrap / client
+  // register succeeded). Stamp completion so a reopen skips setup.
+  if (config.setupComplete !== true) {
+    config.setupComplete = true;
+    _writeConfig(config);
+  }
   _setAppMenu(config);
 
   // Auto-login support: if setup passes credentials, append them as a hash
@@ -3215,8 +3246,7 @@ app.whenReady().then(async () => {
   // import time.  This is a no-op if SENTRY_DSN was already present.
   initSentryMain({ appVersion: app.getVersion() });
 
-  const hasConfigFile = fs.existsSync(_getConfigPath());
-  if (!hasConfigFile) {
+  if (!_isSetupComplete()) {
     _setAppMenu(getDefaultConfig());
     _createSetupWindow();
     return;
@@ -3426,6 +3456,10 @@ app.on("second-instance", (_event, argv) => {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+  } else if (!_isSetupComplete()) {
+    // Relaunched mid-setup (or after abandoning it) — focus/reopen the setup
+    // window instead of booting a half-configured app.
+    _createSetupWindow();
   } else {
     // Window was destroyed while the app stayed resident (e.g. a Windows client
     // closed to tray and the user relaunched the exe). Reopen it from config —
@@ -3442,8 +3476,7 @@ app.on("activate", () => {
     return;
   }
 
-  const hasConfigFile = fs.existsSync(_getConfigPath());
-  if (!hasConfigFile) {
+  if (!_isSetupComplete()) {
     _setAppMenu(getDefaultConfig());
     _createSetupWindow();
     return;

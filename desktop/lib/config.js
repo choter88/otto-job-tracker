@@ -114,6 +114,20 @@ export function getDefaultConfig() {
   };
 }
 
+// Setup writes the config file before it finishes (otto:config:set starts the
+// host server mid-flow), so "file exists" doesn't mean "setup is done". Key off
+// an explicit flag instead. Three states:
+//   "complete"   — setup finished (flag true)
+//   "incomplete" — config saved mid-setup then abandoned (flag false) → re-show setup
+//   "legacy"     — config predates the flag (absent) → assume done, caller stamps it
+// getDefaultConfig() intentionally omits setupComplete so a merged legacy config
+// keeps the field undefined rather than inheriting a default.
+export function setupState(config) {
+  if (config?.setupComplete === true) return "complete";
+  if (config?.setupComplete === false) return "incomplete";
+  return "legacy";
+}
+
 export function getConfigPath(app) {
   return path.join(app.getPath("userData"), "otto-config.json");
 }
