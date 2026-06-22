@@ -357,17 +357,24 @@
       .box { margin-top: 10px; border: 1px solid var(--border); background: #f8fbff; border-radius: 12px; padding: 12px; }
       .stale-warning { margin-top: 6px; font-size: 12px; color: #b45309; font-weight: 560; }
       .danger { color: var(--destructive); font-weight: 560; }
+
+      .choice-card.recommended {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px var(--primary);
+      }
+      #choiceCaption { color: var(--primary); margin-top: 4px; min-height: 18px; }
     </style>
   </head>
   <body>
     <div class="container">
 
       <!-- ============== PANEL: Choose mode (Part 2a) ============== -->
-      <div id="panelChoice" class="panel active">
+      <div id="panelChoice" class="panel">
         <div class="card">
           <div class="badge" aria-hidden="true">&#9673;</div>
           <h1 class="card-title">Welcome to Otto Tracker</h1>
           <p class="card-subtitle">How would you like to set up this computer?</p>
+          <p id="choiceCaption"></p>
 
           <div class="choice-grid">
             <div class="choice-card" id="choiceHost">
@@ -396,51 +403,14 @@
                 </div>
               </div>
             </div>
-            <div class="choice-card" id="choiceTablet">
-              <div style="display:flex; align-items:flex-start; gap:14px;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; margin-top:2px;">
-                  <rect width="16" height="20" x="4" y="2" rx="2" ry="2"/>
-                  <line x1="12" x2="12.01" y1="18" y2="18"/>
-                </svg>
-                <div>
-                  <p class="choice-title">Pair a tablet</p>
-                  <p class="choice-desc">Touch board for the lab. Pair from an active host.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ============== PANEL: Tablet info ============== -->
-      <div id="panelTabletInfo" class="panel">
-        <div class="card">
-          <div class="badge" aria-hidden="true">&#9673;</div>
-          <h1 class="card-title">Pair a tablet</h1>
-          <p class="card-subtitle">Tablets pair with an already-active host on your network.</p>
-          <div class="box" style="margin-top: 16px;">
-            <p style="margin: 0; font-size: 13.5px; line-height: 1.55;">
-              On the host computer, open <strong>Office Settings → Tablet</strong>.
-              Scan the QR code shown there with the tablet's camera, or enter the URL
-              manually. The tablet will join the office automatically.
-            </p>
-          </div>
-          <div class="box" style="margin-top: 12px; background: var(--paper-2, #eef0f3); border: none;">
-            <p style="margin: 0; font-size: 12.5px; color: var(--ink-mute, #7a8398);">
-              You don't pair tablets from this screen — they pair from the host. This
-              option is here so you remember the tablet exists.
-            </p>
-          </div>
-          <div style="margin-top: 18px; display: flex; gap: 8px;">
-            <button id="tabletInfoBack" class="btn-secondary">Back</button>
           </div>
         </div>
       </div>
 
       <!-- ============== PANEL: Host Step 1 — Sign in ============== -->
-      <div id="panelHostSignIn" class="panel">
+      <div id="panelHostSignIn" class="panel active">
         <div class="card">
-          <div class="step-label">Step 1 of 3 &middot; Sign in to your Otto account</div>
+          <div class="step-label">Sign in to set up this computer</div>
           <h2 class="card-title" style="font-size:22px">Sign in to Otto</h2>
           <p class="card-subtitle">Use the email and password from your ottojobtracker.com account.</p>
 
@@ -459,7 +429,7 @@
           <div id="signInStatus" class="status"></div>
 
           <div class="actions">
-            <button class="btn-back" id="hostSignInBack">&larr; Back</button>
+            <button class="btn-back" id="hostSignInBack" style="display:none">&larr; Back</button>
             <button class="btn-primary" id="hostSignInNext">Sign In</button>
           </div>
         </div>
@@ -683,6 +653,7 @@
       let portalOffices = [];
       let selectedOffice = null;
       let existingConfig = null;
+      let preselectEnabled = false;
 
       // ===== Panel navigation =====
       function showPanel(id) {
@@ -691,25 +662,62 @@
         if (panel) panel.classList.add("active");
       }
 
-      // ===== Part 2a: Choice cards =====
+      function renderRoleChoice() {
+        const caption = document.getElementById("choiceCaption");
+        const hostCard = document.getElementById("choiceHost");
+        const clientCard = document.getElementById("choiceClient");
+        hostCard.classList.remove("recommended");
+        clientCard.classList.remove("recommended");
+        if (caption) caption.textContent = "";
+
+        if (!preselectEnabled || !selectedOffice) return; // plain, un-preselected choice
+
+        const officeName = selectedOffice.officeName || "your practice";
+        if (selectedOffice.suggestedRole === "host") {
+          hostCard.classList.add("recommended");
+          if (caption) caption.textContent = `No Host computer found for ${officeName} yet — set this one up as the Host.`;
+        } else if (selectedOffice.suggestedRole === "client") {
+          clientCard.classList.add("recommended");
+          if (caption) caption.textContent = `A Host is already running for ${officeName} — connect this computer to it.`;
+        }
+        // suggestedRole === "manual" (stale/ambiguous): no highlight.
+      }
+
+      // ===== Role choice (after sign-in) =====
       document.getElementById("choiceHost").addEventListener("click", () => {
-        showPanel("panelHostSignIn");
+        // Already signed in at entry — go straight to office confirm + setup.
+        // panelHostOffice also hosts the optional "import a backup" affordance,
+        // so we always show it (even for a single office), matching prior behavior.
+        if (portalToken) { renderOfficeSelect(); showPanel("panelHostOffice"); return; }
+        showPanel("panelHostSignIn"); // defensive fallback; not reached in the new flow
       });
 
-      document.getElementById("choiceClient").addEventListener("click", () => {
+      document.getElementById("choiceClient").addEventListener("click", async () => {
+        const caption = document.getElementById("choiceCaption");
+        // Zero-typing: pair from the portal-published Host address.
+        if (portalToken && selectedOffice && selectedOffice.host) {
+          if (caption) caption.textContent = "Connecting to your Host…";
+          let paired = null;
+          try {
+            paired = await window.otto.clientPairFromPortal({ office: selectedOffice });
+          } catch {
+            paired = null;
+          }
+          if (paired && paired.ok) {
+            clientHostUrl = paired.hostUrl;
+            clientPairingCode = paired.pairingCode || "";
+            clientTrustedFingerprint = paired.tlsFingerprint256 || "";
+            clientOfficeName = paired.officeName || selectedOffice.officeName || "";
+            const accountOfficeName = document.getElementById("accountOfficeName");
+            if (accountOfficeName) accountOfficeName.textContent = clientOfficeName || "your practice";
+            showPanel("panelClientAccount");
+            return;
+          }
+          if (caption) caption.textContent = (paired && paired.message) || "Couldn't reach the Host from the portal — searching your network instead.";
+        }
+        // Fallback: today's LAN scan + manual entry (also covers multi-office accounts).
         startHostDiscovery();
       });
-
-      document.getElementById("choiceTablet").addEventListener("click", () => {
-        showPanel("panelTabletInfo");
-      });
-
-      const tabletInfoBack = document.getElementById("tabletInfoBack");
-      if (tabletInfoBack) {
-        tabletInfoBack.addEventListener("click", () => {
-          showPanel("panelChoice");
-        });
-      }
 
       // ===== Host Step 1: Sign in =====
       const portalEmailInput = document.getElementById("portalEmail");
@@ -786,13 +794,14 @@
 
           setStatus(signInStatus, "");
 
-          // Always show office selection as step 2, even with one office
+          // Front-loaded sign-in now routes to the role choice, not straight to
+          // host setup. Preselect a role only when the portal kill switch is on
+          // AND exactly one activatable practice is in play (decision #9).
           portalOffices = activatable;
-          if (activatable.length === 1) {
-            selectedOffice = activatable[0];
-          }
-          renderOfficeSelect();
-          showPanel("panelHostOffice");
+          preselectEnabled = result.preselectEnabled === true;
+          selectedOffice = activatable.length === 1 ? activatable[0] : null;
+          renderRoleChoice();
+          showPanel("panelChoice");
         } catch {
           setStatus(signInStatus, "Connection failed. Check internet access and try again.", "err");
         } finally {
@@ -1508,6 +1517,13 @@
       (async () => {
         if (window.otto && typeof window.otto.getConfig === "function") {
           existingConfig = await window.otto.getConfig();
+        }
+        // New flow: sign in first, then choose/confirm role. If the portal bridge
+        // is missing (old/partial build), fall back to the legacy 3-card chooser.
+        if (window.otto && typeof window.otto.portalDesktopAuth === "function") {
+          showPanel("panelHostSignIn");
+        } else {
+          showPanel("panelChoice");
         }
       })();
     </script>
