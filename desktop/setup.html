@@ -685,6 +685,7 @@
 
       // ===== Role choice (after sign-in) =====
       document.getElementById("choiceHost").addEventListener("click", () => {
+        const c = document.getElementById("choiceCaption"); if (c) c.textContent = "";
         // Already signed in at entry — go straight to office confirm + setup.
         // panelHostOffice also hosts the optional "import a backup" affordance,
         // so we always show it (even for a single office), matching prior behavior.
@@ -1162,6 +1163,7 @@
       let discoveredHosts = [];
 
       document.getElementById("clientDiscoverBack").addEventListener("click", () => {
+        renderRoleChoice();
         showPanel("panelChoice");
       });
 
