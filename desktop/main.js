@@ -109,6 +109,7 @@ import {
 
 import { isAlwaysOnHostCapable, shouldStartHostServer, isResidentApp, residentToggleField, residentCopy } from "./lib/always-on.js";
 import { parseHostPort, probeHost } from "./lib/host-probe.js";
+import { decidePreselectedRole, pickReachableHostUrl } from "./lib/onboarding-role.js";
 
 import { buildUpdateInstallPrompt } from "./lib/update-prompt.js";
 
@@ -2083,16 +2084,31 @@ async function portalDesktopAuth(payload) {
 
     const user = json.user && typeof json.user === "object" ? json.user : null;
 
+    const HOST_STALE_MS = 24 * 60 * 60 * 1000; // ponytail: 24h >> 4h heartbeat ceiling; widen if idle hosts get flagged stale
+    const now = Date.now();
+
     const offices = Array.isArray(json.offices)
-      ? json.offices.map((o) => ({
-          officeId: o.officeId || o.portalOfficeId || o.id || "",
-          officeName: o.officeName || o.name || "",
-          role: o.role || "",
-          address: o.address || null,
-          phone: o.phone || null,
-          email: o.email || null,
-          subscriptionStatus: o.subscriptionStatus || null,
-        }))
+      ? json.offices.map((o) => {
+          const host = o.host && typeof o.host === "object" ? {
+            // SCHEME-LESS host:port strings — addressToUrl re-adds the scheme.
+            localAddresses: Array.isArray(o.host.localAddresses) ? o.host.localAddresses : [],
+            pairingCode: o.host.pairingCode || "",
+            tlsFingerprint256: o.host.tlsFingerprint256 || "",
+            lastCheckinAt: o.host.lastCheckinAt || 0,
+          } : null;
+          const office = {
+            officeId: o.officeId || o.portalOfficeId || o.id || "",
+            officeName: o.officeName || o.name || "",
+            role: o.role || "",
+            address: o.address || null,
+            phone: o.phone || null,
+            email: o.email || null,
+            subscriptionStatus: o.subscriptionStatus || null,
+            host,
+          };
+          office.suggestedRole = decidePreselectedRole(office, { now, staleMs: HOST_STALE_MS }).role;
+          return office;
+        })
       : [];
 
     if (!token) {
@@ -2104,6 +2120,7 @@ async function portalDesktopAuth(payload) {
       token,
       expiresAt,
       offices,
+      preselectEnabled: json.preselectEnabled === true,
       firstName: user?.firstName || null,
       lastName: user?.lastName || null,
       email: user?.email || null,
@@ -2117,6 +2134,38 @@ async function portalDesktopAuth(payload) {
         : "Could not connect to portal. Check internet access and try again.",
     };
   }
+}
+
+// Zero-typing client pairing: read the chosen office's portal-published Host
+// record, probe its addresses on the LAN, and return the first reachable one as
+// a full URL with the pinned TLS fingerprint. The renderer then runs the same
+// downstream pairing it does for a LAN-scanned host (account + saveConfig).
+async function clientPairFromPortal(payload) {
+  const office = payload && payload.office;
+  const host = office && office.host;
+  const addrs = host && Array.isArray(host.localAddresses) ? host.localAddresses : [];
+  if (addrs.length === 0) {
+    return { ok: false, message: "No Host address is published for this practice yet." };
+  }
+  // Packaged builds serve HTTPS with a self-signed cert; dev serves HTTP.
+  const scheme = app.isPackaged ? "https" : "http";
+  const hostUrl = await pickReachableHostUrl(addrs, {
+    probe: ({ host: h, port }) => probeHost({ host: h, port, timeoutMs: 3000 }),
+    scheme,
+  });
+  if (!hostUrl) {
+    return {
+      ok: false,
+      message: "Found the Host in the portal but couldn't reach it on this network. Make sure the Host computer is on and connected to the same network.",
+    };
+  }
+  return {
+    ok: true,
+    hostUrl,
+    pairingCode: host.pairingCode || "",
+    tlsFingerprint256: host.tlsFingerprint256 || "",
+    officeName: office.officeName || "",
+  };
 }
 
 async function portalValidateInviteCodeDesktop(payload) {
@@ -3152,6 +3201,16 @@ ipcMain.handle("otto:portal:find-host", async (_event, payload) => {
 
 ipcMain.handle("otto:portal:desktop-auth", async (_event, payload) => {
   return await portalDesktopAuth(payload);
+});
+
+ipcMain.handle("otto:client:pair-from-portal", async (_event, payload) => {
+  try {
+    return await clientPairFromPortal(payload);
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    _logStartup("client pair-from-portal IPC error", msg, err && err.stack);
+    return { ok: false, message: "Could not pair from the portal. Try again, or search your network." };
+  }
 });
 
 ipcMain.handle("otto:portal:validate-invite-code", async (_event, payload) => {

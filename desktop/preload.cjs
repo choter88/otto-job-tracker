@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("otto", {
   openSmsDraft: (payload) => ipcRenderer.invoke("otto:sms:draft:open", payload),
   portalFindHost: (payload) => ipcRenderer.invoke("otto:portal:find-host", payload),
   portalDesktopAuth: (payload) => ipcRenderer.invoke("otto:portal:desktop-auth", payload),
+  clientPairFromPortal: (payload) => ipcRenderer.invoke("otto:client:pair-from-portal", payload),
   validateInviteCode: (payload) => ipcRenderer.invoke("otto:portal:validate-invite-code", payload),
   clientRegister: (payload) => ipcRenderer.invoke("otto:portal:client-register", payload),
   setupBootstrap: (payload) => ipcRenderer.invoke("otto:setup:bootstrap", payload),
