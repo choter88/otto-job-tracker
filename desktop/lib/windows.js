@@ -292,6 +292,18 @@ export function createWindow(targetUrl, config, { __dirname: dirName, APP_DISPLA
     }
   });
 
+  // Background timers can be frozen while the app/VM sits idle (observed on a
+  // Windows VM: the retry timer didn't fire for over a minute until the user
+  // interacted), so a purely timer-driven retry can't be relied on. When the
+  // window comes back to the foreground while we're still on the offline page,
+  // retry immediately — that's exactly the moment the user is waiting for it.
+  win.on("focus", () => {
+    if (win.isDestroyed()) return;
+    try {
+      if ((win.webContents.getURL() || "").startsWith("file:")) loadApp();
+    } catch { /* ignore */ }
+  });
+
   registerTlsTrustForWindow(win, targetUrl, config);
   loadApp();
   setupNoInternetNetworkGuard(win.webContents.session, new URL(targetUrl).origin);
