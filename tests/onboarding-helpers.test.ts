@@ -14,6 +14,7 @@ import {
   shouldAutoLaunchWizard,
   shouldShowBackupRestoreBanner,
   shouldShowSetupCard,
+  markBackupRestoreReviewed,
 } from "../shared/onboarding";
 
 const NOW = 1700000000000;
@@ -135,6 +136,21 @@ test("shouldShowBackupRestoreBanner: only Owner/Manager, only for backup source"
   assert.equal(shouldShowBackupRestoreBanner(backup, "manager"), true);
   assert.equal(shouldShowBackupRestoreBanner(fresh, "owner"), false);
   assert.equal(shouldShowBackupRestoreBanner(backup, "staff"), false);
+});
+
+test("shouldShowBackupRestoreBanner: hidden once acknowledged, for everyone (the bug: it used to show forever)", () => {
+  const settings = { onboarding: defaultOnboardingForBackupRestore(NOW) };
+  assert.equal(shouldShowBackupRestoreBanner(settings, "owner"), true);
+  // Acknowledging persists office-wide → stays hidden for every owner/manager,
+  // not just the device that dismissed it.
+  const reviewed = { onboarding: markBackupRestoreReviewed(getOnboarding(settings), NOW) };
+  assert.equal(shouldShowBackupRestoreBanner(reviewed, "owner"), false);
+  assert.equal(shouldShowBackupRestoreBanner(reviewed, "manager"), false);
+});
+
+test("getOnboarding: defaults backupRestoreReviewedAt to null when absent", () => {
+  const state = getOnboarding({ onboarding: { state: "completed", source: "backup", completedSteps: [] } });
+  assert.equal(state.backupRestoreReviewedAt, null);
 });
 
 test("markStepCompleted: appends to completedSteps and bumps state to in_progress", () => {

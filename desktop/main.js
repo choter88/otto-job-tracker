@@ -792,15 +792,28 @@ function _destroyTray() {
 function _showMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
+    let config = null;
+    try { config = _readConfig(); } catch { /* default null */ }
     // Reopen always reloads: after auto-logout this lands on a fresh login, and
     // it recovers a stale/offline renderer that closing-to-tray left behind.
-    try { mainWindow.loadURL(_getTargetUrlForConfig(_readConfig()), { extraHeaders: "pragma: no-cache\n" }); } catch { /* ignore */ }
-    mainWindow.show();
-    if (process.platform === "darwin") {
-      let isHost = false;
-      try { isHost = _readConfig().mode === "host"; } catch { /* default false */ }
-      if (isHost) app.dock?.show?.();
+    const reload = () => {
+      try { mainWindow.loadURL(_getTargetUrlForConfig(config || _readConfig()), { extraHeaders: "pragma: no-cache\n" }); } catch { /* ignore */ }
+    };
+    // Client: the on-close auto-logout clears the (process-scoped, in-memory)
+    // session cookie, but clear again right before the reopen reload so a
+    // hidden→reopened window can never silently re-validate a session that
+    // outlived the logout. This is the Windows fix: the tray reopen reloads,
+    // which previously refreshed the still-live rolling session and kept the
+    // user signed in. The always-on Host (persist:otto-host) reopens unchanged.
+    if (config && config.mode === "client") {
+      mainWindow.webContents.session
+        .clearStorageData({ storages: ["cookies", "localStorage", "sessionStorage"] })
+        .then(reload, reload);
+    } else {
+      reload();
     }
+    mainWindow.show();
+    if (process.platform === "darwin" && config && config.mode === "host") app.dock?.show?.();
     mainWindow.focus();
     return;
   }
@@ -866,9 +879,16 @@ function _handleMainWindowClose(event, win) {
   try { win.webContents.send("otto:auto-logout"); } catch { /* best-effort */ }
   try {
     const ses = win.webContents.session;
-    setTimeout(() => {
-      try { ses.clearStorageData({ storages: ["cookies", "localStorage", "sessionStorage"] }); } catch { /* best-effort */ }
-    }, 1500);
+    if (config.mode === "client") {
+      // Client: clear immediately (no delay) so a quick tray-reopen can't
+      // re-validate the session before the logout lands. _showMainWindow also
+      // clears before reload as the deterministic guard.
+      ses.clearStorageData({ storages: ["cookies", "localStorage", "sessionStorage"] }).catch(() => { /* best-effort */ });
+    } else {
+      setTimeout(() => {
+        try { ses.clearStorageData({ storages: ["cookies", "localStorage", "sessionStorage"] }); } catch { /* best-effort */ }
+      }, 1500);
+    }
   } catch { /* best-effort */ }
   _updateTrayMenu();
   _maybeShowHiddenToTrayNotice();

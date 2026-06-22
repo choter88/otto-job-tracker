@@ -13,13 +13,14 @@ function dismissKey(officeId: string | null | undefined): string | null {
 }
 
 /**
- * Shown once after a backup-restore install. The user dismisses it permanently
- * (per-office, in localStorage). They can also click "Review settings" to open
- * the wizard in review mode.
+ * Shown once after a backup-restore install. Dismissing it (or clicking "Review
+ * settings") records an office-wide acknowledgement on the server, so it won't
+ * reappear on other devices or future logins. localStorage gives an instant
+ * local hide while that round-trip lands.
  */
 export default function BackupRestoreBanner() {
   const { user } = useAuth();
-  const { showBackupRestoreBanner } = useOnboarding();
+  const { showBackupRestoreBanner, markBackupRestoreReviewed } = useOnboarding();
   const [, navigate] = useLocation();
   const [dismissed, setDismissed] = useState(true);
 
@@ -35,9 +36,12 @@ export default function BackupRestoreBanner() {
     const key = dismissKey(user?.officeId);
     if (key) localStorage.setItem(key, "1");
     setDismissed(true);
+    // Authoritative, office-wide: stops it reappearing on other devices/logins.
+    markBackupRestoreReviewed().catch(() => { /* local hide already applied */ });
   }
 
   function handleReview() {
+    markBackupRestoreReviewed().catch(() => { /* non-blocking */ });
     navigate("/setup");
   }
 

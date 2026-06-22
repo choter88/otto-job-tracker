@@ -13,6 +13,7 @@ import {
   shouldAutoLaunchWizard,
   shouldShowSetupCard,
   shouldShowBackupRestoreBanner,
+  markBackupRestoreReviewed,
 } from "@shared/onboarding";
 import type { Office } from "@shared/schema";
 
@@ -67,6 +68,8 @@ export function useOnboarding() {
     markWizardSkipped: () =>
       patchOnboardingMutation.mutateAsync(markWizardSkipped(onboarding)),
     resetWizard: () => patchOnboardingMutation.mutateAsync(resetWizardState()),
+    markBackupRestoreReviewed: () =>
+      patchOnboardingMutation.mutateAsync(markBackupRestoreReviewed(onboarding)),
     isPending: patchOnboardingMutation.isPending,
   };
 }

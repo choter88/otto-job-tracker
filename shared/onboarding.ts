@@ -31,6 +31,9 @@ export interface OnboardingState {
   completedAt: string | null;
   startedAt: string | null;
   version: number;
+  // ISO timestamp set when an owner/manager acknowledges the "restored from
+  // backup" banner. Absent/null = not yet acknowledged → banner still shows.
+  backupRestoreReviewedAt?: string | null;
 }
 
 export const ONBOARDING_VERSION = 1;
@@ -128,6 +131,7 @@ export function getOnboarding(settings: unknown, now: number = Date.now()): Onbo
     completedAt: typeof raw.completedAt === "string" ? raw.completedAt : null,
     startedAt: typeof raw.startedAt === "string" ? raw.startedAt : null,
     version: typeof raw.version === "number" ? raw.version : ONBOARDING_VERSION,
+    backupRestoreReviewedAt: typeof raw.backupRestoreReviewedAt === "string" ? raw.backupRestoreReviewedAt : null,
   };
 }
 
@@ -158,7 +162,18 @@ export function shouldShowBackupRestoreBanner(
 ): boolean {
   if (userRole !== "owner" && userRole !== "manager") return false;
   const onboarding = getOnboarding(settings);
-  return onboarding.source === "backup";
+  // Only until an owner/manager acknowledges it. Otherwise a genuinely restored
+  // office shows the banner forever — on every device and every login — which
+  // reads as "showing when nothing was restored."
+  return onboarding.source === "backup" && !onboarding.backupRestoreReviewedAt;
+}
+
+/** Acknowledge the "restored from backup" banner so it stops showing (office-wide). */
+export function markBackupRestoreReviewed(
+  current: OnboardingState,
+  now: number = Date.now(),
+): OnboardingState {
+  return { ...current, backupRestoreReviewedAt: new Date(now).toISOString() };
 }
 
 export function markStepCompleted(
