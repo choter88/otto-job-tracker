@@ -54,7 +54,8 @@
     "test:login-ids": "node --import tsx --test tests/login-ids.test.ts",
     "test:host-probe": "node --import tsx --test tests/host-probe.test.ts",
     "test:onboarding-role": "node --import tsx --test tests/onboarding-role.test.ts",
-    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets && npm run test:always-on && npm run test:update-prompt && npm run test:reconnect && npm run test:login-ids && npm run test:host-probe && npm run test:onboarding-role",
+    "test:reset-config": "node --import tsx --test tests/reset-config.test.ts",
+    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets && npm run test:always-on && npm run test:update-prompt && npm run test:reconnect && npm run test:login-ids && npm run test:host-probe && npm run test:onboarding-role && npm run test:reset-config",
     "db:push": "drizzle-kit push"
   },
   "build": {

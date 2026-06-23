@@ -20,6 +20,7 @@ import {
   loadDevDotEnv,
   getDefaultConfig,
   setupState,
+  buildResetConfig,
   getConfigPath,
   getDataDir,
   getOutboxPath,
@@ -366,15 +367,12 @@ async function _resetHost() {
       try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
     }
 
-    // Reset config to fresh state (keeps backup settings)
+    // Reset config to fresh state: clears host identity AND marks setup
+    // incomplete so the next boot re-runs the setup wizard (keeps backup
+    // settings). Without setupComplete:false the app skips setup and lands on
+    // the client "Can't reach the office server" screen. See buildResetConfig.
     const config = _readConfig();
-    _writeConfig({
-      ...config,
-      mode: "",
-      hostToken: "",
-      activationCode: "",
-      trustedFingerprint256: "",
-    });
+    _writeConfig(buildResetConfig(config));
   } catch (error) {
     await dialog.showMessageBox({
       type: "error",

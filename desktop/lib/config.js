@@ -128,6 +128,25 @@ export function setupState(config) {
   return "legacy";
 }
 
+// Config to persist when a Host is reset to factory state. Clears all host
+// identity AND marks setup INCOMPLETE (setupComplete:false → setupState
+// "incomplete") so the next boot re-runs the setup wizard. Without the
+// setupComplete:false the app boots "complete but serverless": _isSetupComplete
+// returns true so setup is skipped, and the now-empty mode makes
+// getTargetUrlForConfig fall through to the stale hostUrl, landing on the client
+// "Can't reach the office server" screen. Backup settings are preserved on
+// purpose — the reset dialog promises local backups survive.
+export function buildResetConfig(config) {
+  return {
+    ...config,
+    mode: "",
+    hostToken: "",
+    activationCode: "",
+    trustedFingerprint256: "",
+    setupComplete: false,
+  };
+}
+
 export function getConfigPath(app) {
   return path.join(app.getPath("userData"), "otto-config.json");
 }
