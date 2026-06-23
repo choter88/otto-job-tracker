@@ -59,6 +59,7 @@ function readStoredConfig(prefs: unknown): TodayConfig | null {
   if (!raw || typeof raw !== "object") return null;
   const cfg = raw as Partial<TodayConfig>;
   if (!Array.isArray(cfg.slots) || cfg.slots.length !== 2) return null;
+  if (!cfg.slots.every((s) => s && typeof s === "object")) return null;
   return cfg as TodayConfig;
 }
 

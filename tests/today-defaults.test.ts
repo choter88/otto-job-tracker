@@ -42,6 +42,22 @@ test("resolveTodayConfig: staff cannot keep a non-queue tile", () => {
   assert.equal(cfg.slots[0].type, "queue");
 });
 
+test("resolveTodayConfig: manager (also privileged) may keep a non-queue tile", () => {
+  const prefs = { todayConfig: { slots: [
+    { type: "stats" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
+  ], activityFilter: ["comment"] } };
+  const cfg = resolveTodayConfig(prefs, "manager", VALID);
+  assert.equal(cfg.slots[0].type, "stats");
+});
+
+test("resolveTodayConfig: null/garbage slot entries fall back to role defaults", () => {
+  const prefs = { todayConfig: { slots: [null, null], activityFilter: [] } };
+  const cfg = resolveTodayConfig(prefs, "staff", VALID);
+  assert.equal(cfg.slots[0].type, "queue");
+  assert.equal(cfg.slots[0].mode, "outreach");
+  assert.deepEqual(cfg.activityFilter, ["comment", "overdue", "star_note"]);
+});
+
 test("resolveTodayConfig: owner may keep a non-queue tile", () => {
   const prefs = { todayConfig: { slots: [
     { type: "stats" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
