@@ -11,6 +11,7 @@ interface TopbarProps {
 }
 
 const TAB_LABELS: Record<string, string> = {
+  today: "Today",
   all: "Worklist",
   // Route id stays "important" for URL stability; only the label flipped
   // when we renamed the action to "starring" across the app.
