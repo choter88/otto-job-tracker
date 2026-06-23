@@ -144,6 +144,11 @@ export function buildResetConfig(config) {
     activationCode: "",
     trustedFingerprint256: "",
     setupComplete: false,
+    // A reset returns the machine to a fresh office, so order-sheet watching
+    // must start OFF — don't carry the prior office's watcher (or its watched
+    // folder) into the new office. A truly fresh install is already off; this
+    // closes the carry-over gap when an existing machine is reset to a new office.
+    orderSheets: getDefaultConfig().orderSheets,
   };
 }
 

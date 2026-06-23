@@ -41,6 +41,17 @@ test("reset clears all host identity", () => {
   assert.equal(reset.trustedFingerprint256, "");
 });
 
+test("reset turns order-sheet watching OFF for the new office (no carry-over)", () => {
+  const reset = buildResetConfig({
+    ...getDefaultConfig(),
+    mode: "host",
+    setupComplete: true,
+    orderSheets: { enabled: true, folder: "/old/office/sheets", includeExisting: true, enabledAt: 123 },
+  });
+  assert.equal(reset.orderSheets.enabled, false);
+  assert.equal(reset.orderSheets.folder, "");
+});
+
 test("reset preserves backup settings (the reset dialog promises local backups survive)", () => {
   const reset = buildResetConfig({
     ...getDefaultConfig(),
