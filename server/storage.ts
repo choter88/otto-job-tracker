@@ -130,6 +130,10 @@ export class DatabaseStorage {
     return user;
   }
 
+  async setUserLastSignout(userId: string, atMs: number = Date.now()): Promise<void> {
+    await db.update(users).set({ lastSignoutAt: new Date(atMs) }).where(eq(users.id, userId));
+  }
+
   async getOffice(id: string): Promise<Office | undefined> {
     const [office] = await db.select().from(offices).where(eq(offices.id, id));
     return office || undefined;

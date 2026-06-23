@@ -292,6 +292,13 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     }
   };
 
+  function ensureUserLastSignoutColumn() {
+    const cols = sqlite.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "last_signout_at")) {
+      sqlite.prepare(`ALTER TABLE users ADD COLUMN last_signout_at INTEGER`).run();
+    }
+  }
+
   const statements: string[] = [
     `PRAGMA foreign_keys = ON;`,
     `PRAGMA journal_mode = WAL;`,
@@ -611,6 +618,7 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     ensureJobFlagNoteColumns();
     ensureHighContrastOfficeColors();
     ensureUserPreferencesColumn();
+    ensureUserLastSignoutColumn();
   })();
 
   // Run numbered SQL migrations from server/migrations/.

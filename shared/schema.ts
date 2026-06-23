@@ -26,6 +26,7 @@ export const users = sqliteTable(
     preferences: text("preferences", { mode: "json" }).default("{}").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+    lastSignoutAt: integer("last_signout_at", { mode: "timestamp_ms" }),
   },
   (table) => ({
     emailIdx: uniqueIndex("users_email_unique").on(table.email),
