@@ -30,6 +30,7 @@ export type CustomListItem = {
   color: string;
   hsl?: string;
   order: number;
+  phone?: string; // labs/destinations only
 };
 
 type ListType = "statuses" | "jobTypes" | "destinations";
@@ -128,6 +129,16 @@ function SortableRow({
         />
       </div>
 
+      {type === "destinations" && (
+        <Input
+          value={item.phone ?? ""}
+          onChange={(e) => onUpdate(item.id, { phone: e.target.value })}
+          placeholder="phone"
+          className="h-7 px-2 w-36 text-[calc(12px*var(--ui-scale))] border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:bg-paper-2"
+          data-testid={`input-phone-${item.id}`}
+        />
+      )}
+
       <label
         className="relative w-6 h-6 rounded-full cursor-pointer shrink-0 transition-transform hover:scale-110 ring-1 ring-line"
         style={{ backgroundColor: item.color || "#888888" }}
@@ -174,6 +185,7 @@ function AddItemDialog({
   const noun = typeNoun(type);
   const [label, setLabel] = useState("");
   const [color, setColor] = useState(() => chooseHighContrastColor(existingColors));
+  const [phone, setPhone] = useState("");
 
   const isValid = label.trim().length > 0;
 
@@ -185,9 +197,11 @@ function AddItemDialog({
       color,
       hsl: hexToHSL(color),
       order: 999,
+      ...(type === "destinations" ? { phone: phone.trim() || undefined } : {}),
     });
     setLabel("");
     setColor(chooseHighContrastColor(existingColors));
+    setPhone("");
     onOpenChange(false);
   };
 
@@ -226,6 +240,17 @@ function AddItemDialog({
               <span className="text-sm text-muted-foreground">{color}</span>
             </div>
           </div>
+          {type === "destinations" && (
+            <div>
+              <Label className="text-sm font-medium">Phone</Label>
+              <Input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="e.g. +1 555-000-0000"
+                data-testid={`input-add-${type}-phone`}
+              />
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
