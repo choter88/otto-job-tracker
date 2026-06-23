@@ -86,8 +86,9 @@ function StampButtons({ jobId }: { jobId: string }) {
     onSuccess: ({ kind, id }) => {
       setStamps((s) => ({ ...s, [kind.toLowerCase()]: id }));
       setNote("");
-      qc.invalidateQueries({ queryKey: ["api/jobs", jobId, "comments"] });
-      qc.invalidateQueries({ queryKey: ["api/jobs/comment-counts"] });
+      qc.invalidateQueries({ queryKey: ["/api/jobs", jobId, "comments"] });
+      qc.invalidateQueries({ queryKey: ["/api/jobs/comment-counts"] });
+      qc.invalidateQueries({ queryKey: ["/api/jobs/unread-comments"] });
     },
   });
 
@@ -95,11 +96,14 @@ function StampButtons({ jobId }: { jobId: string }) {
     mutationFn: async (commentId: string) => { await apiRequest("DELETE", `/api/jobs/comments/${commentId}`); },
     onSuccess: (_d, commentId) => {
       setStamps((s) => (s.called === commentId ? { ...s, called: undefined } : { ...s, texted: undefined }));
-      qc.invalidateQueries({ queryKey: ["api/jobs", jobId, "comments"] });
+      qc.invalidateQueries({ queryKey: ["/api/jobs", jobId, "comments"] });
+      qc.invalidateQueries({ queryKey: ["/api/jobs/comment-counts"] });
     },
   });
 
+  const busy = post.isPending || undo.isPending;
   const toggle = (kind: "Called" | "Texted") => {
+    if (busy) return;
     const existing = kind === "Called" ? stamps.called : stamps.texted;
     if (existing) undo.mutate(existing);
     else post.mutate(kind);
@@ -108,10 +112,10 @@ function StampButtons({ jobId }: { jobId: string }) {
   return (
     <div className="flex-none flex flex-col items-end gap-1.5">
       <div className="flex gap-2">
-        <Button size="xs" variant={stamps.called ? "secondary" : "outline"} onClick={() => toggle("Called")} data-testid={`stamp-called-${jobId}`}>
+        <Button size="xs" variant={stamps.called ? "secondary" : "outline"} disabled={busy} onClick={() => toggle("Called")} data-testid={`stamp-called-${jobId}`}>
           {stamps.called ? "✓ Called" : "Called"}
         </Button>
-        <Button size="xs" variant={stamps.texted ? "secondary" : "outline"} onClick={() => toggle("Texted")} data-testid={`stamp-texted-${jobId}`}>
+        <Button size="xs" variant={stamps.texted ? "secondary" : "outline"} disabled={busy} onClick={() => toggle("Texted")} data-testid={`stamp-texted-${jobId}`}>
           {stamps.texted ? "✓ Texted" : "Texted"}
         </Button>
       </div>
