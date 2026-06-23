@@ -2834,6 +2834,16 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
+  app.get("/api/jobs/overdue-comments", requireOffice, async (req, res) => {
+    try {
+      const ids = typeof req.query.jobIds === "string" && req.query.jobIds
+        ? req.query.jobIds.split(",").filter(Boolean) : [];
+      res.json(await storage.getLastOverdueCommentByJob(ids));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.put("/api/jobs/:jobId/comment-reads", requireOffice, async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);

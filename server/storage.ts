@@ -495,6 +495,24 @@ export class DatabaseStorage {
     return comments;
   }
 
+  async getLastOverdueCommentByJob(jobIds: string[]): Promise<Record<string, JobCommentWithAuthor>> {
+    if (jobIds.length === 0) return {};
+    const rows = await db
+      .select({
+        id: jobComments.id, jobId: jobComments.jobId, authorId: jobComments.authorId,
+        content: jobComments.content, isOverdueComment: jobComments.isOverdueComment,
+        createdAt: jobComments.createdAt,
+        author: { id: users.id, firstName: users.firstName, lastName: users.lastName },
+      })
+      .from(jobComments)
+      .innerJoin(users, eq(users.id, jobComments.authorId))
+      .where(and(inArray(jobComments.jobId, jobIds), eq(jobComments.isOverdueComment, true)))
+      .orderBy(desc(jobComments.createdAt));
+    const byJob: Record<string, JobCommentWithAuthor> = {};
+    for (const r of rows) if (!byJob[r.jobId]) byJob[r.jobId] = r as JobCommentWithAuthor; // first = newest
+    return byJob;
+  }
+
   async createJobComment(comment: InsertJobComment): Promise<JobCommentWithAuthor> {
     const providedId = typeof (comment as any).id === "string" ? (comment as any).id.trim() : "";
     if (providedId) {
