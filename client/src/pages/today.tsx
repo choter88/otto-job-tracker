@@ -7,6 +7,8 @@ import JobDetailsModal, { type JobDetailsTab } from "@/components/job-details-mo
 import JobQueueTile from "@/components/today/job-queue-tile";
 import StarredTile from "@/components/today/starred-tile";
 import ActivityTile from "@/components/today/activity-tile";
+import StatsTile from "@/components/today/stats-tile";
+import AnalyticsTile from "@/components/today/analytics-tile";
 
 export default function Today() {
   const { user } = useAuth();
@@ -70,8 +72,15 @@ export default function Today() {
           {config.slots.map((slot, i) =>
             slot.type === "queue" && (slot.mode === "outreach" || slot.mode === "chase") ? (
               <JobQueueTile key={i} slot={slot} jobs={jobs} office={office} onOpenJob={openJob} onEdit={() => openEditFor(i)} />
+            ) : slot.type === "stats" ? (
+              <StatsTile key={i} jobs={jobs} />
+            ) : slot.type === "analytics" ? (
+              <AnalyticsTile key={i} jobs={jobs} />
+            ) : slot.type === "team" ? (
+              <ActivityTile key={i} scope="office" title="Team activity"
+                filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
             ) : (
-              <div key={i} data-testid={`today-slot-${i}`} />  // owner tiles filled in later tasks
+              <div key={i} data-testid={`today-slot-${i}`} />
             )
           )}
         </div>
