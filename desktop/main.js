@@ -108,7 +108,7 @@ import {
   setAppMenu as setAppMenuRaw,
 } from "./lib/menu.js";
 
-import { isAlwaysOnHostCapable, shouldStartHostServer, isResidentApp, residentToggleField, residentCopy } from "./lib/always-on.js";
+import { isAlwaysOnHostCapable, shouldStartHostServer, isResidentApp, shouldStayResidentOnAllClosed, residentToggleField, residentCopy } from "./lib/always-on.js";
 import { parseHostPort, probeHost } from "./lib/host-probe.js";
 import { decidePreselectedRole, pickReachableHostUrl } from "./lib/onboarding-role.js";
 
@@ -2848,6 +2848,12 @@ ipcMain.handle("otto:setup:complete", async (_event, payload) => {
 
   _createWindow(targetUrl, config);
 
+  // First-run only reaches resident mode here (the whenReady tray call is
+  // skipped while setup is incomplete). Create the tray now (idempotent) so the
+  // very first window close hides-to-tray + auto-logs-out, instead of skipping
+  // the HIPAA logout because the tray didn't exist yet.
+  if (isResidentApp(config)) createTray();
+
   if (config.mode === "host") {
     await _maybePromptForBackupFolder();
     await _maybeWarnAboutBackups();
@@ -3384,10 +3390,19 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   if (process.platform === "darwin") return;
   // Always-on host: keep the embedded server alive (and the office online) even
-  // when every window is gone. In production (capability off) this is false and
-  // the app quits on last-window-close exactly as before.
+  // when every window is gone — but ONLY once setup is complete (during setup
+  // there is no server to keep alive, so a closed setup window must quit instead
+  // of stranding a headless process) and ONLY if a tray exists to reopen from
+  // (Windows has no Dock; createTray is idempotent and returns null on failure).
+  // In production (capability off) this is false and the app quits on
+  // last-window-close exactly as before.
   try {
-    if (!app.__ottoQuitting && isResidentApp(_readConfig())) return;
+    const stay = shouldStayResidentOnAllClosed({
+      isQuitting: app.__ottoQuitting,
+      setupComplete: _isSetupComplete(),
+      config: _readConfig(),
+    });
+    if (stay && createTray()) return;
   } catch {
     // fall through to the default quit
   }

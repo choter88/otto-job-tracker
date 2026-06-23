@@ -43,6 +43,18 @@ export function isResidentApp(config, env = process.env) {
   return false;
 }
 
+// The window-all-closed decision (non-macOS): keep the process alive (resident)
+// only AFTER setup is complete. During setup there is no Host server/office to
+// keep alive, so closing the setup window must quit rather than strand a
+// headless process with no tray (the reported Windows bug). A real quit always
+// proceeds. The caller must still confirm a tray exists before staying headless
+// — being resident-eligible is necessary, not sufficient.
+export function shouldStayResidentOnAllClosed({ isQuitting, setupComplete, config } = {}, env = process.env) {
+  if (isQuitting) return false;
+  if (!setupComplete) return false;
+  return isResidentApp(config, env);
+}
+
 // The per-machine opt-out field the resident toggle flips, by mode. Host and
 // client keep separate fields so a client toggle never mutates host semantics.
 export function residentToggleField(mode) {

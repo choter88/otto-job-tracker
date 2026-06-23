@@ -11,7 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { isAlwaysOnHostCapable, isAlwaysOnHostActive, shouldStartHostServer, isResidentApp, residentToggleField, residentCopy } from "../desktop/lib/always-on.js";
+import { isAlwaysOnHostCapable, isAlwaysOnHostActive, shouldStartHostServer, isResidentApp, residentToggleField, residentCopy, shouldStayResidentOnAllClosed } from "../desktop/lib/always-on.js";
 
 const ON = { OTTO_ALWAYS_ON_HOST: "true" };
 const OFF = {};
@@ -121,4 +121,46 @@ test("residentCopy: client uses connection copy, no server/count language", () =
   assert.equal(c.trayQuitLabel, "Quit Otto");
   assert.doesNotMatch(c.trayStatusLabel, /server/i);
   assert.doesNotMatch(c.hiddenNoticeBody, /Workstations stay connected/);
+});
+
+// shouldStayResidentOnAllClosed — the window-all-closed decision. The reported
+// Windows bug: closing the SETUP window left a headless process with no tray,
+// because the resident gate ignored setup state.
+test("shouldStayResidentOnAllClosed: quits during setup (setupComplete false), even for a resident host", () => {
+  assert.equal(
+    shouldStayResidentOnAllClosed({ isQuitting: false, setupComplete: false, config: { mode: "host" } }, ON),
+    false,
+  );
+});
+
+test("shouldStayResidentOnAllClosed: stays resident after setup for a capable host", () => {
+  assert.equal(
+    shouldStayResidentOnAllClosed({ isQuitting: false, setupComplete: true, config: { mode: "host" } }, ON),
+    true,
+  );
+});
+
+test("shouldStayResidentOnAllClosed: a real quit always proceeds", () => {
+  assert.equal(
+    shouldStayResidentOnAllClosed({ isQuitting: true, setupComplete: true, config: { mode: "host" } }, ON),
+    false,
+  );
+});
+
+test("shouldStayResidentOnAllClosed: inert in production (capability off) — quits on last close as before", () => {
+  assert.equal(
+    shouldStayResidentOnAllClosed({ isQuitting: false, setupComplete: true, config: { mode: "host" } }, OFF),
+    false,
+  );
+});
+
+test("shouldStayResidentOnAllClosed: resident client stays after setup; an opted-out host quits", () => {
+  assert.equal(
+    shouldStayResidentOnAllClosed({ isQuitting: false, setupComplete: true, config: { mode: "client" } }, ON),
+    true,
+  );
+  assert.equal(
+    shouldStayResidentOnAllClosed({ isQuitting: false, setupComplete: true, config: { mode: "host", alwaysOnHost: false } }, ON),
+    false,
+  );
 });
