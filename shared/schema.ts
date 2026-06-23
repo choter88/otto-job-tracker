@@ -720,6 +720,7 @@ export const insertJobCommentSchema = createInsertSchema(jobComments)
   })
   .extend({
     id: z.string().min(1).optional(),
+    isOverdueComment: z.boolean().optional(),
   });
 
 export const insertCommentReadSchema = createInsertSchema(commentReads).omit({

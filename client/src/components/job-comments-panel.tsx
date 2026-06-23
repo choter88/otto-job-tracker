@@ -40,10 +40,11 @@ export default function JobCommentsPanel({
   });
 
   const addCommentMutation = useMutation({
-    mutationFn: async (input: { content: string; clientCommentId: string }) => {
+    mutationFn: async (input: { content: string; clientCommentId: string; isOverdueComment?: boolean }) => {
       const res = await apiRequest("POST", `/api/jobs/${job.id}/comments`, {
         id: input.clientCommentId,
         content: input.content.trim(),
+        ...(input.isOverdueComment ? { isOverdueComment: true } : {}),
       });
       return res.json();
     },
@@ -64,6 +65,7 @@ export default function JobCommentsPanel({
           authorId: user?.id || "",
           content: input.content.trim(),
           createdAt: new Date(),
+          isOverdueComment: input.isOverdueComment ?? false,
           author: {
             id: user?.id || "",
             firstName: user?.firstName || "",
