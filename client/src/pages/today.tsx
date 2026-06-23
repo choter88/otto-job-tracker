@@ -11,9 +11,11 @@ import StatsTile from "@/components/today/stats-tile";
 import AnalyticsTile from "@/components/today/analytics-tile";
 import TileEditDialog from "@/components/today/tile-edit-popover";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Today() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const { data: jobs = [] } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const { data: office } = useQuery<any>({
     queryKey: ["/api/offices", user?.officeId],
@@ -58,6 +60,8 @@ export default function Today() {
       await apiRequest("PUT", "/api/user/preferences", { todayConfig });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/user"] }),
+    onError: (e: any) =>
+      toast({ title: "Couldn't save your Today layout", description: e?.message, variant: "destructive" }),
   });
 
   const openEditFor = (i: number) => setEditState({ kind: "queue", slotIndex: i });
@@ -87,13 +91,26 @@ export default function Today() {
           {config.slots.map((slot, i) =>
             slot.type === "queue" && (slot.mode === "outreach" || slot.mode === "chase") ? (
               <JobQueueTile key={i} slot={slot} jobs={jobs} office={office} onOpenJob={openJob} onEdit={() => openEditFor(i)} />
-            ) : slot.type === "stats" ? (
-              <StatsTile key={i} jobs={jobs} />
-            ) : slot.type === "analytics" ? (
-              <AnalyticsTile key={i} jobs={jobs} />
-            ) : slot.type === "team" ? (
-              <ActivityTile key={i} scope="office" title="Team activity"
-                filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
+            ) : slot.type === "stats" || slot.type === "analytics" || slot.type === "team" ? (
+              // Non-queue tiles (owner/manager). Wrapped so they keep an Edit
+              // affordance — otherwise switching a slot's type would be one-way.
+              <div key={i} className="relative group" data-testid={`today-slot-${i}`}>
+                <button
+                  className="absolute top-1.5 right-1.5 z-10 text-xs text-ink-mute hover:text-ink opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => openEditFor(i)}
+                  data-testid={`today-slot-edit-${i}`}
+                >
+                  Edit
+                </button>
+                {slot.type === "stats" ? (
+                  <StatsTile jobs={jobs} />
+                ) : slot.type === "analytics" ? (
+                  <AnalyticsTile jobs={jobs} />
+                ) : (
+                  <ActivityTile scope="office" title="Team activity"
+                    filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
+                )}
+              </div>
             ) : (
               <div key={i} data-testid={`today-slot-${i}`} />
             )
