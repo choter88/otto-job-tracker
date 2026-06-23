@@ -85,6 +85,7 @@ import { registerTabletRoutes } from "./tablet-routes";
 import { invalidateTabletSessionsForUser } from "./tablet-auth";
 import type { User } from "@shared/schema";
 import { toLoginIds } from "./login-ids";
+import { boundaryFor } from "@shared/today-defaults";
 
 // ── Tablet session tracking (delegated to tablet-auth module) ──
 export { getActiveTabletSessionCount } from "./tablet-auth";
@@ -5408,6 +5409,26 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
   });
 
   // Legacy /tablet/heartbeat and /tablet/board routes removed — now handled by registerTabletRoutes() above.
+
+  app.get("/api/today/activity", requireOffice, async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      const officeId = getOfficeUser(req).officeId;
+      const scope = req.query.scope === "office" ? "office" : "me";
+      const typesParam = typeof req.query.types === "string" ? req.query.types : "";
+      const types = typesParam
+        ? (typesParam.split(",").filter(Boolean) as any)
+        : ["comment", "overdue", "star_note"];
+      const lastSignout = user.lastSignoutAt ? new Date(user.lastSignoutAt as any).getTime() : null;
+      const since = scope === "office"
+        ? Date.now() - 24 * 60 * 60 * 1000           // team tile: rolling 24h window
+        : boundaryFor(lastSignout, Date.now());       // personal: since last sign-out
+      const feed = await storage.getActivityFeed(officeId, since, types);
+      res.json({ since, items: feed });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   const server = createAppServer(app);
   return { server, sessionMiddleware };
