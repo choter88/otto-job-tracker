@@ -6,6 +6,7 @@ import type { Job } from "@shared/schema";
 import JobDetailsModal, { type JobDetailsTab } from "@/components/job-details-modal";
 import JobQueueTile from "@/components/today/job-queue-tile";
 import StarredTile from "@/components/today/starred-tile";
+import ActivityTile from "@/components/today/activity-tile";
 
 export default function Today() {
   const { user } = useAuth();
@@ -76,7 +77,7 @@ export default function Today() {
         </div>
         <div className="w-[360px] flex-none flex flex-col gap-4 min-h-0">
           <StarredTile office={office} onOpenJob={openJob} />
-          {/* Task 12: <ActivityTile filter={config.activityFilter} onOpenJob={openJob} /> */}
+          <ActivityTile filter={config.activityFilter} jobsById={jobsById} onOpenJob={openJob} onEdit={openActivityEdit} />
         </div>
       </div>
 
