@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { resolveTodayConfig } from "@shared/today-defaults";
 import type { Job } from "@shared/schema";
 import JobDetailsModal, { type JobDetailsTab } from "@/components/job-details-modal";
+import JobQueueTile from "@/components/today/job-queue-tile";
 
 export default function Today() {
   const { user } = useAuth();
@@ -62,9 +63,13 @@ export default function Today() {
       <div className="flex-1 min-h-0 flex gap-4 p-6 overflow-hidden">
         <div className="flex-1 min-w-0 overflow-auto flex flex-col gap-5">
           {/* Task 8/9/13: render config.slots[0] and config.slots[1] by type */}
-          {config.slots.map((_slot, i) => (
-            <div key={i} data-testid={`today-slot-${i}`}>{/* tile goes here */}</div>
-          ))}
+          {config.slots.map((slot, i) =>
+            slot.type === "queue" && slot.mode === "outreach" ? (
+              <JobQueueTile key={i} slot={slot} jobs={jobs} office={office} onOpenJob={openJob} onEdit={() => openEditFor(i)} />
+            ) : (
+              <div key={i} data-testid={`today-slot-${i}`} />  // chase + owner tiles filled in later tasks
+            )
+          )}
         </div>
         <div className="w-[360px] flex-none flex flex-col gap-4 min-h-0">
           {/* Task 11: <StarredTile onOpenJob={openJob} /> */}
