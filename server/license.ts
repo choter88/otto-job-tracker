@@ -116,6 +116,25 @@ export async function activateHostWithPortalToken(portalToken: string, officeId:
 
   updateState({ officeId });
   const snapshot = applyActivationResult(result);
+
+  // Publish this Host's LAN addresses to the portal immediately, so a Client can
+  // pair from the portal the moment the Host finishes setup. The scheduler's
+  // startup check-in fires 10s after boot — but any setup taking longer than 10s
+  // (the common case) means it already ran before the hostToken existed and was
+  // skipped, and the next scheduled check-in is routine/idle-gated (30min–4h out).
+  // That left a window where the portal had no Host address and Clients fell back
+  // to a LAN scan. forceCheckin bypasses those gates and carries
+  // localAddresses/pairingCode/tlsFingerprint256 (metrics inside it are
+  // best-effort, so this still publishes even mid-bootstrap before the DB is set
+  // up). Best-effort: forceCheckin self-handles portal errors and won't throw on
+  // them; the try/catch guards the rare unexpected throw so a check-in hiccup can
+  // never fail an already-committed activation. The scheduler remains the backstop.
+  try {
+    await forceCheckin();
+  } catch {
+    // non-fatal — activation succeeded; the scheduler will publish on its next run
+  }
+
   return { snapshot, activateResult: result };
 }
 
