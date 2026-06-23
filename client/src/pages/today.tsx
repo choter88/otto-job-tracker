@@ -45,8 +45,6 @@ export default function Today() {
   };
 
   // Lookup for activity rows → full Job (so a feed row can open the modal).
-  // Used by Tasks 11/12 tiles that receive it as a prop.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const jobsById = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
 
   // Edit dialog state (Task 13).
