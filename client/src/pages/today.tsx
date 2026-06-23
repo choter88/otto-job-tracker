@@ -28,9 +28,11 @@ export default function Today() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState<JobDetailsTab>("overview");
-  const openJob = (job: Job, tab: JobDetailsTab = "overview") => {
+  const [modalOverdue, setModalOverdue] = useState(false);
+  const openJob = (job: Job, tab: JobDetailsTab = "overview", overdue = false) => {
     setSelectedJob(job);
     setModalTab(tab);
+    setModalOverdue(overdue);
     setModalOpen(true);
   };
 
@@ -64,10 +66,10 @@ export default function Today() {
         <div className="flex-1 min-w-0 overflow-auto flex flex-col gap-5">
           {/* Task 8/9/13: render config.slots[0] and config.slots[1] by type */}
           {config.slots.map((slot, i) =>
-            slot.type === "queue" && slot.mode === "outreach" ? (
+            slot.type === "queue" && (slot.mode === "outreach" || slot.mode === "chase") ? (
               <JobQueueTile key={i} slot={slot} jobs={jobs} office={office} onOpenJob={openJob} onEdit={() => openEditFor(i)} />
             ) : (
-              <div key={i} data-testid={`today-slot-${i}`} />  // chase + owner tiles filled in later tasks
+              <div key={i} data-testid={`today-slot-${i}`} />  // owner tiles filled in later tasks
             )
           )}
         </div>
@@ -85,6 +87,7 @@ export default function Today() {
           activeTab={modalTab}
           onActiveTabChange={setModalTab}
           onEditJob={() => { /* Today is read-first; edit reuses worklist flow if needed */ }}
+          commentsDefaultOverdue={modalOverdue}
         />
       )}
     </div>

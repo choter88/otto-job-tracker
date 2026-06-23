@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
-import { getTypeBadgeStyle } from "@/lib/default-colors";
+import { getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { selectQueueJobs, type SlotConfig } from "@shared/today-defaults";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
+import CallLabButton from "@/components/today/call-lab-button";
 
 interface Props {
   slot: SlotConfig;
@@ -24,6 +25,18 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
   const queued = selectQueueJobs(jobs, slot.statusIds ?? []);
   const visible = queued.slice(0, MAX_ROWS);
 
+  const isChase = slot.mode === "chase";
+  const visibleIds = visible.map((j) => j.id).join(",");
+  const { data: lastOverdue = {} } = useQuery<Record<string, any>>({
+    queryKey: ["/api/jobs/overdue-comments", visibleIds],
+    queryFn: async () => {
+      if (!visibleIds) return {};
+      const res = await fetch(`/api/jobs/overdue-comments?jobIds=${encodeURIComponent(visibleIds)}`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: isChase && visibleIds.length > 0,
+  });
+
   return (
     <section>
       <header className="flex items-center gap-2 mb-3">
@@ -33,9 +46,22 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
       </header>
       <div className="rounded-xl border border-line bg-panel overflow-hidden">
         {visible.length === 0 && <div className="p-6 text-center text-sm text-ink-mute">Nothing here right now.</div>}
-        {visible.map((job, i) => (
-          <OutreachRow key={job.id} job={job} office={office} first={i === 0} onOpen={() => onOpenJob(job, "comments")} />
-        ))}
+        {isChase
+          ? visible.map((job, i) => (
+              <ChaseRow
+                key={job.id}
+                job={job}
+                office={office}
+                first={i === 0}
+                lastComment={lastOverdue[job.id]}
+                onOpen={() => onOpenJob(job, "comments", true)}
+                onPhoneSaved={() => {}}
+              />
+            ))
+          : visible.map((job, i) => (
+              <OutreachRow key={job.id} job={job} office={office} first={i === 0} onOpen={() => onOpenJob(job, "comments")} />
+            ))
+        }
       </div>
       {queued.length > 0 && (
         <button
@@ -63,6 +89,35 @@ function OutreachRow({ job, office, first, onOpen }: { job: Job; office: any; fi
         <div className="text-xs text-ink-mute mt-1">Ready {readyFor}</div>
       </button>
       <StampButtons jobId={job.id} />
+    </div>
+  );
+}
+
+function ChaseRow({ job, office, first, lastComment, onOpen, onPhoneSaved }:
+  { job: Job; office: any; first: boolean; lastComment?: any; onOpen: () => void; onPhoneSaved: () => void }) {
+  const destStyle = getDestinationBadgeStyle(job.orderDestination, office?.settings?.customOrderDestinations ?? []);
+  const statusLabel = (office?.settings?.customStatuses ?? []).find((s: any) => s.id === job.status)?.label ?? job.status;
+  const days = Math.floor((Date.now() - new Date(job.statusChangedAt as any).getTime()) / 86400000);
+  const lab = (office?.settings?.customOrderDestinations ?? []).find((d: any) => d.id === job.orderDestination);
+  return (
+    <div className={`flex items-center gap-4 px-4 py-3 ${first ? "" : "border-t border-line-2"}`}>
+      <button className="flex-1 min-w-0 text-left" onClick={onOpen}>
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-sm text-ink">{job.patientFirstName} {job.patientLastName}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: destStyle.background, color: destStyle.text }}>{lab?.label ?? job.orderDestination}</span>
+        </div>
+        <div className="text-xs text-ink-mute mt-1 truncate">
+          {statusLabel}{lastComment ? ` · "${lastComment.content}"` : " · no overdue note yet"}
+        </div>
+      </button>
+      <div className="flex-none w-24 text-right">
+        <div className="font-mono text-sm text-danger">{days} days</div>
+        <div className="text-[10px] text-ink-mute">in status</div>
+      </div>
+      <div className="flex-none flex gap-2">
+        <CallLabButton lab={lab} job={job} office={office} onPhoneSaved={onPhoneSaved} />
+        <Button size="xs" variant="outline" onClick={onOpen} data-testid={`chase-comments-${job.id}`}>Comments</Button>
+      </div>
     </div>
   );
 }

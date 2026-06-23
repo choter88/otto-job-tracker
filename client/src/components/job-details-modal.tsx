@@ -81,6 +81,7 @@ interface JobDetailsModalProps {
   onSwitchJob?: (jobId: string) => void;
   flaggedJobIds?: string[];
   overdueJobIds?: Set<string>;
+  commentsDefaultOverdue?: boolean;
 }
 
 function toTitleCase(value: string) {
@@ -101,6 +102,7 @@ export default function JobDetailsModal({
   onSwitchJob,
   flaggedJobIds = [],
   overdueJobIds = new Set(),
+  commentsDefaultOverdue,
 }: JobDetailsModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -952,7 +954,7 @@ export default function JobDetailsModal({
             className="mt-0 flex-1 min-h-0 overflow-hidden"
           >
             <div className="h-full overflow-hidden bg-panel">
-              <JobCommentsPanel job={job} />
+              <JobCommentsPanel job={job} defaultOverdue={commentsDefaultOverdue} />
             </div>
           </TabsContent>
 
