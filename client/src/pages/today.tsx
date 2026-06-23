@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
-import { resolveTodayConfig } from "@shared/today-defaults";
+import { resolveTodayConfig, type TodayConfig } from "@shared/today-defaults";
 import type { Job } from "@shared/schema";
 import JobDetailsModal, { type JobDetailsTab } from "@/components/job-details-modal";
 import JobQueueTile from "@/components/today/job-queue-tile";
@@ -9,6 +9,8 @@ import StarredTile from "@/components/today/starred-tile";
 import ActivityTile from "@/components/today/activity-tile";
 import StatsTile from "@/components/today/stats-tile";
 import AnalyticsTile from "@/components/today/analytics-tile";
+import TileEditDialog from "@/components/today/tile-edit-popover";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function Today() {
   const { user } = useAuth();
@@ -45,12 +47,25 @@ export default function Today() {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const jobsById = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
 
-  // Edit-popover triggers. Filled in by Task 13; declared here so tiles can
-  // receive a stable handler from the first render.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const openEditFor = (_slotIndex: number) => {}; // Task 13
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const openActivityEdit = () => {}; // Task 13
+  // Edit dialog state (Task 13).
+  const [editState, setEditState] = useState<
+    { kind: "queue"; slotIndex: number } | { kind: "activity" } | null
+  >(null);
+
+  const queryClient = useQueryClient();
+  const savePrefs = useMutation({
+    mutationFn: async (todayConfig: TodayConfig) => {
+      await apiRequest("PUT", "/api/user/preferences", { todayConfig });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/user"] }),
+  });
+
+  const openEditFor = (i: number) => setEditState({ kind: "queue", slotIndex: i });
+  const openActivityEdit = () => setEditState({ kind: "activity" });
+  const onSaveConfig = (next: TodayConfig) => {
+    savePrefs.mutate(next);
+    setEditState(null);
+  };
 
   const greeting = (() => {
     const h = new Date().getHours();
@@ -99,6 +114,19 @@ export default function Today() {
           onActiveTabChange={setModalTab}
           onEditJob={() => { /* Today is read-first; edit reuses worklist flow if needed */ }}
           commentsDefaultOverdue={modalOverdue}
+        />
+      )}
+
+      {editState && (
+        <TileEditDialog
+          open
+          onOpenChange={(o) => { if (!o) setEditState(null); }}
+          kind={editState.kind}
+          slotIndex={editState.kind === "queue" ? editState.slotIndex : undefined}
+          config={config}
+          customStatuses={customStatuses}
+          role={user?.role ?? "staff"}
+          onSave={onSaveConfig}
         />
       )}
     </div>
