@@ -8,8 +8,8 @@ import JobQueueTile from "@/components/today/job-queue-tile";
 import StarredTile from "@/components/today/starred-tile";
 import ActivityTile from "@/components/today/activity-tile";
 import StatsTile from "@/components/today/stats-tile";
-import AnalyticsTile from "@/components/today/analytics-tile";
 import TileEditDialog from "@/components/today/tile-edit-popover";
+import TodayIntroBanner from "@/components/today/today-intro-banner";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -70,7 +70,9 @@ export default function Today() {
   };
 
   return (
-    <div className="h-full flex gap-4 min-h-0">
+    <div className="h-full flex flex-col gap-4 min-h-0">
+      {user?.id && <TodayIntroBanner userId={user.id} />}
+      <div className="flex-1 min-h-0 flex gap-4">
       {/* Left column: queue tiles split the height and each scrolls on its own. */}
       <div className="flex-1 min-w-0 flex flex-col gap-4 min-h-0">
         {config.slots.map((slot, i) =>
@@ -89,13 +91,12 @@ export default function Today() {
               >
                 Edit
               </button>
-              {slot.type === "stats" ? (
-                <StatsTile jobs={jobs} />
-              ) : slot.type === "analytics" ? (
-                <AnalyticsTile jobs={jobs} />
-              ) : (
+              {slot.type === "team" ? (
                 <ActivityTile scope="office" title="Team activity"
                   filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
+              ) : (
+                // "stats" (and legacy "analytics", now merged) → office snapshot
+                <StatsTile jobs={jobs} />
               )}
             </div>
           ) : (
@@ -106,6 +107,7 @@ export default function Today() {
       <div className="w-[360px] flex-none flex flex-col gap-4 min-h-0">
         <StarredTile office={office} onOpenJob={openJob} />
         <ActivityTile filter={config.activityFilter} jobsById={jobsById} onOpenJob={openJob} onEdit={openActivityEdit} />
+      </div>
       </div>
 
       {selectedJob && (
