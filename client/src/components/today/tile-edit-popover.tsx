@@ -16,8 +16,7 @@ import {
 
 const TILE_TYPES: { type: TileType; label: string }[] = [
   { type: "queue", label: "Job queue" },
-  { type: "analytics", label: "Analytics summary" },
-  { type: "stats", label: "Stats" },
+  { type: "stats", label: "Office snapshot" },
   { type: "team", label: "Team activity" },
 ];
 
