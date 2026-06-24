@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Star } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { getStatusBadgeStyle } from "@/lib/default-colors";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
@@ -16,7 +15,7 @@ export default function StarredTile({ office, onOpenJob }:
         <span className="font-semibold text-sm text-ink">Remember — starred</span>
         <span className="ml-auto font-mono text-[10px] px-1.5 rounded-full bg-paper-2 text-ink-mute">{starred.length}</span>
       </header>
-      <ScrollArea className="max-h-64">
+      <div className="max-h-72 overflow-y-auto">
         {starred.length === 0 && <div className="p-5 text-center text-sm text-ink-mute">No starred jobs.</div>}
         {starred.map((job) => {
           const st = getStatusBadgeStyle(job.status, customStatuses);
@@ -35,7 +34,7 @@ export default function StarredTile({ office, onOpenJob }:
             </button>
           );
         })}
-      </ScrollArea>
+      </div>
     </section>
   );
 }

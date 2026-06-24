@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { HelpCircle } from "lucide-react";
+import { format } from "date-fns";
 import NotificationBell from "@/components/notification-bell";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 
 interface TopbarProps {
   /** Current active tab id — used to derive the crumb label. */
@@ -24,64 +24,23 @@ const TAB_LABELS: Record<string, string> = {
   settings: "Settings",
 };
 
-interface HealthResponse {
-  ok: boolean;
-  ts: number;
-}
-
-function HealthPill() {
-  const { data, isError, isFetching } = useQuery<HealthResponse>({
-    queryKey: ["/api/health"],
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: true,
-    retry: false,
-    staleTime: 25_000,
-  });
-
-  // Derive state: healthy / checking / error
-  const state: "healthy" | "checking" | "error" =
-    isError ? "error" : isFetching && !data ? "checking" : data?.ok ? "healthy" : "checking";
-
-  const label =
-    state === "error" ? "Host unreachable" : state === "checking" ? "Checking…" : "Host healthy";
-
+function HeaderClock() {
+  // Live wall clock for the header. Self-contained so only this node re-renders
+  // on tick. ponytail: 1s interval, trivial cost; minute granularity is all we show.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            "inline-flex items-center gap-2 px-3 py-[5px] rounded-full text-[calc(11.5px*var(--ui-scale))] font-medium whitespace-nowrap",
-            // Healthy uses brand-emerald, NOT --accent — "health = green" stays
-            // intact even when the app's accent is changed to a non-green hue.
-            state === "healthy" && "text-brand-emerald",
-            state === "checking" && "bg-warn-bg text-warn",
-            state === "error" && "bg-danger-bg text-danger",
-          )}
-          style={
-            state === "healthy"
-              ? { background: "rgba(47, 158, 110, 0.10)" }
-              : undefined
-          }
-          data-testid="health-pill"
-        >
-          <span
-            className={cn(
-              "w-1.5 h-1.5 rounded-full",
-              state === "healthy" && "bg-brand-emerald",
-              state === "checking" && "bg-warn",
-              state === "error" && "bg-danger",
-              state === "healthy" && "animate-[ottoPulseDot_2.4s_ease-out_infinite]",
-            )}
-          />
-          {label}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>
-        {state === "healthy" && "Connected to the host. Data is in sync."}
-        {state === "checking" && "Checking connection to the host…"}
-        {state === "error" && "Can't reach the host. Try reopening the app."}
-      </TooltipContent>
-    </Tooltip>
+    <div className="text-right leading-tight" data-testid="header-clock">
+      <div className="text-[calc(12.5px*var(--ui-scale))] font-medium text-ink">
+        {format(now, "EEEE, MMM d")}
+      </div>
+      <div className="font-mono text-[calc(11px*var(--ui-scale))] text-ink-mute tabular-nums">
+        {format(now, "h:mm a")}
+      </div>
+    </div>
   );
 }
 
@@ -101,7 +60,7 @@ export default function Topbar({ activeTab, onHelpClick }: TopbarProps) {
 
       <span className="flex-1" />
 
-      <HealthPill />
+      <HeaderClock />
 
       <NotificationBell />
 

@@ -93,12 +93,10 @@ export default function Dashboard() {
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
-    // Update URL to reflect tab change
-    if (tab === "all") {
-      setLocation("/");
-    } else {
-      setLocation(`/dashboard/${tab}`);
-    }
+    // Every tab gets an explicit /dashboard/<tab> URL. "/" is reserved for the
+    // user's default view; mapping Worklist to "/" too made the URL-sync effect
+    // re-resolve "/" → default view (now Today) and bounce the first click back.
+    setLocation(`/dashboard/${tab}`);
   };
 
   // Fetch jobs data. These hooks must run unconditionally — before any early
@@ -187,8 +185,8 @@ export default function Dashboard() {
       <main id="main-content" className="flex-1 flex flex-col overflow-hidden bg-panel border border-line rounded-[14px] m-3.5 ml-1 shadow-soft">
         <Topbar activeTab={activeTab} onHelpClick={() => setFeedbackOpen(true)} />
 
-        {/* Content */}
-        <div className={`flex-1 overflow-y-auto ${activeTab === "all" ? "" : "p-6 pb-8"}`}>
+        {/* Content — off-white paper so white content tiles read as raised. */}
+        <div className={`flex-1 overflow-y-auto bg-paper ${activeTab === "all" ? "" : "p-6 pb-8"}`}>
           <div className={activeTab === "all" ? "px-6 pt-4" : ""}>
             <BackupRestoreBanner />
           </div>

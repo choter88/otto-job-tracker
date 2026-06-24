@@ -69,55 +69,43 @@ export default function Today() {
     setEditState(null);
   };
 
-  const greeting = (() => {
-    const h = new Date().getHours();
-    return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-  })();
-
   return (
-    <div className="h-full flex flex-col">
-      <header className="px-6 py-4 border-b border-line bg-panel">
-        <h1 className="text-2xl font-semibold text-ink">Today</h1>
-        <p className="text-sm text-ink-2 mt-1">
-          {greeting}, {user?.firstName} — <strong>{jobs.length} jobs</strong> need a hand today.
-        </p>
-      </header>
-
-      <div className="flex-1 min-h-0 flex gap-4 p-6 overflow-hidden">
-        <div className="flex-1 min-w-0 overflow-auto flex flex-col gap-5">
-          {/* Task 8/9/13: render config.slots[0] and config.slots[1] by type */}
-          {config.slots.map((slot, i) =>
-            slot.type === "queue" && (slot.mode === "outreach" || slot.mode === "chase") ? (
-              <JobQueueTile key={i} slot={slot} jobs={jobs} office={office} onOpenJob={openJob} onEdit={() => openEditFor(i)} />
-            ) : slot.type === "stats" || slot.type === "analytics" || slot.type === "team" ? (
-              // Non-queue tiles (owner/manager). Wrapped so they keep an Edit
-              // affordance — otherwise switching a slot's type would be one-way.
-              <div key={i} className="relative group" data-testid={`today-slot-${i}`}>
-                <button
-                  className="absolute top-1.5 right-1.5 z-10 text-xs text-ink-mute hover:text-ink opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => openEditFor(i)}
-                  data-testid={`today-slot-edit-${i}`}
-                >
-                  Edit
-                </button>
-                {slot.type === "stats" ? (
-                  <StatsTile jobs={jobs} />
-                ) : slot.type === "analytics" ? (
-                  <AnalyticsTile jobs={jobs} />
-                ) : (
-                  <ActivityTile scope="office" title="Team activity"
-                    filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
-                )}
-              </div>
-            ) : (
-              <div key={i} data-testid={`today-slot-${i}`} />
-            )
-          )}
-        </div>
-        <div className="w-[360px] flex-none flex flex-col gap-4 min-h-0">
-          <StarredTile office={office} onOpenJob={openJob} />
-          <ActivityTile filter={config.activityFilter} jobsById={jobsById} onOpenJob={openJob} onEdit={openActivityEdit} />
-        </div>
+    <div className="h-full flex gap-4 min-h-0">
+      {/* Left column: queue tiles split the height and each scrolls on its own. */}
+      <div className="flex-1 min-w-0 flex flex-col gap-4 min-h-0">
+        {config.slots.map((slot, i) =>
+          slot.type === "queue" && (slot.mode === "outreach" || slot.mode === "chase") ? (
+            <div key={i} className="flex-1 min-h-0 flex flex-col" data-testid={`today-slot-${i}`}>
+              <JobQueueTile slot={slot} jobs={jobs} office={office} onOpenJob={openJob} onEdit={() => openEditFor(i)} />
+            </div>
+          ) : slot.type === "stats" || slot.type === "analytics" || slot.type === "team" ? (
+            // Non-queue tiles (owner/manager). Wrapped so they keep an Edit
+            // affordance — otherwise switching a slot's type would be one-way.
+            <div key={i} className="flex-none relative group" data-testid={`today-slot-${i}`}>
+              <button
+                className="absolute top-1.5 right-1.5 z-10 text-xs text-ink-mute hover:text-ink opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => openEditFor(i)}
+                data-testid={`today-slot-edit-${i}`}
+              >
+                Edit
+              </button>
+              {slot.type === "stats" ? (
+                <StatsTile jobs={jobs} />
+              ) : slot.type === "analytics" ? (
+                <AnalyticsTile jobs={jobs} />
+              ) : (
+                <ActivityTile scope="office" title="Team activity"
+                  filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
+              )}
+            </div>
+          ) : (
+            <div key={i} data-testid={`today-slot-${i}`} />
+          )
+        )}
+      </div>
+      <div className="w-[360px] flex-none flex flex-col gap-4 min-h-0">
+        <StarredTile office={office} onOpenJob={openJob} />
+        <ActivityTile filter={config.activityFilter} jobsById={jobsById} onOpenJob={openJob} onEdit={openActivityEdit} />
       </div>
 
       {selectedJob && (
