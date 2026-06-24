@@ -365,10 +365,13 @@ export function setupAuth(app: Express) {
     });
   });
 
-  app.post("/api/logout", (req, res, next) => {
+  app.post("/api/logout", async (req, res, next) => {
     const user = req.user as SelectUser | undefined;
     const { trackEvent } = require("./usage-tracker");
     trackEvent({ userId: user?.id, officeId: user?.officeId, eventType: "user_logout" });
+    if (user?.id) {
+      try { await storage.setUserLastSignout(user.id); } catch { /* non-critical */ }
+    }
     req.logout((err) => {
       if (err) return next(err);
       res.sendStatus(200);

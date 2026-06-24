@@ -12,6 +12,7 @@ import { applyUiScale } from "@/lib/theme/density";
 interface UserPreferences {
   fontSize?: "xs" | "sm" | "default" | "lg" | "xl";
   darkMode?: boolean;
+  defaultView?: "today" | "worklist";
 }
 
 const FONT_SIZE_OPTIONS = [
@@ -145,6 +146,23 @@ export default function UserSettingsModal({ open, onOpenChange }: UserSettingsMo
               <p className="text-xs text-muted-foreground mt-0.5">Switch to dark theme</p>
             </div>
             <Switch checked={darkMode} onCheckedChange={setDarkMode} />
+          </div>
+
+          {/* Default view */}
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm font-medium">Default view</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Where the app opens after sign-in</p>
+            </div>
+            <select
+              className="text-sm border rounded px-2 py-1"
+              value={prefs?.defaultView ?? "today"}
+              onChange={(e) => saveMutation.mutate({ defaultView: e.target.value as "today" | "worklist" })}
+              data-testid="select-default-view"
+            >
+              <option value="today">Today</option>
+              <option value="worklist">Worklist</option>
+            </select>
           </div>
         </div>
 

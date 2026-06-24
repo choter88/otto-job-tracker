@@ -18,6 +18,7 @@ interface JobCommentsPanelProps {
   className?: string;
   listClassName?: string;
   composerClassName?: string;
+  defaultOverdue?: boolean;
 }
 
 export default function JobCommentsPanel({
@@ -26,6 +27,7 @@ export default function JobCommentsPanel({
   className,
   listClassName,
   composerClassName,
+  defaultOverdue,
 }: JobCommentsPanelProps) {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -40,10 +42,11 @@ export default function JobCommentsPanel({
   });
 
   const addCommentMutation = useMutation({
-    mutationFn: async (input: { content: string; clientCommentId: string }) => {
+    mutationFn: async (input: { content: string; clientCommentId: string; isOverdueComment?: boolean }) => {
       const res = await apiRequest("POST", `/api/jobs/${job.id}/comments`, {
         id: input.clientCommentId,
         content: input.content.trim(),
+        ...(input.isOverdueComment ? { isOverdueComment: true } : {}),
       });
       return res.json();
     },
@@ -64,6 +67,7 @@ export default function JobCommentsPanel({
           authorId: user?.id || "",
           content: input.content.trim(),
           createdAt: new Date(),
+          isOverdueComment: input.isOverdueComment ?? false,
           author: {
             id: user?.id || "",
             firstName: user?.firstName || "",
@@ -216,10 +220,10 @@ export default function JobCommentsPanel({
         const id =
           (globalThis as any)?.crypto?.randomUUID?.() ||
           `comment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        addCommentMutation.mutate({ content: newComment, clientCommentId: id });
+        addCommentMutation.mutate({ content: newComment, clientCommentId: id, isOverdueComment: defaultOverdue });
       }
     },
-    [newComment, addCommentMutation],
+    [newComment, addCommentMutation, defaultOverdue],
   );
 
   const handleKeyDown = useCallback(
@@ -230,11 +234,11 @@ export default function JobCommentsPanel({
           const id =
             (globalThis as any)?.crypto?.randomUUID?.() ||
             `comment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-          addCommentMutation.mutate({ content: newComment, clientCommentId: id });
+          addCommentMutation.mutate({ content: newComment, clientCommentId: id, isOverdueComment: defaultOverdue });
         }
       }
     },
-    [newComment, addCommentMutation],
+    [newComment, addCommentMutation, defaultOverdue],
   );
 
   const handleDeleteComment = useCallback(

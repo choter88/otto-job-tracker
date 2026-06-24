@@ -61,7 +61,7 @@ import type { OrderSheetAnchorRule } from "@shared/order-sheet-layout";
 import { db, getDataDir } from "./db";
 import fs from "fs";
 import path from "path";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
@@ -128,6 +128,10 @@ export class DatabaseStorage {
       .where(eq(users.id, id))
       .returning();
     return user;
+  }
+
+  async setUserLastSignout(userId: string, atMs: number = Date.now()): Promise<void> {
+    await db.update(users).set({ lastSignoutAt: new Date(atMs) }).where(eq(users.id, userId));
   }
 
   async getOffice(id: string): Promise<Office | undefined> {
@@ -489,6 +493,24 @@ export class DatabaseStorage {
       .orderBy(asc(jobComments.createdAt));
     
     return comments;
+  }
+
+  async getLastOverdueCommentByJob(jobIds: string[]): Promise<Record<string, JobCommentWithAuthor>> {
+    if (jobIds.length === 0) return {};
+    const rows = await db
+      .select({
+        id: jobComments.id, jobId: jobComments.jobId, authorId: jobComments.authorId,
+        content: jobComments.content, isOverdueComment: jobComments.isOverdueComment,
+        createdAt: jobComments.createdAt,
+        author: { id: users.id, firstName: users.firstName, lastName: users.lastName },
+      })
+      .from(jobComments)
+      .innerJoin(users, eq(users.id, jobComments.authorId))
+      .where(and(inArray(jobComments.jobId, jobIds), eq(jobComments.isOverdueComment, true)))
+      .orderBy(desc(jobComments.createdAt));
+    const byJob: Record<string, JobCommentWithAuthor> = {};
+    for (const r of rows) if (!byJob[r.jobId]) byJob[r.jobId] = r as JobCommentWithAuthor; // first = newest
+    return byJob;
   }
 
   async createJobComment(comment: InsertJobComment): Promise<JobCommentWithAuthor> {
@@ -2212,6 +2234,106 @@ export class DatabaseStorage {
       .where(eq(orderSheetTemplates.officeId, officeId))
       .returning({ id: orderSheetTemplates.id });
     return rows.length;
+  }
+
+  async getActivityFeed(
+    officeId: string,
+    sinceMs: number,
+    types: import("@shared/today-defaults").ActivityType[],
+  ): Promise<import("@shared/today-defaults").ActivityFeedItem[]> {
+    const since = new Date(sinceMs);
+    const label = (fn: string, ln: string | null, _jt: string) => `${fn} ${ln ?? ""}`.trim();
+    const items: import("@shared/today-defaults").ActivityFeedItem[] = [];
+
+    // Status-label map so the feed reads "moved to Ready for Pickup", not "ready_for_pickup".
+    const office = await this.getOffice(officeId);
+    const statusLabelById = new Map<string, string>(
+      ((office?.settings as any)?.customStatuses ?? []).map((s: any) => [s.id, s.label]),
+    );
+
+    if (types.includes("comment")) {
+      const rows = await db
+        .select({
+          id: jobComments.id, content: jobComments.content, at: jobComments.createdAt,
+          jobId: jobs.id, pfn: jobs.patientFirstName, pln: jobs.patientLastName, jobType: jobs.jobType,
+          aId: users.id, aFn: users.firstName, aLn: users.lastName,
+        })
+        .from(jobComments)
+        .innerJoin(jobs, eq(jobs.id, jobComments.jobId))
+        .innerJoin(users, eq(users.id, jobComments.authorId))
+        .where(and(eq(jobs.officeId, officeId), gt(jobComments.createdAt, since)));
+      for (const r of rows) items.push({
+        id: `comment:${r.id}`, type: "comment",
+        at: r.at instanceof Date ? r.at.getTime() : Number(r.at) || 0,
+        jobId: r.jobId, jobLabel: label(r.pfn, r.pln, r.jobType),
+        actor: { id: r.aId, firstName: r.aFn ?? "", lastName: r.aLn ?? "" },
+        verb: "commented on", detail: r.content,
+      });
+    }
+
+    if (types.includes("status_change")) {
+      const rows = await db
+        .select({
+          id: jobStatusHistory.id, newStatus: jobStatusHistory.newStatus, at: jobStatusHistory.changedAt,
+          jobId: jobs.id, pfn: jobs.patientFirstName, pln: jobs.patientLastName,
+          aId: users.id, aFn: users.firstName, aLn: users.lastName,
+        })
+        .from(jobStatusHistory)
+        .innerJoin(jobs, eq(jobs.id, jobStatusHistory.jobId))
+        .innerJoin(users, eq(users.id, jobStatusHistory.changedBy))
+        .where(and(eq(jobs.officeId, officeId), gt(jobStatusHistory.changedAt, since)));
+      for (const r of rows) items.push({
+        id: `status:${r.id}`, type: "status_change",
+        at: r.at instanceof Date ? r.at.getTime() : Number(r.at) || 0,
+        jobId: r.jobId, jobLabel: `${r.pfn} ${r.pln ?? ""}`.trim(),
+        actor: { id: r.aId, firstName: r.aFn ?? "", lastName: r.aLn ?? "" },
+        verb: `moved to ${statusLabelById.get(r.newStatus) ?? r.newStatus}`,
+      });
+    }
+
+    if (types.includes("star_note")) {
+      const rows = await db
+        .select({
+          id: jobFlags.id, note: jobFlags.importantNote, createdAt: jobFlags.createdAt,
+          noteAt: jobFlags.importantNoteUpdatedAt, jobId: jobs.id,
+          pfn: jobs.patientFirstName, pln: jobs.patientLastName,
+          aId: users.id, aFn: users.firstName, aLn: users.lastName,
+        })
+        .from(jobFlags)
+        .innerJoin(jobs, eq(jobs.id, jobFlags.jobId))
+        .innerJoin(users, eq(users.id, jobFlags.userId))
+        .where(eq(jobs.officeId, officeId));
+      for (const r of rows) {
+        const createdMs = r.createdAt instanceof Date ? r.createdAt.getTime() : Number(r.createdAt) || 0;
+        const noteMs = r.noteAt ? (r.noteAt instanceof Date ? r.noteAt.getTime() : Number(r.noteAt) || 0) : 0;
+        const at = Math.max(createdMs, noteMs);
+        if (at <= sinceMs) continue;
+        items.push({
+          id: `flag:${r.id}:${at}`, type: "star_note", at,
+          jobId: r.jobId, jobLabel: `${r.pfn} ${r.pln ?? ""}`.trim(),
+          actor: { id: r.aId, firstName: r.aFn ?? "", lastName: r.aLn ?? "" },
+          verb: noteMs >= createdMs && r.note ? "noted" : "starred",
+          detail: r.note ?? undefined,
+        });
+      }
+    }
+
+    if (types.includes("overdue")) {
+      const overdue = await this.getOverdueJobs(officeId);
+      const DAY = 24 * 60 * 60 * 1000;
+      for (const j of overdue) {
+        const scAt = j.statusChangedAt instanceof Date ? j.statusChangedAt.getTime() : Number(j.statusChangedAt) || 0;
+        const crossing = scAt + (j.rule?.maxDays ?? 0) * DAY;
+        if (crossing <= sinceMs) continue;
+        items.push({
+          id: `overdue:${j.id}`, type: "overdue", at: crossing,
+          jobId: j.id, jobLabel: `${j.patientFirstName} ${j.patientLastName ?? ""}`.trim(),
+          actor: null, verb: "became overdue",
+        });
+      }
+    }
+
+    return items.sort((a, b) => b.at - a.at);
   }
 }
 

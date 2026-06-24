@@ -11,6 +11,7 @@ import NotificationRules from "@/components/notification-rules";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
 import ImportantJobs from "@/pages/important-jobs";
 import OrderSheetsPage from "@/components/order-sheets-page";
+import Today from "@/pages/today";
 import SettingsModal from "@/components/settings-modal";
 import HealthModal from "@/components/health-modal";
 import UserSettingsModal, { applyUserPreferences } from "@/components/user-settings-modal";
@@ -57,11 +58,14 @@ export default function Dashboard() {
   const [, importantParams] = useRoute("/important");
   const [, dashboardParams] = useRoute("/dashboard/:tab?");
   
-  // Determine initial tab from URL or default to Worklist
+  // Determine initial tab from URL or default to Today (unless user prefers Worklist)
   const getInitialTab = () => {
     if (importantParams) return "important";
     if (dashboardParams && dashboardParams.tab) return dashboardParams.tab;
-    return "all";
+    // No explicit tab in the URL → honor the user's saved default view.
+    // Default is Today (the redesign's home); only an explicit "worklist" opts out.
+    const dv = (user?.preferences as any)?.defaultView;
+    return dv === "worklist" ? "all" : "today";
   };
 
   const [activeTab, setActiveTab] = useState(getInitialTab);
@@ -85,7 +89,7 @@ export default function Dashboard() {
     if (newTab !== activeTab) {
       setActiveTab(newTab);
     }
-  }, [location]);
+  }, [location, user?.id]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
@@ -159,6 +163,8 @@ export default function Dashboard() {
         return <TeamPage />;
       case "settings":
         return <NotificationRules />;
+      case "today":
+        return <Today />;
       default:
         return <JobsTable jobs={jobs} loading={jobsLoading} />;
     }

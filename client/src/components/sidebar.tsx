@@ -26,6 +26,7 @@ import {
   HelpCircle,
   Sparkles,
   ScanLine,
+  Clock,
 } from "lucide-react";
 import { openSpotlightArchive } from "@/components/spotlight/feature-spotlight-host";
 import logoSymbol from "@/assets/logo-symbol.png";
@@ -108,6 +109,11 @@ export default function Sidebar({
   const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "User";
 
   const jobsItems: NavItem[] = [
+    {
+      id: "today",
+      label: "Today",
+      icon: Clock,
+    },
     {
       id: "all",
       label: "Worklist",
