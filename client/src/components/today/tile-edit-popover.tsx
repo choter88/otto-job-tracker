@@ -81,12 +81,13 @@ export default function TileEditDialog({
           {kind === "queue" && slot != null && (
             <>
               {privileged && (
-                <div>
-                  <label className="text-xs font-medium">Tile type</label>
+                <div className="rounded-md border border-otto-accent-line bg-otto-accent-soft p-2.5">
+                  <label className="text-xs font-semibold text-otto-accent-ink">Show this tile as</label>
                   <select
-                    className="w-full text-sm border rounded px-2 py-1 mt-1 bg-background"
+                    className="w-full text-sm border border-line rounded px-2 py-1.5 mt-1 bg-background"
                     value={slot.type}
                     onChange={(e) => setSlot({ type: e.target.value as TileType })}
+                    data-testid="edit-tile-type"
                   >
                     {TILE_TYPES.map((t) => (
                       <option key={t.type} value={t.type}>
@@ -94,6 +95,9 @@ export default function TileEditDialog({
                       </option>
                     ))}
                   </select>
+                  <p className="text-[11px] text-ink-mute mt-1.5">
+                    Owners &amp; managers can swap a job queue for analytics, stats, or team activity.
+                  </p>
                 </div>
               )}
 
