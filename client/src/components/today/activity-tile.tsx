@@ -66,7 +66,7 @@ export default function ActivityTile({
           return (
             <button
               key={it.id}
-              className="w-full text-left flex gap-3 px-4 py-3 border-b border-line-2 last:border-0 hover:bg-panel-2"
+              className="w-full text-left flex gap-3 px-4 py-2.5 border-b border-line-2 last:border-0 hover:bg-panel-2"
               onClick={() =>
                 job && onOpenJob(job, it.type === "comment" ? "comments" : "overview")
               }
@@ -77,23 +77,25 @@ export default function ActivityTile({
                   ? `${it.actor.firstName[0] ?? ""}${it.actor.lastName[0] ?? ""}`
                   : "·"}
               </span>
-              <div className="min-w-0">
-                <div className="text-xs text-ink-2">
-                  {it.actor ? (
-                    <strong className="text-ink">{it.actor.firstName}</strong>
-                  ) : (
-                    <strong className="text-ink">A job</strong>
-                  )}{" "}
-                  {it.verb} <strong className="text-ink">{it.jobLabel}</strong>
+              {/* Two rows only: actor/verb/job + right-justified time on row 1,
+                  the note/detail truncated to a single line on row 2. */}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-ink-2 truncate min-w-0 flex-1">
+                    {it.actor ? (
+                      <strong className="text-ink">{it.actor.firstName}</strong>
+                    ) : (
+                      <strong className="text-ink">A job</strong>
+                    )}{" "}
+                    {it.verb} <strong className="text-ink">{it.jobLabel}</strong>
+                  </span>
+                  <span className="text-[10px] font-mono text-ink-faint flex-none whitespace-nowrap">
+                    {formatDistanceToNow(new Date(it.at), { addSuffix: true })}
+                  </span>
                 </div>
                 {it.detail && (
-                  <div className="text-[11px] text-ink-mute mt-1 px-2 py-1 rounded bg-paper-2">
-                    {it.detail}
-                  </div>
+                  <div className="text-[11px] text-ink-mute mt-0.5 truncate">{it.detail}</div>
                 )}
-                <div className="text-[10px] font-mono text-ink-faint mt-1">
-                  {formatDistanceToNow(new Date(it.at), { addSuffix: true })}
-                </div>
               </div>
             </button>
           );
