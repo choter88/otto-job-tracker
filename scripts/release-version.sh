@@ -2,6 +2,23 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Releases must be cut from an up-to-date main: the version bump, the tag, and
+# the `git push origin main --tags` below all assume HEAD is main and at (or
+# ahead of) origin/main. Running from a feature branch or a stale main pushes
+# the wrong ref and leaves main's version drifting behind the tags.
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$BRANCH" != "main" ]]; then
+  echo "✗ Releases must be cut from 'main' (you're on '$BRANCH')."
+  echo "  Run: git checkout main && git pull --ff-only"
+  exit 1
+fi
+git fetch origin --quiet
+if ! git merge-base --is-ancestor origin/main HEAD; then
+  echo "✗ Local 'main' is behind origin/main."
+  echo "  Run: git pull --ff-only"
+  exit 1
+fi
+
 CURRENT=$(node -p "require('./package.json').version")
 
 # Compute next versions
