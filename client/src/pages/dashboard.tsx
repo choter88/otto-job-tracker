@@ -185,8 +185,8 @@ export default function Dashboard() {
       <main id="main-content" className="flex-1 flex flex-col overflow-hidden bg-panel border border-line rounded-[14px] m-3.5 ml-1 shadow-soft">
         <Topbar activeTab={activeTab} onHelpClick={() => setFeedbackOpen(true)} />
 
-        {/* Content — off-white paper so white content tiles read as raised. */}
-        <div className={`flex-1 overflow-y-auto bg-paper ${activeTab === "all" ? "" : "p-6 pb-8"}`}>
+        {/* Content — faint accent-tinted canvas so white content tiles read as raised. */}
+        <div className={`flex-1 overflow-y-auto bg-[var(--page-bg)] ${activeTab === "all" ? "" : "p-6 pb-8"}`}>
           <div className={activeTab === "all" ? "px-6 pt-4" : ""}>
             <BackupRestoreBanner />
           </div>

@@ -23,6 +23,7 @@
   --panel:        #ffffff;   /* primary surface */
   --panel-2:      #f7f8fa;   /* footer / muted surface */
   --panel-warm:   #f0f2f5;
+  --page-bg:      #f3f4fd;   /* page canvas — faint accent-indigo tint behind white tiles */
 
   /* ── Hairlines ──────────────────────────────────────────────────── */
   --line:         rgba(15, 23, 42, 0.08);
@@ -188,6 +189,7 @@
   --panel:        #1a2032;       /* primary card surface */
   --panel-2:      #20273c;       /* footer / muted surface */
   --panel-warm:   #1d2436;
+  --page-bg:      #0e1325;       /* page canvas — faint accent-indigo tint */
 
   /* ── Hairlines (white-alpha) ───────────────────────────────────── */
   --line:         rgba(255, 255, 255, 0.08);

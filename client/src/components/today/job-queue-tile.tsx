@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
+import { Phone, Clock } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow, format } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
@@ -37,39 +38,40 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
   });
 
   return (
-    <section className="flex-1 min-h-0 flex flex-col">
-      <header className="flex items-center gap-2 mb-3 flex-none">
-        <span className="font-semibold text-[15px] text-ink">{slot.title ?? "Call patients"}</span>
-        <span className={`font-mono text-xs px-2 py-0.5 rounded-full ${isChase ? "bg-warn-bg text-warn" : "bg-success-bg text-success"}`}>{queued.length}</span>
+    <section className="flex-1 min-h-0 rounded-xl border border-line bg-panel overflow-hidden flex flex-col">
+      <header className="flex items-center gap-2 px-4 py-3 border-b border-line-2 flex-none">
+        {isChase
+          ? <Clock className="h-3.5 w-3.5 text-warn flex-none" />
+          : <Phone className="h-3.5 w-3.5 text-success flex-none" />}
+        <span className="font-semibold text-sm text-ink">{slot.title ?? "Call patients"}</span>
+        <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full ${isChase ? "bg-warn-bg text-warn" : "bg-success-bg text-success"}`}>{queued.length}</span>
         <button className="ml-auto text-xs text-ink-mute hover:text-ink" onClick={onEdit} data-testid="today-tile-edit">Edit</button>
       </header>
-      <div className="flex-1 min-h-0 rounded-xl border border-line bg-panel overflow-hidden flex flex-col">
-        {queued.length === 0 ? (
-          <div className="p-6 text-center text-sm text-ink-mute">Nothing here right now.</div>
-        ) : (
-          <ScrollArea className="flex-1 min-h-0">
-            {isChase
-              ? queued.map((job, i) => (
-                  <ChaseRow
-                    key={job.id}
-                    job={job}
-                    office={office}
-                    first={i === 0}
-                    lastComment={lastOverdue[job.id]}
-                    onOpen={() => onOpenJob(job, "comments", true)}
-                    onPhoneSaved={() => {}}
-                  />
-                ))
-              : queued.map((job, i) => (
-                  <OutreachRow key={job.id} job={job} office={office} first={i === 0} onOpen={() => onOpenJob(job, "comments")} />
-                ))
-            }
-          </ScrollArea>
-        )}
-      </div>
+      {queued.length === 0 ? (
+        <div className="flex-1 grid place-items-center p-6 text-center text-sm text-ink-mute">Nothing here right now.</div>
+      ) : (
+        <ScrollArea className="flex-1 min-h-0">
+          {isChase
+            ? queued.map((job, i) => (
+                <ChaseRow
+                  key={job.id}
+                  job={job}
+                  office={office}
+                  first={i === 0}
+                  lastComment={lastOverdue[job.id]}
+                  onOpen={() => onOpenJob(job, "comments", true)}
+                  onPhoneSaved={() => {}}
+                />
+              ))
+            : queued.map((job, i) => (
+                <OutreachRow key={job.id} job={job} office={office} first={i === 0} onOpen={() => onOpenJob(job, "comments")} />
+              ))
+          }
+        </ScrollArea>
+      )}
       {queued.length > 0 && (
         <button
-          className="block mx-auto mt-2 text-xs text-accent hover:underline flex-none"
+          className="flex-none border-t border-line-2 px-4 py-2 text-xs text-otto-accent hover:bg-panel-2 text-center"
           onClick={() => setLocation(slot.mode === "chase" ? "/dashboard/overdue" : "/dashboard/all")}
           data-testid="today-view-all"
         >
