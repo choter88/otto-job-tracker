@@ -426,18 +426,25 @@ export class DatabaseStorage {
     const oldJob = await this.getJob(id);
     if (!oldJob) throw new Error('Job not found');
 
+    // A manual status change un-snoozes the row (best-effort: only clear
+    // when the job was actually snoozed and status is actually changing).
+    const isStatusChanging = !!updates.status && updates.status !== oldJob.status;
+    const wasSnoozed = !!oldJob.snoozedUntil;
+    const clearingSnooze = isStatusChanging && wasSnoozed && updates.snoozedUntil === undefined;
+
     const [job] = await db
       .update(jobs)
-      .set({ 
-        ...updates, 
+      .set({
+        ...updates,
         updatedAt: new Date(),
-        statusChangedAt: updates.status ? new Date() : oldJob.statusChangedAt
+        statusChangedAt: updates.status ? new Date() : oldJob.statusChangedAt,
+        ...(clearingSnooze ? { snoozedUntil: null, snoozeReason: null } : {}),
       })
       .where(eq(jobs.id, id))
       .returning();
 
     // Log status change if status was updated
-    if (updates.status && updates.status !== oldJob.status) {
+    if (isStatusChanging) {
       await db.insert(jobStatusHistory).values({
         id: randomUUID(),
         jobId: job.id,
@@ -445,6 +452,39 @@ export class DatabaseStorage {
         newStatus: job.status,
         changedBy: userId
       });
+
+      // Today Dashboard v2: additive job_event dual-write. Kept AFTER the
+      // job_status_history write above (that write is untouched) and keyed
+      // by jobOrderId (not jobs.id) so it survives the archive+delete that
+      // follows for terminal statuses (see routes.ts PUT /api/jobs/:id).
+      const actingUser = await this.getUser(userId);
+      const actorInitials = actingUser ? this.actorInitialsFor(actingUser) : null;
+      await this.appendJobEvent({
+        jobOrderId: job.orderId,
+        jobId: job.id,
+        officeId: job.officeId,
+        eventType: "status_changed",
+        actorUserId: userId,
+        actorInitials,
+        payload: { oldStatus: oldJob.status, newStatus: job.status },
+      });
+
+      // Sole producer of today_pickup: counts only, no PHI in metadata.
+      if (job.status === "completed") {
+        trackEvent({ userId, officeId: job.officeId, eventType: TODAY_EVENTS.PICKUP, metadata: {} });
+      }
+
+      if (clearingSnooze) {
+        await this.appendJobEvent({
+          jobOrderId: job.orderId,
+          jobId: job.id,
+          officeId: job.officeId,
+          eventType: "snooze_cleared",
+          actorUserId: userId,
+          actorInitials,
+          payload: { reason: "manual" },
+        });
+      }
     }
 
     return job;
