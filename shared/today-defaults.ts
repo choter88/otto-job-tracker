@@ -81,8 +81,14 @@ export function resolveTodayConfig(
 
   const slots = stored.slots.map((slot, i): SlotConfig => {
     const fallback = base.slots[i] ?? defaultTodayConfig().slots[i];
+    // The owner "stats strip" (StatsTile / office snapshot) is cut: "stats"
+    // and legacy "analytics" never survive resolution, even if a user's
+    // preferences.todayConfig still has one persisted from before the cut.
+    if (slot.type === "stats" || slot.type === "analytics") {
+      return fallback;
+    }
     if (slot.type !== "queue") {
-      // Non-queue tiles are owner/manager only; coerce others to the base queue.
+      // Non-queue tiles (e.g. "team") are owner/manager only; coerce others to the base queue.
       return privileged ? slot : fallback;
     }
     const validIds = (slot.statusIds ?? []).filter((id) => validSet.has(id));
