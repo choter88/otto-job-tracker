@@ -86,6 +86,7 @@ import { invalidateTabletSessionsForUser } from "./tablet-auth";
 import type { User } from "@shared/schema";
 import { toLoginIds } from "./login-ids";
 import { boundaryFor } from "@shared/today-defaults";
+import { TODAY_EVENTS } from "@shared/today-telemetry";
 
 // ── Tablet session tracking (delegated to tablet-auth module) ──
 export { getActiveTabletSessionCount } from "./tablet-auth";
@@ -2969,6 +2970,120 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
 
       const flaggedBy = await storage.getJobFlaggedBy(req.params.jobId);
       res.json(flaggedBy);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Today Dashboard v2: attempts, snooze, chase, search ─────────────
+  // Thin adapters — the real logic lives in storage.ts (searchByPatientName,
+  // logChaseAttempts, appendJobEvent, getAttemptSummaries, snoozeJob). All
+  // actions flow through job_events with staff attribution; server-emitted
+  // today_* telemetry carries counts/enums only, never patient names/notes.
+
+  app.post("/api/jobs/:id/attempts", requireAuth, requireNotViewOnly, async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      const { type, note } = req.body || {};
+      if (type !== "called" && type !== "texted") {
+        return res.status(400).json({ error: "type must be 'called' or 'texted'" });
+      }
+
+      const job = await storage.getJob(req.params.id);
+      if (!job || job.officeId !== user.officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const actor = { userId: user.id, initials: storage.actorInitialsFor(user) };
+      await storage.appendJobEvent({
+        jobOrderId: job.orderId,
+        jobId: job.id,
+        officeId: job.officeId,
+        eventType: type === "called" ? "attempt_called" : "attempt_texted",
+        actorUserId: actor.userId,
+        actorInitials: actor.initials,
+        payload: { note: typeof note === "string" ? note : null },
+      });
+
+      trackEvent({
+        userId: user.id,
+        officeId: user.officeId,
+        eventType: type === "called" ? TODAY_EVENTS.ATTEMPT_CALLED : TODAY_EVENTS.ATTEMPT_TEXTED,
+      });
+
+      const summaries = await storage.getAttemptSummaries(job.officeId, [job.orderId]);
+      const summary = summaries[job.orderId] ?? { count: 0, lastType: null, lastActorInitials: null, lastAt: null };
+      res.json({ summary });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/jobs/:id/snooze", requireAuth, requireNotViewOnly, async (req, res) => {
+    try {
+      const user = getAuthUser(req);
+      const { until, reason } = req.body || {};
+      const untilMs = typeof until === "number" ? until : new Date(until).getTime();
+      if (!Number.isFinite(untilMs) || untilMs <= Date.now()) {
+        return res.status(400).json({ error: "until must be a valid future date/time" });
+      }
+
+      const job = await storage.getJob(req.params.id);
+      if (!job || job.officeId !== user.officeId) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      const actor = { userId: user.id, initials: storage.actorInitialsFor(user) };
+      await storage.snoozeJob(job.id, untilMs, typeof reason === "string" ? reason : undefined, actor);
+
+      trackEvent({ userId: user.id, officeId: user.officeId, eventType: TODAY_EVENTS.SNOOZE });
+
+      const updatedJob = await storage.getJob(job.id);
+      res.json({ job: updatedJob });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/jobs/chase", requireAuth, requireNotViewOnly, async (req, res) => {
+    try {
+      const user = getOfficeUser(req);
+      const { jobOrderIds, destinationId } = req.body || {};
+      if (!Array.isArray(jobOrderIds) || jobOrderIds.length === 0) {
+        return res.status(400).json({ error: "jobOrderIds must be a non-empty array" });
+      }
+      if (typeof destinationId !== "string" || destinationId.trim().length === 0) {
+        return res.status(400).json({ error: "destinationId is required" });
+      }
+
+      const actor = { userId: user.id, initials: storage.actorInitialsFor(user) };
+      const { count } = await storage.logChaseAttempts(user.officeId, jobOrderIds, destinationId, actor);
+
+      trackEvent({ userId: user.id, officeId: user.officeId, eventType: TODAY_EVENTS.CHASE_ATTEMPT, metadata: { count } });
+      res.json({ count });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/jobs/attempt-summaries", requireAuth, async (req, res) => {
+    try {
+      const user = getOfficeUser(req);
+      const ids = typeof req.query.jobOrderIds === "string" && req.query.jobOrderIds
+        ? req.query.jobOrderIds.split(",").filter(Boolean) : [];
+      const map = await storage.getAttemptSummaries(user.officeId, ids);
+      res.json(map);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/search", requireAuth, async (req, res) => {
+    try {
+      const user = getOfficeUser(req);
+      const q = String(req.query.q ?? "");
+      const results = await storage.searchByPatientName(user.officeId, q);
+      res.json(results);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
