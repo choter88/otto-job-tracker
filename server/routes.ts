@@ -3045,7 +3045,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.post("/api/jobs/chase", requireAuth, requireNotViewOnly, async (req, res) => {
+  app.post("/api/jobs/chase", requireAuth, requireNotViewOnly, requireOffice, async (req, res) => {
     try {
       const user = getOfficeUser(req);
       const { jobOrderIds, destinationId } = req.body || {};
@@ -3066,7 +3066,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.get("/api/jobs/attempt-summaries", requireAuth, async (req, res) => {
+  app.get("/api/jobs/attempt-summaries", requireAuth, requireOffice, async (req, res) => {
     try {
       const user = getOfficeUser(req);
       const ids = typeof req.query.jobOrderIds === "string" && req.query.jobOrderIds
@@ -3078,7 +3078,7 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
     }
   });
 
-  app.get("/api/search", requireAuth, async (req, res) => {
+  app.get("/api/search", requireAuth, requireOffice, async (req, res) => {
     try {
       const user = getOfficeUser(req);
       const q = String(req.query.q ?? "");
