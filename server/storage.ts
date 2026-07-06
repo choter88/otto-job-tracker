@@ -2499,6 +2499,67 @@ export class DatabaseStorage {
       }
     }
 
+    // Today Dashboard v2: attempt/snooze rows, sourced from job_events
+    // (NOT jobs.id-scoped history — job_events is the append-only "order
+    // event envelope" keyed by jobOrderId). This branch inner-joins `jobs`
+    // on orderId = jobEvents.jobOrderId, so it is ACTIVE-JOBS-ONLY BY
+    // DESIGN: events for jobs that have since been archived/dispensed
+    // silently drop out of this feed (acceptable — the feed is a "what's
+    // happening now" view, not a historical audit log).
+    //
+    // PHI / LAN-only: these rows carry patient names (jobLabel) and
+    // free-text notes (detail) and are the render payload for
+    // /api/today/activity. They must NEVER be referenced by
+    // server/usage-tracker.ts or server/license.ts (both of which ship
+    // data off the LAN) — PHI stays on the LAN.
+    if (types.includes("attempt") || types.includes("snooze")) {
+      const wantedEventTypes: string[] = [];
+      if (types.includes("attempt")) wantedEventTypes.push("attempt_called", "attempt_texted");
+      if (types.includes("snooze")) wantedEventTypes.push("snoozed");
+
+      const rows = await db
+        .select({
+          id: jobEvents.id, eventType: jobEvents.eventType, at: jobEvents.createdAt,
+          payload: jobEvents.payload,
+          actorUserId: jobEvents.actorUserId,
+          jobId: jobs.id, pfn: jobs.patientFirstName, pln: jobs.patientLastName, jobType: jobs.jobType,
+          aId: users.id, aFn: users.firstName, aLn: users.lastName,
+        })
+        .from(jobEvents)
+        .innerJoin(jobs, eq(jobs.orderId, jobEvents.jobOrderId))
+        .leftJoin(users, eq(users.id, jobEvents.actorUserId))
+        .where(and(
+          eq(jobEvents.officeId, officeId),
+          inArray(jobEvents.eventType, wantedEventTypes),
+          gt(jobEvents.createdAt, since),
+        ));
+
+      for (const r of rows) {
+        const at = r.at instanceof Date ? r.at.getTime() : Number(r.at) || 0;
+        const actor = r.aId ? { id: r.aId, firstName: r.aFn ?? "", lastName: r.aLn ?? "" } : null;
+        const jobLabel = label(r.pfn, r.pln, r.jobType);
+        const payload = (r.payload && typeof r.payload === "object" ? r.payload : {}) as Record<string, any>;
+
+        if (r.eventType === "attempt_called" || r.eventType === "attempt_texted") {
+          items.push({
+            id: `attempt:${r.id}`, type: "attempt", at,
+            jobId: r.jobId, jobLabel,
+            actor,
+            verb: r.eventType === "attempt_called" ? "called" : "texted",
+            detail: typeof payload.note === "string" ? payload.note : undefined,
+          });
+        } else if (r.eventType === "snoozed") {
+          items.push({
+            id: `snooze:${r.id}`, type: "snooze", at,
+            jobId: r.jobId, jobLabel,
+            actor,
+            verb: "snoozed",
+            detail: typeof payload.reason === "string" ? payload.reason : undefined,
+          });
+        }
+      }
+    }
+
     return items.sort((a, b) => b.at - a.at);
   }
 }
