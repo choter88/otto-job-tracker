@@ -4,6 +4,7 @@ import { Phone, Clock } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow, format } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -12,6 +13,7 @@ import { selectQueueJobs, type SlotConfig } from "@shared/today-defaults";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
 import CallLabButton from "@/components/today/call-lab-button";
+import SnoozeButton from "@/components/today/snooze-button";
 
 interface Props {
   slot: SlotConfig;
@@ -95,7 +97,42 @@ function OutreachRow({ job, office, first, onOpen }: { job: Job; office: any; fi
         <div className="text-xs text-ink-mute mt-1">Ready {readyFor}</div>
       </button>
       <StampButtons jobId={job.id} />
+      <PickedUpButton jobId={job.id} />
+      <SnoozeButton jobId={job.id} />
     </div>
+  );
+}
+
+// Advances the job through the normal state machine (no shortcut): the same
+// PUT the rest of the app uses to mark a job completed. On success the row
+// leaves the tile on its own because the job is no longer ready-for-pickup.
+function PickedUpButton({ jobId }: { jobId: string }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const pickUp = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PUT", `/api/jobs/${jobId}`, { status: "completed" });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      qc.invalidateQueries({ queryKey: ["/api/today/activity"] });
+      toast({ title: "Job marked picked up." });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't mark this picked up", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Button
+      size="xs"
+      disabled={pickUp.isPending}
+      onClick={() => pickUp.mutate()}
+      data-testid={`picked-up-${jobId}`}
+    >
+      Picked up
+    </Button>
   );
 }
 
@@ -123,6 +160,7 @@ function ChaseRow({ job, office, first, lastComment, onOpen, onPhoneSaved }:
       <div className="flex-none flex gap-2">
         <CallLabButton lab={lab} job={job} office={office} onPhoneSaved={onPhoneSaved} />
         <Button size="xs" variant="outline" onClick={onOpen} data-testid={`chase-comments-${job.id}`}>Comments</Button>
+        <SnoozeButton jobId={job.id} />
       </div>
     </div>
   );
