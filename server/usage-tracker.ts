@@ -12,6 +12,7 @@
 import { createHash } from "crypto";
 import { db } from "./db";
 import { usageEvents } from "@shared/schema";
+import { TODAY_EVENTS } from "@shared/today-telemetry";
 import { sql, and, gte, lt, asc } from "drizzle-orm";
 
 // ── Event types ──────────────────────────────────────────────────────
@@ -69,7 +70,10 @@ export type UsageEventType =
   | "order_sheet_auto_print_triggered"
   // Attachments (user-uploaded documents on a job)
   | "attachment_uploaded"
-  | "attachment_deleted";
+  | "attachment_deleted"
+  // Today Dashboard v2 (see shared/today-telemetry.ts for the canonical
+  // vocabulary — imported here rather than re-typed so the two can't drift)
+  | (typeof TODAY_EVENTS)[keyof typeof TODAY_EVENTS];
 
 /** Allowlist for desktop-side event types (POST /api/track). */
 export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
@@ -119,6 +123,12 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   // AND the print bridge is available AND this is the machine that won
   // the ingest claim. Fired once per successful auto-print.
   "order_sheet_auto_print_triggered",
+  // Today Dashboard v2 — client-emitted only. The other six TODAY_EVENTS
+  // (attempt/snooze/pickup/chase/star) are server-emitted and must NOT be
+  // added here; this task is the single owner of this allowlist slice.
+  TODAY_EVENTS.VIEW_OPENED,
+  TODAY_EVENTS.SEARCH_OPENED,
+  TODAY_EVENTS.NEW_JOB_CLICKED,
 ]);
 
 /** Allowlist for tablet-side event types (POST /tablet/api/track). Kept
@@ -287,6 +297,38 @@ function hashUserId(userId: string | null): string {
   return createHash("sha256").update(userId).digest("hex");
 }
 
+/** Short enum token: lowercase alnum + `_-:.`, 1-32 chars. Anything else
+ *  (patient names, free-text notes, long strings) fails this and is PHI-risk. */
+const SHORT_ENUM_TOKEN = /^[a-z0-9_\-:.]{1,32}$/;
+
+/**
+ * HARD PHI BOUNDARY — this is the last line of defense before Today v2
+ * telemetry metadata leaves the LAN in the check-in payload.
+ *
+ * Client-emitted Today metadata is numbers-only by type (see
+ * ClientTodayMetadata in shared/today-telemetry.ts), but server-emitted
+ * Today events (snooze reasons, chase notes, attempt outcomes, etc.) are
+ * NOT type-constrained the same way — a future call site could pass a
+ * patient name or note string into `trackEvent`'s `metadata`. Rather than
+ * trust every call site, every `today_*` event's metadata is re-validated
+ * here, at egress: only numbers and short enum-shaped tokens
+ * (/^[a-z0-9_\-:.]{1,32}$/) survive; everything else (names, sentences,
+ * anything with spaces or mixed case) is dropped. Non-Today events are
+ * untouched — this task's scope is exactly the Today v2 vocabulary.
+ */
+function sanitizeTodayMetadata(metadata: Record<string, any>): Record<string, any> {
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (typeof value === "number") {
+      clean[key] = value;
+    } else if (typeof value === "string" && SHORT_ENUM_TOKEN.test(value)) {
+      clean[key] = value;
+    }
+    // else: drop — not a number, not a short enum token (PHI risk)
+  }
+  return clean;
+}
+
 /**
  * Return raw usage events since a given date, with userIds hashed.
  * Capped at 5000 events to bound payload size.
@@ -311,11 +353,14 @@ export function getRawEventsSince(since: Date): RawUsageEvent[] {
   return rows.map((row) => {
     const key = row.userId;
     if (!hashCache.has(key)) hashCache.set(key, hashUserId(key));
+    const rawMetadata = (row.metadata && typeof row.metadata === "object" ? row.metadata : {}) as Record<string, any>;
+    // PHI egress choke point — see sanitizeTodayMetadata's doc comment.
+    const metadata = row.eventType.startsWith("today_") ? sanitizeTodayMetadata(rawMetadata) : rawMetadata;
     return {
       userIdHash: hashCache.get(key)!,
       eventType: row.eventType,
       source: (row.source === "tablet" ? "tablet" : "app") as UsageEventSource,
-      metadata: (row.metadata && typeof row.metadata === "object" ? row.metadata : {}) as Record<string, any>,
+      metadata,
       occurredAt: row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt),
     };
   });
