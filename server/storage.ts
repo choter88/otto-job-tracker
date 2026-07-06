@@ -22,6 +22,7 @@ import {
   orderSheetTemplates,
   jobAttachments,
   clientDevices,
+  jobEvents,
   type User,
   type InsertUser,
   type Office,
@@ -66,6 +67,8 @@ import { randomUUID } from "crypto";
 import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
 import { getDefaultOfficeSettings } from "@shared/office-defaults";
+import { trackEvent } from "./usage-tracker";
+import { TODAY_EVENTS } from "@shared/today-telemetry";
 
 export class DatabaseStorage {
   async getUser(id: string): Promise<User | undefined> {
@@ -301,6 +304,122 @@ export class DatabaseStorage {
     }
     
     throw new Error('Failed to create job after multiple attempts due to order ID conflicts');
+  }
+
+  // ── Today Dashboard v2: job_events helpers ──────────────────────────
+  // job_events is the append-only "order event envelope" for staff actions
+  // (status changes, call/text attempts, snoozes). It is keyed by
+  // jobOrderId (the stable ORD-… handle), NOT jobs.id, so rows survive the
+  // archive+delete that happens when a job reaches a terminal status.
+
+  /** Two-letter initials from a user's first/last name, uppercased.
+   *  "" if neither name is present. */
+  actorInitialsFor(user: { firstName?: string | null; lastName?: string | null }): string {
+    return ((user.firstName?.[0] ?? "") + (user.lastName?.[0] ?? "")).toUpperCase();
+  }
+
+  /** Low-level insert into job_events. Callers pass jobId best-effort
+   *  (the current jobs.id snapshot) — it is not a foreign key. */
+  async appendJobEvent(input: {
+    jobOrderId: string;
+    jobId: string | null;
+    officeId: string;
+    eventType: string;
+    actorUserId: string | null;
+    actorInitials: string | null;
+    payload: Record<string, any> | null;
+  }): Promise<void> {
+    await db.insert(jobEvents).values({
+      id: randomUUID(),
+      jobOrderId: input.jobOrderId,
+      jobId: input.jobId,
+      officeId: input.officeId,
+      eventType: input.eventType,
+      actorUserId: input.actorUserId,
+      actorInitials: input.actorInitials,
+      payload: input.payload,
+    });
+  }
+
+  /** Batched per-jobOrderId attempt summary (attempt_called/attempt_texted).
+   *  One query, grouped in JS — mirrors the batched shape of
+   *  getLastOverdueCommentByJob above. jobOrderIds with zero attempts are
+   *  omitted from the returned map. */
+  async getAttemptSummaries(
+    officeId: string,
+    jobOrderIds: string[],
+  ): Promise<Record<string, { count: number; lastType: "called" | "texted"; lastActorInitials: string | null; lastAt: number }>> {
+    if (jobOrderIds.length === 0) return {};
+
+    const rows = await db
+      .select({
+        jobOrderId: jobEvents.jobOrderId,
+        eventType: jobEvents.eventType,
+        actorInitials: jobEvents.actorInitials,
+        createdAt: jobEvents.createdAt,
+      })
+      .from(jobEvents)
+      .where(
+        and(
+          eq(jobEvents.officeId, officeId),
+          inArray(jobEvents.jobOrderId, jobOrderIds),
+          inArray(jobEvents.eventType, ["attempt_called", "attempt_texted"]),
+        ),
+      );
+
+    const byJob: Record<string, { count: number; lastType: "called" | "texted"; lastActorInitials: string | null; lastAt: number }> = {};
+    for (const r of rows) {
+      const at = r.createdAt instanceof Date ? r.createdAt.getTime() : Number(r.createdAt) || 0;
+      const existing = byJob[r.jobOrderId];
+      const lastType: "called" | "texted" = r.eventType === "attempt_called" ? "called" : "texted";
+      if (!existing) {
+        byJob[r.jobOrderId] = { count: 1, lastType, lastActorInitials: r.actorInitials ?? null, lastAt: at };
+      } else {
+        existing.count += 1;
+        if (at > existing.lastAt) {
+          existing.lastType = lastType;
+          existing.lastActorInitials = r.actorInitials ?? null;
+          existing.lastAt = at;
+        }
+      }
+    }
+    return byJob;
+  }
+
+  /** Snooze a job: sets snoozedUntil/snoozeReason, logs a `snoozed` event,
+   *  and — only when a non-empty reason is given — writes a job comment so
+   *  the reason lands in the job's comment thread. */
+  async snoozeJob(
+    jobId: string,
+    untilMs: number,
+    reason: string | undefined,
+    actor: { userId: string; initials: string },
+  ): Promise<void> {
+    const job = await this.getJob(jobId);
+    if (!job) throw new Error("Job not found");
+
+    await db
+      .update(jobs)
+      .set({ snoozedUntil: new Date(untilMs), snoozeReason: reason ?? null, updatedAt: new Date() })
+      .where(eq(jobs.id, jobId));
+
+    await this.appendJobEvent({
+      jobOrderId: job.orderId,
+      jobId: job.id,
+      officeId: job.officeId,
+      eventType: "snoozed",
+      actorUserId: actor.userId,
+      actorInitials: actor.initials,
+      payload: { until: untilMs, reason: reason ?? null },
+    });
+
+    if (reason && reason.trim().length > 0) {
+      await this.createJobComment({
+        jobId: job.id,
+        authorId: actor.userId,
+        content: reason,
+      } as InsertJobComment);
+    }
   }
 
   async updateJob(id: string, updates: Partial<Job>, userId: string): Promise<Job> {
