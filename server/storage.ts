@@ -422,6 +422,99 @@ export class DatabaseStorage {
     }
   }
 
+  /** Today v2 search: case-insensitive match of `q` against patient first/last/
+   *  full name over ACTIVE jobs (the `jobs` table only — archived jobs live in
+   *  `archivedJobs` and are never returned here) in a single office.
+   *  `jobs` is the capped list of matching active jobs; `patients` is the
+   *  distinct (firstName+lastName) group among those matches, each pointing
+   *  at that patient's MOST RECENT active job (there is no patient detail
+   *  screen — selecting a patient opens their latest job). */
+  async searchByPatientName(
+    officeId: string,
+    q: string,
+    limit = 20,
+  ): Promise<{
+    patients: { id: string; firstName: string; lastName: string; jobId: string }[];
+    jobs: { id: string; orderId: string; patientFirstName: string; patientLastName: string; status: string }[];
+  }> {
+    const trimmed = q.trim();
+    if (!trimmed) return { patients: [], jobs: [] };
+
+    const pattern = `%${trimmed}%`;
+    const matches = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.officeId, officeId),
+          sql`(LOWER(${jobs.patientFirstName}) LIKE LOWER(${pattern})
+               OR LOWER(${jobs.patientLastName}) LIKE LOWER(${pattern})
+               OR LOWER(${jobs.patientFirstName} || ' ' || ${jobs.patientLastName}) LIKE LOWER(${pattern}))`,
+        ),
+      )
+      .orderBy(desc(jobs.createdAt))
+      .limit(limit);
+
+    const jobResults = matches.map((j) => ({
+      id: j.id,
+      orderId: j.orderId,
+      patientFirstName: j.patientFirstName,
+      patientLastName: j.patientLastName,
+      status: j.status,
+    }));
+
+    // Group by (firstName, lastName); matches are already ordered newest-first
+    // so the first row seen per patient key is that patient's most recent job.
+    const patientsByKey = new Map<string, { id: string; firstName: string; lastName: string; jobId: string }>();
+    for (const j of matches) {
+      const key = `${j.patientFirstName} ${j.patientLastName}`;
+      if (!patientsByKey.has(key)) {
+        patientsByKey.set(key, {
+          id: key,
+          firstName: j.patientFirstName,
+          lastName: j.patientLastName,
+          jobId: j.id,
+        });
+      }
+    }
+
+    return { patients: Array.from(patientsByKey.values()), jobs: jobResults };
+  }
+
+  /** Today v2 chase: for each jobOrderId belonging to `officeId`, append a
+   *  `chase_attempt` job_events row (payload { destinationId }) with the
+   *  given actor. jobOrderIds that don't resolve to a job in this office are
+   *  skipped. Returns the number of events actually written. */
+  async logChaseAttempts(
+    officeId: string,
+    jobOrderIds: string[],
+    destinationId: string,
+    actor: { userId: string; initials: string },
+  ): Promise<{ count: number }> {
+    if (jobOrderIds.length === 0) return { count: 0 };
+
+    const matchingJobs = await db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.officeId, officeId), inArray(jobs.orderId, jobOrderIds)));
+
+    let count = 0;
+    for (const job of matchingJobs) {
+      await this.appendJobEvent({
+        jobOrderId: job.orderId,
+        jobId: job.id,
+        officeId,
+        eventType: "chase_attempt",
+        actorUserId: actor.userId,
+        actorInitials: actor.initials,
+        payload: { destinationId },
+      });
+      count += 1;
+    }
+
+    return { count };
+  }
+
   async updateJob(id: string, updates: Partial<Job>, userId: string): Promise<Job> {
     const oldJob = await this.getJob(id);
     if (!oldJob) throw new Error('Job not found');
