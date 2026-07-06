@@ -3,7 +3,13 @@
 
 export type TileType = "queue" | "analytics" | "stats" | "team";
 export type QueueMode = "outreach" | "chase";
-export type ActivityType = "comment" | "status_change" | "overdue" | "star_note";
+export type ActivityType =
+  | "comment"
+  | "status_change"
+  | "overdue"
+  | "star_note"
+  | "attempt"
+  | "snooze";
 
 export interface SlotConfig {
   type: TileType;
@@ -98,14 +104,15 @@ function toMs(v: number | Date): number {
 }
 
 // Queue membership: jobs whose current status is in statusIds, oldest-first
-// (longest time since entering the current status).
-export function selectQueueJobs<T extends { status: string; statusChangedAt: number | Date }>(
-  jobs: T[],
-  statusIds: string[],
-): T[] {
+// (longest time since entering the current status). Jobs snoozed into the
+// future (snoozedUntil > nowMs) are excluded; null/past snooze is included.
+export function selectQueueJobs<
+  T extends { status: string; statusChangedAt: number | Date; snoozedUntil?: number | Date | null },
+>(jobs: T[], statusIds: string[], nowMs: number = Date.now()): T[] {
   const set = new Set(statusIds);
   return jobs
     .filter((j) => set.has(j.status))
+    .filter((j) => !(j.snoozedUntil && toMs(j.snoozedUntil) > nowMs))
     .sort((a, b) => toMs(a.statusChangedAt) - toMs(b.statusChangedAt));
 }
 
