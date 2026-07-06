@@ -1731,7 +1731,11 @@ export class DatabaseStorage {
 
   async getOverdueJobs(officeId: string): Promise<any[]> {
     const rules = await this.getNotificationRulesByOffice(officeId);
-    const overdueJobs = [];
+    // Dedupe by job.id: a job whose status matches two enabled rules must
+    // appear once, not once per rule (previously double-counted the
+    // sidebar badge, the overdue page, and StatsTile). Keep the WORST rule
+    // per job — largest daysOverdue, tie-break smallest maxDays.
+    const byJobId = new Map<string, any>();
 
     for (const rule of rules) {
       if (!rule.enabled) continue;
@@ -1758,16 +1762,19 @@ export class DatabaseStorage {
         else if (daysOverdue > 3) severity = 'high';
         else if (daysOverdue > 1) severity = 'medium';
 
-        overdueJobs.push({
-          ...job,
-          daysOverdue,
-          severity,
-          rule
-        });
+        const candidate = { ...job, daysOverdue, severity, rule };
+        const existing = byJobId.get(job.id);
+        if (
+          !existing ||
+          candidate.daysOverdue > existing.daysOverdue ||
+          (candidate.daysOverdue === existing.daysOverdue && candidate.rule.maxDays < existing.rule.maxDays)
+        ) {
+          byJobId.set(job.id, candidate);
+        }
       }
     }
 
-    return overdueJobs.sort((a, b) => {
+    return Array.from(byJobId.values()).sort((a, b) => {
       const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
       return (severityOrder as any)[a.severity] - (severityOrder as any)[b.severity];
     });
