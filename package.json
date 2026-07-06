@@ -57,7 +57,9 @@
     "test:reset-config": "node --import tsx --test tests/reset-config.test.ts",
     "test:today-defaults": "node --import tsx --test tests/today-defaults.test.ts",
     "test:today-activity": "node --import tsx --test tests/today-activity.test.ts",
-    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets && npm run test:always-on && npm run test:update-prompt && npm run test:reconnect && npm run test:login-ids && npm run test:host-probe && npm run test:onboarding-role && npm run test:reset-config && npm run test:today-defaults && npm run test:today-activity",
+    "test:job-events-foundation": "node --import tsx --test tests/job-events-foundation.test.ts",
+    "test:migrate-existing-db": "node --import tsx --test tests/migrate-existing-db.test.ts",
+    "test:all": "npm run test:no-offline-outbox && npm run test:migration-import && npm run test:archive-tray-number && npm run test:setup-wizard && npm run test:ui-redesign && npm run test:order-sheets && npm run test:always-on && npm run test:update-prompt && npm run test:reconnect && npm run test:login-ids && npm run test:host-probe && npm run test:onboarding-role && npm run test:reset-config && npm run test:today-defaults && npm run test:today-activity && npm run test:job-events-foundation && npm run test:migrate-existing-db",
     "db:push": "drizzle-kit push"
   },
   "build": {

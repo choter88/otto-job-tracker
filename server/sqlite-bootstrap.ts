@@ -299,6 +299,15 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     }
   }
 
+  function ensureSnoozeColumns() {
+    if (!hasColumn("jobs", "snoozed_until")) {
+      sqlite.prepare(`ALTER TABLE jobs ADD COLUMN snoozed_until INTEGER;`).run();
+    }
+    if (!hasColumn("jobs", "snooze_reason")) {
+      sqlite.prepare(`ALTER TABLE jobs ADD COLUMN snooze_reason TEXT;`).run();
+    }
+  }
+
   const statements: string[] = [
     `PRAGMA foreign_keys = ON;`,
     `PRAGMA journal_mode = WAL;`,
@@ -346,6 +355,8 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
       is_redo_job INTEGER NOT NULL DEFAULT 0,
       original_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
       notes TEXT,
+      snoozed_until INTEGER,
+      snooze_reason TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     );`,
@@ -603,6 +614,25 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
       details TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     );`,
+
+    // Today v2 "order event envelope": one append-only row per staff action
+    // on a job. Keyed by the stable job_order_id (ORD-… handle), NOT jobs.id,
+    // so events survive archive (same precedent as job_attachments /
+    // order_sheet_imports). job_id is a best-effort snapshot, not an FK.
+    `CREATE TABLE IF NOT EXISTS job_events (
+      id TEXT PRIMARY KEY,
+      job_order_id TEXT NOT NULL,
+      job_id TEXT,
+      office_id TEXT NOT NULL REFERENCES offices(id),
+      event_type TEXT NOT NULL,
+      actor_user_id TEXT REFERENCES users(id),
+      actor_initials TEXT,
+      payload TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    );`,
+    `CREATE INDEX IF NOT EXISTS job_events_order_idx ON job_events (job_order_id);`,
+    `CREATE INDEX IF NOT EXISTS job_events_office_created_idx ON job_events (office_id, created_at);`,
+    `CREATE INDEX IF NOT EXISTS job_events_office_type_idx ON job_events (office_id, event_type);`,
   ];
 
   sqlite.transaction(() => {
@@ -619,6 +649,7 @@ export function bootstrapSqliteSchema(sqlite: Database.Database): void {
     ensureHighContrastOfficeColors();
     ensureUserPreferencesColumn();
     ensureUserLastSignoutColumn();
+    ensureSnoozeColumns();
   })();
 
   // Run numbered SQL migrations from server/migrations/.
