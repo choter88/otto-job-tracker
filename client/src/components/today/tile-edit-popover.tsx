@@ -16,7 +16,6 @@ import {
 
 const TILE_TYPES: { type: TileType; label: string }[] = [
   { type: "queue", label: "Job queue" },
-  { type: "stats", label: "Office snapshot" },
   { type: "team", label: "Team activity" },
 ];
 
@@ -95,7 +94,7 @@ export default function TileEditDialog({
                     ))}
                   </select>
                   <p className="text-[11px] text-ink-mute mt-1.5">
-                    Owners &amp; managers can swap a job queue for analytics, stats, or team activity.
+                    Owners &amp; managers can swap a job queue for team activity.
                   </p>
                 </div>
               )}

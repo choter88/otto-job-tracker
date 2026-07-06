@@ -7,7 +7,6 @@ import JobDetailsModal, { type JobDetailsTab } from "@/components/job-details-mo
 import JobQueueTile from "@/components/today/job-queue-tile";
 import StarredTile from "@/components/today/starred-tile";
 import ActivityTile from "@/components/today/activity-tile";
-import StatsTile from "@/components/today/stats-tile";
 import TileEditDialog from "@/components/today/tile-edit-popover";
 import TodayIntroBanner from "@/components/today/today-intro-banner";
 import { apiRequest } from "@/lib/queryClient";
@@ -80,8 +79,8 @@ export default function Today() {
             <div key={i} className="flex-1 min-h-0 flex flex-col" data-testid={`today-slot-${i}`}>
               <JobQueueTile slot={slot} jobs={jobs} office={office} onOpenJob={openJob} onEdit={() => openEditFor(i)} />
             </div>
-          ) : slot.type === "stats" || slot.type === "analytics" || slot.type === "team" ? (
-            // Non-queue tiles (owner/manager). Wrapped so they keep an Edit
+          ) : slot.type === "team" ? (
+            // Non-queue tile (owner/manager). Wrapped so it keeps an Edit
             // affordance — otherwise switching a slot's type would be one-way.
             <div key={i} className="flex-none relative group" data-testid={`today-slot-${i}`}>
               <button
@@ -91,13 +90,8 @@ export default function Today() {
               >
                 Edit
               </button>
-              {slot.type === "team" ? (
-                <ActivityTile scope="office" title="Team activity"
-                  filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
-              ) : (
-                // "stats" (and legacy "analytics", now merged) → office snapshot
-                <StatsTile jobs={jobs} />
-              )}
+              <ActivityTile scope="office" title="Team activity"
+                filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
             </div>
           ) : (
             <div key={i} data-testid={`today-slot-${i}`} />
