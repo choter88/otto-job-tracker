@@ -38,7 +38,7 @@ export const DEFAULT_ACTIVITY_FILTER: ActivityType[] = ["comment", "overdue", "s
 export function defaultTodayConfig(): TodayConfig {
   return {
     slots: [
-      { type: "queue", mode: "outreach", title: "Call patients — ready for pickup",
+      { type: "queue", mode: "outreach", title: "Call patients ready for pickup",
         statusIds: ["ready_for_pickup"] },
       { type: "queue", mode: "chase", title: "Needs attention",
         statusIds: ["job_created", "ordered", "in_progress", "delayed"] },

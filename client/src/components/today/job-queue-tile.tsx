@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Phone, Clock } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -59,7 +58,7 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
         {isChase
           ? <Clock className="h-3.5 w-3.5 text-warn flex-none" />
           : <Phone className="h-3.5 w-3.5 text-success flex-none" />}
-        <span className="font-semibold text-sm text-ink">{slot.title ?? (isChase ? "Needs attention" : "Call patients")}</span>
+        <span className="font-semibold text-sm text-ink">{slot.title ?? (isChase ? "Needs attention" : "Call patients ready for pickup")}</span>
         <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full ${isChase ? "bg-warn-bg text-warn" : "bg-success-bg text-success"}`}>{queued.length}</span>
         <button className="ml-auto text-xs text-ink-mute hover:text-ink" onClick={onEdit} data-testid="today-tile-edit">Edit</button>
       </header>
@@ -107,15 +106,19 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
 function OutreachRow({ job, office, first, summary, onOpen }:
   { job: Job; office: any; first: boolean; summary?: AttemptSummary; onOpen: () => void }) {
   const typeStyle = getTypeBadgeStyle(job.jobType, office?.settings?.customJobTypes ?? []);
-  const readyFor = formatDistanceToNow(new Date(job.statusChangedAt as any), { addSuffix: false });
+  const typeLabel = getJobTypeLabel(job.jobType, office);
+  const statusLabel = (office?.settings?.customStatuses ?? []).find((s: any) => s.id === job.status)?.label ?? job.status;
+  const days = formatDaysInStatus(job.statusChangedAt as any);
   return (
     <div className={`flex items-center gap-4 px-4 py-3 ${first ? "" : "border-t border-line-2"}`}>
       <button className="flex-1 min-w-0 text-left" onClick={onOpen} data-testid={`today-row-${job.id}`}>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-sm text-ink">{job.patientFirstName} {job.patientLastName}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: typeStyle.background, color: typeStyle.text }}>{job.jobType}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: typeStyle.background, color: typeStyle.text }}>{typeLabel}</span>
         </div>
-        <div className="text-xs text-ink-mute mt-1">Ready {readyFor}</div>
+        <div className="text-xs text-ink-mute mt-1">
+          {statusLabel} · {days} days
+        </div>
         {summary && summary.count > 0 && (
           <div className="text-xs text-ink-mute mt-0.5" data-testid={`attempt-summary-${job.id}`}>
             {formatAttemptSummary(summary)}
