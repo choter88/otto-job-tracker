@@ -1,13 +1,17 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MessageSquare } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ActivityType, ActivityFeedItem } from "@shared/today-defaults";
+import { capActivityFeed, type ActivityType, type ActivityFeedItem } from "@shared/today-defaults";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
 
-// One component, two uses: scope="me" (Since last login, with Edit) and
-// scope="office" (Team activity, no Edit) — see Task 12.
+// M8: the only remaining caller is today.tsx's single Team activity feed
+// (scope="office", no onEdit — the filter is fixed to TEAM_ACTIVITY_FILTER).
+// scope="me" ("Since last login") is kept as a supported mode of this
+// component (server-side boundaryFor logic still exists for it) but has no
+// caller today; the personal feed slot was replaced by Team activity.
 export default function ActivityTile({
   filter,
   jobsById,
@@ -34,7 +38,13 @@ export default function ActivityTile({
       return res.ok ? res.json() : { since: Date.now(), items: [] };
     },
   });
-  const items = data?.items ?? [];
+  const allItems = data?.items ?? [];
+  // req 8: cap the feed at ~10 rows with a "view more" affordance rather than
+  // rendering an unbounded scroll — capActivityFeed is the same pure helper
+  // both scopes share (see shared/today-defaults.ts).
+  const [expanded, setExpanded] = useState(false);
+  const { shown, hiddenCount } = capActivityFeed(allItems);
+  const items = expanded ? allItems : shown;
   return (
     <section className="flex-1 min-h-0 rounded-xl border border-line bg-panel overflow-hidden flex flex-col">
       <header className="flex items-center gap-2 px-4 py-3 border-b border-line-2">
@@ -100,6 +110,15 @@ export default function ActivityTile({
             </button>
           );
         })}
+        {!expanded && hiddenCount > 0 && (
+          <button
+            className="w-full text-center text-xs text-accent hover:underline py-2.5"
+            onClick={() => setExpanded(true)}
+            data-testid="activity-view-more"
+          >
+            View {hiddenCount} more
+          </button>
+        )}
       </ScrollArea>
     </section>
   );

@@ -123,12 +123,16 @@ export const CLIENT_TRACKABLE_EVENTS = new Set<string>([
   // AND the print bridge is available AND this is the machine that won
   // the ingest claim. Fired once per successful auto-print.
   "order_sheet_auto_print_triggered",
-  // Today Dashboard v2 — client-emitted only. The other six TODAY_EVENTS
-  // (attempt/snooze/pickup/chase/star) are server-emitted and must NOT be
+  // Today Dashboard v2 — client-emitted only. The other five TODAY_EVENTS
+  // (attempt x2/snooze/pickup/chase) are server-emitted and must NOT be
   // added here; this task is the single owner of this allowlist slice.
   TODAY_EVENTS.VIEW_OPENED,
   TODAY_EVENTS.SEARCH_OPENED,
   TODAY_EVENTS.NEW_JOB_CLICKED,
+  // M8: the Remember card's "done" row action unstars a job and fires this
+  // client-side — there is no star_done job_event (no consumer), so this is
+  // client-emitted-only same as the three above.
+  TODAY_EVENTS.STAR_DONE,
 ]);
 
 /** Allowlist for tablet-side event types (POST /tablet/api/track). Kept

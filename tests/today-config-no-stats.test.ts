@@ -4,6 +4,10 @@
  * "analytics" slot — not from the role defaults, and not from a stored
  * preferences.todayConfig that still has one persisted from before the cut
  * (existing owners shouldn't get it back just because it's saved).
+ *
+ * M8: the center owner-only "team" slot is cut the same way — Team activity
+ * now lives once, in the right-column feed (see today.tsx) — so "team" is
+ * coerced away too, even for a privileged role and even if persisted.
  */
 
 import test from "node:test";
@@ -40,12 +44,13 @@ test("resolveTodayConfig: a persisted 'analytics' slot is coerced away for manag
   assert.equal(cfg.slots[0].type, "queue");
 });
 
-test("resolveTodayConfig: 'team' slot is still allowed for a privileged role (not cut)", () => {
+test("resolveTodayConfig: M8 — 'team' slot is now also cut, even for a privileged role", () => {
   const prefs = { todayConfig: { slots: [
     { type: "team" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
   ], activityFilter: ["comment"] } };
   const cfg = resolveTodayConfig(prefs, "owner", VALID);
-  assert.equal(cfg.slots[0].type, "team");
+  assert.notEqual(cfg.slots[0].type, "team");
+  assert.equal(cfg.slots[0].type, "queue");
 });
 
 test("resolveTodayConfig: queue slots (outreach/chase) are unaffected by the stats cut", () => {
