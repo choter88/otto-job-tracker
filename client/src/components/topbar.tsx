@@ -13,7 +13,7 @@ import { TODAY_EVENTS } from "@shared/today-telemetry";
 import type { Job } from "@shared/schema";
 
 interface TopbarProps {
-  /** Current active tab id — used to derive the crumb label. */
+  /** Current active tab id; used to derive the crumb label. */
   activeTab: string;
   onHelpClick?: () => void;
 }
@@ -33,7 +33,7 @@ const TAB_LABELS: Record<string, string> = {
 };
 
 // Thin wrapper around POST /api/track for Today Dashboard v2 client events.
-// Fire-and-forget — telemetry failures must never break the UI. Metadata is
+// Fire-and-forget: telemetry failures must never break the UI. Metadata is
 // numbers/enums only (see ClientTodayMetadata) so PHI can never be logged.
 function trackTodayEvent(eventType: (typeof TODAY_EVENTS)[keyof typeof TODAY_EVENTS], metadata?: Record<string, number>) {
   try {
@@ -83,7 +83,7 @@ export default function Topbar({ activeTab, onHelpClick }: TopbarProps) {
   const [detailsTab, setDetailsTab] = useState<JobDetailsTab>("overview");
 
   // Global (meta||ctrl)+K opens the search palette from any authenticated
-  // screen — Topbar is mounted on every tab via dashboard.tsx, so a single
+  // screen; Topbar is mounted on every tab via dashboard.tsx, so a single
   // listener here covers the whole app.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

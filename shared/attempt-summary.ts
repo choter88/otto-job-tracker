@@ -2,7 +2,7 @@ import { format } from "date-fns";
 
 // Today Dashboard v2 (M4): pure formatter for the per-row attempt-history
 // summary line, e.g. "3 attempts · last text · MK · Jul 3". Separator is
-// " · " (space-middot-space) throughout — never an em-dash, to keep the
+// " · " (space-middot-space) throughout; never an em-dash, to keep the
 // present-tense, plain-language tone used across the Today dashboard copy.
 export type AttemptSummary = {
   count: number;

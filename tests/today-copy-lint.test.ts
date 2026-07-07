@@ -14,6 +14,10 @@
  * Scope mirrors the M10 task brief: everything under
  * client/src/components/today/, client/src/pages/today.tsx,
  * client/src/components/search-palette.tsx, and shared/today-defaults.ts.
+ * Extended by the final whole-branch review (Fix B) to also cover
+ * shared/job-labels.ts, shared/snooze-presets.ts, shared/attempt-summary.ts,
+ * and client/src/components/topbar.tsx — all of which render Today copy but
+ * were missed by the original M10 scope.
  */
 
 import test from "node:test";
@@ -38,6 +42,10 @@ const ALL_SCOPED_FILES = [
   path.join(REPO_ROOT, "client/src/pages/today.tsx"),
   path.join(REPO_ROOT, "client/src/components/search-palette.tsx"),
   path.join(REPO_ROOT, "shared/today-defaults.ts"),
+  path.join(REPO_ROOT, "shared/job-labels.ts"),
+  path.join(REPO_ROOT, "shared/snooze-presets.ts"),
+  path.join(REPO_ROOT, "shared/attempt-summary.ts"),
+  path.join(REPO_ROOT, "client/src/components/topbar.tsx"),
 ];
 
 // The queue ROW components specifically (OutreachRow/ChaseRow both live in
