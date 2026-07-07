@@ -7,13 +7,15 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
+import { getTypeBadgeStyle } from "@/lib/default-colors";
 import { selectQueueJobs, type SlotConfig } from "@shared/today-defaults";
 import { formatAttemptSummary, type AttemptSummary } from "@shared/attempt-summary";
+import { getJobTypeLabel, formatDaysInStatus } from "@shared/job-labels";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
 import CallLabButton from "@/components/today/call-lab-button";
 import SnoozeButton from "@/components/today/snooze-button";
+import { groupByHolder, type HolderGroup } from "@/components/today/today-holder-groups";
 
 interface Props {
   slot: SlotConfig;
@@ -28,6 +30,7 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
   const queued = selectQueueJobs(jobs, slot.statusIds ?? []);
 
   const isChase = slot.mode === "chase";
+  const holderGroups = isChase ? groupByHolder(queued, office) : [];
   const queuedIds = queued.map((j) => j.id).join(",");
   const { data: lastOverdue = {} } = useQuery<Record<string, any>>({
     queryKey: ["/api/jobs/overdue-comments", queuedIds],
@@ -56,7 +59,7 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
         {isChase
           ? <Clock className="h-3.5 w-3.5 text-warn flex-none" />
           : <Phone className="h-3.5 w-3.5 text-success flex-none" />}
-        <span className="font-semibold text-sm text-ink">{slot.title ?? "Call patients"}</span>
+        <span className="font-semibold text-sm text-ink">{slot.title ?? (isChase ? "Needs attention" : "Call patients")}</span>
         <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full ${isChase ? "bg-warn-bg text-warn" : "bg-success-bg text-success"}`}>{queued.length}</span>
         <button className="ml-auto text-xs text-ink-mute hover:text-ink" onClick={onEdit} data-testid="today-tile-edit">Edit</button>
       </header>
@@ -65,15 +68,14 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           {isChase
-            ? queued.map((job, i) => (
-                <ChaseRow
-                  key={job.id}
-                  job={job}
+            ? holderGroups.map((group, gi) => (
+                <ChaseGroup
+                  key={group.key}
+                  group={group}
                   office={office}
-                  first={i === 0}
-                  lastComment={lastOverdue[job.id]}
-                  onOpen={() => onOpenJob(job, "comments", true)}
-                  onPhoneSaved={() => {}}
+                  first={gi === 0}
+                  lastOverdue={lastOverdue}
+                  onOpenJob={(job) => onOpenJob(job, "comments", true)}
                 />
               ))
             : queued.map((job, i) => (
@@ -160,29 +162,90 @@ function PickedUpButton({ jobId }: { jobId: string }) {
   );
 }
 
-function ChaseRow({ job, office, first, lastComment, onOpen, onPhoneSaved }:
-  { job: Job; office: any; first: boolean; lastComment?: any; onOpen: () => void; onPhoneSaved: () => void }) {
-  const destStyle = getDestinationBadgeStyle(job.orderDestination, office?.settings?.customOrderDestinations ?? []);
+// One holder group in the "Needs attention" tile: a header identifying who
+// currently has the job (a lab, or "In office" for jobs not yet sent out),
+// followed by its rows worst-first. Lab group headers carry the single Call
+// action for the whole group; "In office" has no call (nothing to dial).
+function ChaseGroup({ group, office, first, lastOverdue, onOpenJob }: {
+  group: HolderGroup;
+  office: any;
+  first: boolean;
+  lastOverdue: Record<string, any>;
+  onOpenJob: (job: Job) => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const chase = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/jobs/chase", {
+        jobOrderIds: group.jobs.map((j: Job) => j.orderId),
+        destinationId: group.destinationId,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      qc.invalidateQueries({ queryKey: ["/api/today/activity"] });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't log this chase", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const lab = group.kind === "lab" ? { id: group.destinationId!, label: group.label, phone: group.phone } : undefined;
+
+  return (
+    <div className={first ? "" : "border-t border-line-2"}>
+      <div className="flex items-center gap-2 px-4 py-2 bg-panel-2">
+        <span className="font-semibold text-xs text-ink">{group.label}</span>
+        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-warn-bg text-warn">{group.jobs.length}</span>
+        {group.kind === "lab" && (
+          <div className="ml-auto">
+            <CallLabButton
+              lab={lab}
+              id={group.key}
+              office={office}
+              onPhoneSaved={() => {}}
+              onCalled={() => chase.mutate()}
+            />
+          </div>
+        )}
+      </div>
+      {group.jobs.map((job: Job, i: number) => (
+        <ChaseRow
+          key={job.id}
+          job={job}
+          office={office}
+          first={i === 0}
+          lastComment={lastOverdue[job.id]}
+          onOpen={() => onOpenJob(job)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ChaseRow({ job, office, first, lastComment, onOpen }:
+  { job: Job; office: any; first: boolean; lastComment?: any; onOpen: () => void }) {
+  const typeStyle = getTypeBadgeStyle(job.jobType, office?.settings?.customJobTypes ?? []);
+  const typeLabel = getJobTypeLabel(job.jobType, office);
   const statusLabel = (office?.settings?.customStatuses ?? []).find((s: any) => s.id === job.status)?.label ?? job.status;
-  const days = Math.floor((Date.now() - new Date(job.statusChangedAt as any).getTime()) / 86400000);
-  const lab = (office?.settings?.customOrderDestinations ?? []).find((d: any) => d.id === job.orderDestination);
+  const days = formatDaysInStatus(job.statusChangedAt as any);
   return (
     <div className={`flex items-center gap-4 px-4 py-3 ${first ? "" : "border-t border-line-2"}`}>
       <button className="flex-1 min-w-0 text-left" onClick={onOpen}>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-sm text-ink">{job.patientFirstName} {job.patientLastName}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: destStyle.background, color: destStyle.text }}>{lab?.label ?? job.orderDestination}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: typeStyle.background, color: typeStyle.text }}>{typeLabel}</span>
         </div>
         <div className="text-xs text-ink-mute mt-1 truncate">
-          {statusLabel}{lastComment ? ` · "${lastComment.content}"` : " · no overdue note yet"}
+          {statusLabel} · {days} days
         </div>
+        {lastComment && (
+          <div className="text-xs text-ink-mute mt-0.5 truncate">"{lastComment.content}"</div>
+        )}
       </button>
-      <div className="flex-none w-24 text-right">
-        <div className="font-mono text-sm text-danger">{days} days</div>
-        <div className="text-[10px] text-ink-mute">in status</div>
-      </div>
       <div className="flex-none flex gap-2">
-        <CallLabButton lab={lab} job={job} office={office} onPhoneSaved={onPhoneSaved} />
         <Button size="xs" variant="outline" onClick={onOpen} data-testid={`chase-comments-${job.id}`}>Comments</Button>
         <SnoozeButton jobId={job.id} />
       </div>

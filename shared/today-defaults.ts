@@ -14,7 +14,7 @@ export type ActivityType =
 export interface SlotConfig {
   type: TileType;
   // queue-only fields:
-  mode?: QueueMode; // "outreach" = Call patients, "chase" = Chase the lab
+  mode?: QueueMode; // "outreach" = Call patients, "chase" = Needs attention
   title?: string;
   statusIds?: string[];
 }
@@ -40,7 +40,7 @@ export function defaultTodayConfig(): TodayConfig {
     slots: [
       { type: "queue", mode: "outreach", title: "Call patients — ready for pickup",
         statusIds: ["ready_for_pickup"] },
-      { type: "queue", mode: "chase", title: "Chase the lab — sitting too long",
+      { type: "queue", mode: "chase", title: "Needs attention",
         statusIds: ["job_created", "ordered", "in_progress", "delayed"] },
     ],
     activityFilter: [...DEFAULT_ACTIVITY_FILTER],
