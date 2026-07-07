@@ -34,10 +34,19 @@ export function getDestinationLabel(destId: string, office: any): string {
   return getDestination(destId, office)?.label ?? toTitleCase(destId);
 }
 
-function toMs(v: Date | number): number {
-  return v instanceof Date ? v.getTime() : v;
+// Drizzle `mode: "timestamp_ms"` columns are JS `Date` objects server-side,
+// but `GET /api/jobs` serializes the response with `res.json(jobs)`: the
+// default Express/JSON serializer calls `Date.prototype.toJSON()`, turning
+// every Date into an ISO 8601 string over the wire. The client has no date
+// reviver, so by the time a job reaches this helper, `statusChangedAt` is an
+// ISO string, not a Date or number. Parse that shape explicitly.
+function toMs(v: Date | number | string): number {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "number") return v;
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? 0 : t;
 }
 
-export function formatDaysInStatus(statusChangedAt: Date | number, nowMs: number = Date.now()): number {
+export function formatDaysInStatus(statusChangedAt: Date | number | string, nowMs: number = Date.now()): number {
   return Math.floor((nowMs - toMs(statusChangedAt)) / 86400000);
 }

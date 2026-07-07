@@ -119,15 +119,32 @@ export function resolveTodayConfig(
   return { slots, activityFilter: filter.length ? filter : [...DEFAULT_ACTIVITY_FILTER] };
 }
 
-function toMs(v: number | Date): number {
-  return v instanceof Date ? v.getTime() : Number(v) || 0;
+// Drizzle `mode: "timestamp_ms"` columns are JS `Date` objects server-side,
+// but `GET /api/jobs` serializes the response with `res.json(jobs)`: the
+// default Express/JSON serializer calls `Date.prototype.toJSON()`, turning
+// every Date into an ISO 8601 string over the wire. The client has no date
+// reviver, so by the time a job reaches this helper, `statusChangedAt` /
+// `snoozedUntil` are ISO strings, not Dates or numbers. Parse that shape
+// explicitly rather than falling through to `Number(v)` (NaN/0 for a string).
+function toMs(v: Date | number | string | null | undefined): number {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const t = new Date(v).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  }
+  return 0;
 }
 
 // Queue membership: jobs whose current status is in statusIds, oldest-first
 // (longest time since entering the current status). Jobs snoozed into the
 // future (snoozedUntil > nowMs) are excluded; null/past snooze is included.
 export function selectQueueJobs<
-  T extends { status: string; statusChangedAt: number | Date; snoozedUntil?: number | Date | null },
+  T extends {
+    status: string;
+    statusChangedAt: number | Date | string;
+    snoozedUntil?: number | Date | string | null;
+  },
 >(jobs: T[], statusIds: string[], nowMs: number = Date.now()): T[] {
   const set = new Set(statusIds);
   return jobs
