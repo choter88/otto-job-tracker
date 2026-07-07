@@ -301,34 +301,31 @@ function hashUserId(userId: string | null): string {
   return createHash("sha256").update(userId).digest("hex");
 }
 
-/** Short enum token: lowercase alnum + `_-:.`, 1-32 chars. Anything else
- *  (patient names, free-text notes, long strings) fails this and is PHI-risk. */
-const SHORT_ENUM_TOKEN = /^[a-z0-9_\-:.]{1,32}$/;
-
 /**
  * HARD PHI BOUNDARY — this is the last line of defense before Today v2
  * telemetry metadata leaves the LAN in the check-in payload.
  *
  * Client-emitted Today metadata is numbers-only by type (see
- * ClientTodayMetadata in shared/today-telemetry.ts), but server-emitted
- * Today events (snooze reasons, chase notes, attempt outcomes, etc.) are
- * NOT type-constrained the same way — a future call site could pass a
- * patient name or note string into `trackEvent`'s `metadata`. Rather than
- * trust every call site, every `today_*` event's metadata is re-validated
- * here, at egress: only numbers and short enum-shaped tokens
- * (/^[a-z0-9_\-:.]{1,32}$/) survive; everything else (names, sentences,
- * anything with spaces or mixed case) is dropped. Non-Today events are
- * untouched — this task's scope is exactly the Today v2 vocabulary.
+ * ClientTodayMetadata in shared/today-telemetry.ts), and every real
+ * server-emitted `today_*` call site also only ever passes `{}` or
+ * `{ count }`. But server-emitted Today events are NOT type-constrained the
+ * same way as the client type — a future call site could pass a patient
+ * name or note string into `trackEvent`'s `metadata`. Rather than trust
+ * every call site (present and future), every `today_*` event's metadata is
+ * re-validated here, at egress: only numbers survive; every string value is
+ * dropped outright, even a short lowercase-token-shaped one, so a
+ * name-shaped value can never egress even if a future caller adds one.
+ * Non-Today events are untouched: this task's scope is exactly the Today v2
+ * vocabulary.
  */
 function sanitizeTodayMetadata(metadata: Record<string, any>): Record<string, any> {
   const clean: Record<string, any> = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (typeof value === "number") {
       clean[key] = value;
-    } else if (typeof value === "string" && SHORT_ENUM_TOKEN.test(value)) {
-      clean[key] = value;
     }
-    // else: drop — not a number, not a short enum token (PHI risk)
+    // else: drop, not a number (PHI risk), including any string value,
+    // short-enum-shaped or not.
   }
   return clean;
 }

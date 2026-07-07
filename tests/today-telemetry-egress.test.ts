@@ -64,6 +64,40 @@ test("getRawEventsSince strips PHI-shaped metadata from today_* events at egress
   assert.ok(todayEvent!.eventType.length <= 50);
 });
 
+test("getRawEventsSince strips ANY string metadata (even a short lowercase token) from today_* events, numbers still survive", () => {
+  // Final-review Fix C: sanitizeTodayMetadata used to keep short
+  // enum-shaped string tokens (/^[a-z0-9_\-:.]{1,32}$/) for today_* events.
+  // Every real today_* call site only ever emits numbers (or {}), so that
+  // string branch was pure unused surface area for a future name-shaped
+  // value to slip through (e.g. a single lowercase token like a first
+  // name). It's now numbers-only: no string, however short/enum-shaped,
+  // survives egress for a today_* event.
+  const since = new Date(Date.now() - 60_000);
+
+  trackEvent({
+    userId: "user-3",
+    officeId: "office-1",
+    eventType: TODAY_EVENTS.SEARCH_OPENED,
+    metadata: {
+      who: "jane",
+      count: 5,
+    },
+  });
+
+  const events = getRawEventsSince(since);
+  const todayEvent = events.find(
+    (e) => e.eventType === TODAY_EVENTS.SEARCH_OPENED && e.metadata.count === 5,
+  );
+  assert.ok(todayEvent, "expected the seeded today_search_opened event to be present");
+
+  assert.equal(todayEvent!.metadata.count, 5, "numeric metadata must survive egress");
+  assert.equal(
+    todayEvent!.metadata.who,
+    undefined,
+    "a bare lowercase single-token string value must be stripped at egress, even though it is short/enum-shaped",
+  );
+});
+
 test("getRawEventsSince leaves non-today_ event metadata completely untouched", () => {
   const since = new Date(Date.now() - 60_000);
 

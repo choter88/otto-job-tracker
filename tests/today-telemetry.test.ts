@@ -103,6 +103,15 @@ test("today_* telemetry: PHI stays LAN-side and never egresses", async () => {
     eventType: TODAY_EVENTS.SEARCH_OPENED,
     metadata: { patient: "Jane Patient", count: 2 },
   });
+  // Final-review Fix C: a bare lowercase single-token string (short/enum-
+  // shaped, e.g. a first name) must ALSO be stripped at egress for a
+  // today_* event now — sanitizeTodayMetadata is numbers-only, full stop.
+  trackEvent({
+    userId: user.id,
+    officeId: user.officeId,
+    eventType: TODAY_EVENTS.NEW_JOB_CLICKED,
+    metadata: { who: "jane" } as any,
+  });
 
   // ── Prove PHI landed LAN-side (query the DB directly) ─────────────
   const jobEventRows = sqlite
@@ -172,6 +181,16 @@ test("today_* telemetry: PHI stays LAN-side and never egresses", async () => {
   assert.ok(searchOpenedEvent, "expected the seeded today_search_opened event in egress");
   assert.equal(searchOpenedEvent!.metadata.count, 2, "numeric metadata must survive egress");
   assert.equal(searchOpenedEvent!.metadata.patient, undefined, "patient name must be stripped at egress");
+
+  // (2b) a bare lowercase single-token string (short/enum-shaped) must also
+  // be stripped now — sanitizeTodayMetadata is numbers-only for today_*.
+  const newJobClickedEvent = todayRawEvents.find((e) => e.eventType === TODAY_EVENTS.NEW_JOB_CLICKED);
+  assert.ok(newJobClickedEvent, "expected the seeded today_new_job_clicked event in egress");
+  assert.equal(
+    newJobClickedEvent!.metadata.who,
+    undefined,
+    "a bare lowercase single-token string value must be stripped at egress, even though it is short/enum-shaped",
+  );
 
   // (3, restated at the egress-object level) no note/reason key anywhere.
   for (const e of rawEvents) {
