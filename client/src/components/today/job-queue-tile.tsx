@@ -15,6 +15,7 @@ import type { JobDetailsTab } from "@/components/job-details-modal";
 import CallLabButton from "@/components/today/call-lab-button";
 import SnoozeButton from "@/components/today/snooze-button";
 import { groupByHolder, type HolderGroup } from "@/components/today/today-holder-groups";
+import { TODAY_DENSITY } from "@/components/today/today-density";
 
 interface Props {
   slot: SlotConfig;
@@ -54,7 +55,7 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
 
   return (
     <section className="flex-1 min-h-0 rounded-xl border border-line bg-panel overflow-hidden flex flex-col">
-      <header className="flex items-center gap-2 px-4 py-3 border-b border-line-2 flex-none">
+      <header className={`flex items-center gap-2 ${TODAY_DENSITY.header} border-b border-line-2 flex-none`}>
         {isChase
           ? <Clock className="h-3.5 w-3.5 text-warn flex-none" />
           : <Phone className="h-3.5 w-3.5 text-success flex-none" />}
@@ -110,17 +111,17 @@ function OutreachRow({ job, office, first, summary, onOpen }:
   const statusLabel = (office?.settings?.customStatuses ?? []).find((s: any) => s.id === job.status)?.label ?? job.status;
   const days = formatDaysInStatus(job.statusChangedAt as any);
   return (
-    <div className={`flex items-center gap-4 px-4 py-3 ${first ? "" : "border-t border-line-2"}`}>
+    <div className={`flex items-center gap-4 ${TODAY_DENSITY.row} ${first ? "" : "border-t border-line-2"}`}>
       <button className="flex-1 min-w-0 text-left" onClick={onOpen} data-testid={`today-row-${job.id}`}>
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-sm text-ink">{job.patientFirstName} {job.patientLastName}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: typeStyle.background, color: typeStyle.text }}>{typeLabel}</span>
+          <span className="font-semibold text-sm text-ink leading-tight">{job.patientFirstName} {job.patientLastName}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded leading-tight" style={{ background: typeStyle.background, color: typeStyle.text }}>{typeLabel}</span>
         </div>
-        <div className="text-xs text-ink-mute mt-1">
+        <div className={`text-xs text-ink-mute leading-tight ${TODAY_DENSITY.lineGap}`}>
           {statusLabel} · {days} days
         </div>
         {summary && summary.count > 0 && (
-          <div className="text-xs text-ink-mute mt-0.5" data-testid={`attempt-summary-${job.id}`}>
+          <div className={`text-xs text-ink-mute leading-tight ${TODAY_DENSITY.lineGapTight}`} data-testid={`attempt-summary-${job.id}`}>
             {formatAttemptSummary(summary)}
           </div>
         )}
@@ -199,7 +200,7 @@ function ChaseGroup({ group, office, first, lastOverdue, onOpenJob }: {
 
   return (
     <div className={first ? "" : "border-t border-line-2"}>
-      <div className="flex items-center gap-2 px-4 py-2 bg-panel-2">
+      <div className={`flex items-center gap-2 ${TODAY_DENSITY.header} bg-panel-2`}>
         <span className="font-semibold text-xs text-ink">{group.label}</span>
         <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-warn-bg text-warn">{group.jobs.length}</span>
         {group.kind === "lab" && (
@@ -235,17 +236,17 @@ function ChaseRow({ job, office, first, lastComment, onOpen }:
   const statusLabel = (office?.settings?.customStatuses ?? []).find((s: any) => s.id === job.status)?.label ?? job.status;
   const days = formatDaysInStatus(job.statusChangedAt as any);
   return (
-    <div className={`flex items-center gap-4 px-4 py-3 ${first ? "" : "border-t border-line-2"}`}>
+    <div className={`flex items-center gap-4 ${TODAY_DENSITY.row} ${first ? "" : "border-t border-line-2"}`}>
       <button className="flex-1 min-w-0 text-left" onClick={onOpen}>
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-sm text-ink">{job.patientFirstName} {job.patientLastName}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: typeStyle.background, color: typeStyle.text }}>{typeLabel}</span>
+          <span className="font-semibold text-sm text-ink leading-tight">{job.patientFirstName} {job.patientLastName}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded leading-tight" style={{ background: typeStyle.background, color: typeStyle.text }}>{typeLabel}</span>
         </div>
-        <div className="text-xs text-ink-mute mt-1 truncate">
+        <div className={`text-xs text-ink-mute leading-tight truncate ${TODAY_DENSITY.lineGap}`}>
           {statusLabel} · {days} days
         </div>
         {lastComment && (
-          <div className="text-xs text-ink-mute mt-0.5 truncate">"{lastComment.content}"</div>
+          <div className={`text-xs text-ink-mute leading-tight truncate ${TODAY_DENSITY.lineGapTight}`}>"{lastComment.content}"</div>
         )}
       </button>
       <div className="flex-none flex gap-2">

@@ -6,6 +6,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { TODAY_EVENTS } from "@shared/today-telemetry";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
+import { TODAY_DENSITY } from "@/components/today/today-density";
 
 // Thin wrapper around POST /api/track for Today Dashboard v2 client events —
 // same pattern as client/src/components/topbar.tsx (not shared/exported from
@@ -52,7 +53,7 @@ export default function StarredTile({ office, onOpenJob }:
 
   return (
     <section className="flex-none rounded-xl border border-line bg-panel overflow-hidden">
-      <header className="flex items-center gap-2 px-4 py-3 border-b border-line-2">
+      <header className={`flex items-center gap-2 ${TODAY_DENSITY.header} border-b border-line-2`}>
         <Star className="h-3.5 w-3.5 text-warn" fill="currentColor" />
         <span className="font-semibold text-sm text-ink">Remember</span>
         <span className="ml-auto font-mono text-[10px] px-1.5 rounded-full bg-paper-2 text-ink-mute">{starred.length}</span>
@@ -65,13 +66,13 @@ export default function StarredTile({ office, onOpenJob }:
           const primaryText = job.importantNote || `${job.patientFirstName} ${job.patientLastName}`;
           return (
             <div key={job.id}
-              className="group w-full flex items-start gap-2.5 px-4 py-3 border-b border-line-2 last:border-0 hover:bg-panel-2">
-              <button className="flex-1 min-w-0 text-left flex items-start gap-2.5"
+              className={`group w-full flex items-start gap-2 ${TODAY_DENSITY.row} border-b border-line-2 last:border-0 hover:bg-panel-2`}>
+              <button className="flex-1 min-w-0 text-left flex items-start gap-2"
                 onClick={() => onOpenJob(job as Job, "overview")} data-testid={`starred-${job.id}`}>
-                <Star className="h-3 w-3 mt-1 text-warn flex-none" fill="currentColor" />
+                <Star className="h-3 w-3 mt-0.5 text-warn flex-none" fill="currentColor" />
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold text-ink truncate">{primaryText}</div>
-                  <div className="flex items-center gap-2 mt-0.5">
+                  <div className="text-xs font-semibold text-ink leading-tight truncate">{primaryText}</div>
+                  <div className={`flex items-center gap-2 leading-tight ${TODAY_DENSITY.lineGapTight}`}>
                     <span className="text-[11px] text-ink-mute truncate">
                       {job.patientFirstName} {job.patientLastName} · {getJobTypeLabel(job.jobType, office)}
                     </span>
@@ -80,7 +81,7 @@ export default function StarredTile({ office, onOpenJob }:
                 </div>
               </button>
               <button
-                className="flex-none mt-0.5 flex items-center gap-1 text-[11px] text-ink-mute hover:text-ink px-1.5 py-0.5 rounded"
+                className="flex-none flex items-center gap-1 text-[11px] text-ink-mute hover:text-ink px-1.5 py-1 rounded"
                 onClick={(e) => handleDone(e, job.id)}
                 data-testid={`starred-done-${job.id}`}
                 title="Done"
