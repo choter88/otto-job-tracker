@@ -232,10 +232,11 @@ function ContactButton({ job, kind }: { job: Job; kind: "Call" | "Text" }) {
     },
   });
 
+  const hasPhone = !!job.phone?.trim();
+
   const handleClick = () => {
-    if (job.phone) {
-      window.location.href = kind === "Call" ? `tel:${job.phone}` : `sms:${job.phone}`;
-    }
+    if (!hasPhone) return;
+    window.location.href = kind === "Call" ? `tel:${job.phone}` : `sms:${job.phone}`;
     logAttempt.mutate();
   };
 
@@ -244,7 +245,8 @@ function ContactButton({ job, kind }: { job: Job; kind: "Call" | "Text" }) {
       size="xs"
       variant={confirmed ? "secondary" : "outline"}
       onClick={handleClick}
-      disabled={logAttempt.isPending}
+      disabled={!hasPhone || logAttempt.isPending}
+      title={hasPhone ? undefined : "No phone on file"}
       data-testid={`contact-${kind.toLowerCase()}-${job.id}`}
     >
       {confirmed ? `✓ ${kind === "Call" ? "Called" : "Texted"}` : kind}
