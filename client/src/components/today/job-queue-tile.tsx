@@ -1,17 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Phone, Clock } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatDistanceToNow, format } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
+import { getTypeBadgeStyle } from "@/lib/default-colors";
 import { selectQueueJobs, type SlotConfig } from "@shared/today-defaults";
+import { formatAttemptSummary, type AttemptSummary } from "@shared/attempt-summary";
+import { getJobTypeLabel, formatDaysInStatus } from "@shared/job-labels";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
 import CallLabButton from "@/components/today/call-lab-button";
+import SnoozeButton from "@/components/today/snooze-button";
+import { groupByHolder, type HolderGroup } from "@/components/today/today-holder-groups";
+import { TODAY_DENSITY } from "@/components/today/today-density";
 
 interface Props {
   slot: SlotConfig;
@@ -26,6 +30,7 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
   const queued = selectQueueJobs(jobs, slot.statusIds ?? []);
 
   const isChase = slot.mode === "chase";
+  const holderGroups = isChase ? groupByHolder(queued, office) : [];
   const queuedIds = queued.map((j) => j.id).join(",");
   const { data: lastOverdue = {} } = useQuery<Record<string, any>>({
     queryKey: ["/api/jobs/overdue-comments", queuedIds],
@@ -37,13 +42,24 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
     enabled: isChase && queuedIds.length > 0,
   });
 
+  const queuedOrderIds = queued.map((j) => j.orderId).join(",");
+  const { data: attemptSummaries = {} } = useQuery<Record<string, AttemptSummary>>({
+    queryKey: ["/api/jobs/attempt-summaries", queuedOrderIds],
+    queryFn: async () => {
+      if (!queuedOrderIds) return {};
+      const res = await fetch(`/api/jobs/attempt-summaries?jobOrderIds=${encodeURIComponent(queuedOrderIds)}`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: !isChase && queuedOrderIds.length > 0,
+  });
+
   return (
     <section className="flex-1 min-h-0 rounded-xl border border-line bg-panel overflow-hidden flex flex-col">
-      <header className="flex items-center gap-2 px-4 py-3 border-b border-line-2 flex-none">
+      <header className={`flex items-center gap-2 ${TODAY_DENSITY.header} border-b border-line-2 flex-none`}>
         {isChase
           ? <Clock className="h-3.5 w-3.5 text-warn flex-none" />
           : <Phone className="h-3.5 w-3.5 text-success flex-none" />}
-        <span className="font-semibold text-sm text-ink">{slot.title ?? "Call patients"}</span>
+        <span className="font-semibold text-sm text-ink">{slot.title ?? (isChase ? "Needs attention" : "Call patients ready for pickup")}</span>
         <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full ${isChase ? "bg-warn-bg text-warn" : "bg-success-bg text-success"}`}>{queued.length}</span>
         <button className="ml-auto text-xs text-ink-mute hover:text-ink" onClick={onEdit} data-testid="today-tile-edit">Edit</button>
       </header>
@@ -52,19 +68,25 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           {isChase
-            ? queued.map((job, i) => (
-                <ChaseRow
+            ? holderGroups.map((group, gi) => (
+                <ChaseGroup
+                  key={group.key}
+                  group={group}
+                  office={office}
+                  first={gi === 0}
+                  lastOverdue={lastOverdue}
+                  onOpenJob={(job) => onOpenJob(job, "comments", true)}
+                />
+              ))
+            : queued.map((job, i) => (
+                <OutreachRow
                   key={job.id}
                   job={job}
                   office={office}
                   first={i === 0}
-                  lastComment={lastOverdue[job.id]}
-                  onOpen={() => onOpenJob(job, "comments", true)}
-                  onPhoneSaved={() => {}}
+                  summary={attemptSummaries[job.orderId]}
+                  onOpen={() => onOpenJob(job, "comments")}
                 />
-              ))
-            : queued.map((job, i) => (
-                <OutreachRow key={job.id} job={job} office={office} first={i === 0} onOpen={() => onOpenJob(job, "comments")} />
               ))
           }
         </ScrollArea>
@@ -82,119 +104,219 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
   );
 }
 
-function OutreachRow({ job, office, first, onOpen }: { job: Job; office: any; first: boolean; onOpen: () => void }) {
+function OutreachRow({ job, office, first, summary, onOpen }:
+  { job: Job; office: any; first: boolean; summary?: AttemptSummary; onOpen: () => void }) {
   const typeStyle = getTypeBadgeStyle(job.jobType, office?.settings?.customJobTypes ?? []);
-  const readyFor = formatDistanceToNow(new Date(job.statusChangedAt as any), { addSuffix: false });
+  const typeLabel = getJobTypeLabel(job.jobType, office);
+  const statusLabel = (office?.settings?.customStatuses ?? []).find((s: any) => s.id === job.status)?.label ?? job.status;
+  const days = formatDaysInStatus(job.statusChangedAt as any);
   return (
-    <div className={`flex items-center gap-4 px-4 py-3 ${first ? "" : "border-t border-line-2"}`}>
+    <div className={`flex items-center gap-4 ${TODAY_DENSITY.row} ${first ? "" : "border-t border-line-2"}`}>
       <button className="flex-1 min-w-0 text-left" onClick={onOpen} data-testid={`today-row-${job.id}`}>
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-sm text-ink">{job.patientFirstName} {job.patientLastName}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: typeStyle.background, color: typeStyle.text }}>{job.jobType}</span>
+          <span className="font-semibold text-sm text-ink leading-tight">{job.patientFirstName} {job.patientLastName}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded leading-tight" style={{ background: typeStyle.background, color: typeStyle.text }}>{typeLabel}</span>
         </div>
-        <div className="text-xs text-ink-mute mt-1">Ready {readyFor}</div>
+        <div className={`text-xs text-ink-mute leading-tight ${TODAY_DENSITY.lineGap}`}>
+          {statusLabel} · {days} days
+        </div>
+        {summary && summary.count > 0 && (
+          <div className={`text-xs text-ink-mute leading-tight ${TODAY_DENSITY.lineGapTight}`} data-testid={`attempt-summary-${job.id}`}>
+            {formatAttemptSummary(summary)}
+          </div>
+        )}
       </button>
-      <StampButtons jobId={job.id} />
+      <ContactButtons job={job} />
+      <PickedUpButton jobId={job.id} />
+      <SnoozeButton jobId={job.id} />
     </div>
   );
 }
 
-function ChaseRow({ job, office, first, lastComment, onOpen, onPhoneSaved }:
-  { job: Job; office: any; first: boolean; lastComment?: any; onOpen: () => void; onPhoneSaved: () => void }) {
-  const destStyle = getDestinationBadgeStyle(job.orderDestination, office?.settings?.customOrderDestinations ?? []);
-  const statusLabel = (office?.settings?.customStatuses ?? []).find((s: any) => s.id === job.status)?.label ?? job.status;
-  const days = Math.floor((Date.now() - new Date(job.statusChangedAt as any).getTime()) / 86400000);
-  const lab = (office?.settings?.customOrderDestinations ?? []).find((d: any) => d.id === job.orderDestination);
-  return (
-    <div className={`flex items-center gap-4 px-4 py-3 ${first ? "" : "border-t border-line-2"}`}>
-      <button className="flex-1 min-w-0 text-left" onClick={onOpen}>
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-sm text-ink">{job.patientFirstName} {job.patientLastName}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: destStyle.background, color: destStyle.text }}>{lab?.label ?? job.orderDestination}</span>
-        </div>
-        <div className="text-xs text-ink-mute mt-1 truncate">
-          {statusLabel}{lastComment ? ` · "${lastComment.content}"` : " · no overdue note yet"}
-        </div>
-      </button>
-      <div className="flex-none w-24 text-right">
-        <div className="font-mono text-sm text-danger">{days} days</div>
-        <div className="text-[10px] text-ink-mute">in status</div>
-      </div>
-      <div className="flex-none flex gap-2">
-        <CallLabButton lab={lab} job={job} office={office} onPhoneSaved={onPhoneSaved} />
-        <Button size="xs" variant="outline" onClick={onOpen} data-testid={`chase-comments-${job.id}`}>Comments</Button>
-      </div>
-    </div>
-  );
-}
-
-function StampButtons({ jobId }: { jobId: string }) {
-  return (
-    <div className="flex-none flex gap-2">
-      <StampButton jobId={jobId} kind="Called" />
-      <StampButton jobId={jobId} kind="Texted" />
-    </div>
-  );
-}
-
-// One outreach action. Click opens a popover for an optional note, then logs a
-// comment. After logging, the button shows the date; clicking again opens the
-// popover for another note and logs a second instance (no undo — each tap is a
-// real, kept record).
-function StampButton({ jobId, kind }: { jobId: string; kind: "Called" | "Texted" }) {
+// Advances the job through the normal state machine (no shortcut): the same
+// PUT the rest of the app uses to mark a job completed. On success the row
+// leaves the tile on its own because the job is no longer ready-for-pickup.
+function PickedUpButton({ jobId }: { jobId: string }) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const [stampedAt, setStampedAt] = useState<Date | null>(null);
+  const { toast } = useToast();
 
-  const post = useMutation({
+  const pickUp = useMutation({
     mutationFn: async () => {
-      const now = new Date();
-      const id = `stamp-${jobId}-${kind}-${now.getTime()}`;
-      const time = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      const content = note.trim() ? `${kind} — ${time} · ${note.trim()}` : `${kind} — ${time}`;
-      await apiRequest("POST", `/api/jobs/${jobId}/comments`, { id, content });
-      return now;
+      await apiRequest("PUT", `/api/jobs/${jobId}`, { status: "completed" });
     },
-    onSuccess: (now) => {
-      setStampedAt(now);
-      setNote("");
-      setOpen(false);
-      qc.invalidateQueries({ queryKey: ["/api/jobs", jobId, "comments"] });
-      qc.invalidateQueries({ queryKey: ["/api/jobs/comment-counts"] });
-      qc.invalidateQueries({ queryKey: ["/api/jobs/unread-comments"] });
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      qc.invalidateQueries({ queryKey: ["/api/today/activity"] });
+      toast({ title: "Job marked picked up." });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't mark this picked up", description: e?.message, variant: "destructive" });
     },
   });
 
   return (
-    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setNote(""); }}>
-      <PopoverTrigger asChild>
-        <Button
-          size="xs"
-          variant={stampedAt ? "secondary" : "outline"}
-          data-testid={`stamp-${kind.toLowerCase()}-${jobId}`}
-        >
-          {stampedAt ? `✓ ${kind} ${format(stampedAt, "MMM d")}` : kind}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-60 p-3" align="end" onOpenAutoFocus={(e) => e.preventDefault()}>
-        <div className="text-xs font-medium text-ink mb-2">Log {kind.toLowerCase()} — add a note?</div>
-        <input
-          autoFocus
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !post.isPending) post.mutate(); }}
-          placeholder="optional note…"
-          className="w-full text-xs px-2 py-1.5 rounded border border-line-2 bg-paper"
-          data-testid={`stamp-note-${kind.toLowerCase()}-${jobId}`}
+    <Button
+      size="xs"
+      disabled={pickUp.isPending}
+      onClick={() => pickUp.mutate()}
+      data-testid={`picked-up-${jobId}`}
+    >
+      Picked up
+    </Button>
+  );
+}
+
+// One holder group in the "Needs attention" tile: a header identifying who
+// currently has the job (a lab, or "In office" for jobs not yet sent out),
+// followed by its rows worst-first. Lab group headers carry the single Call
+// action for the whole group; "In office" has no call (nothing to dial).
+function ChaseGroup({ group, office, first, lastOverdue, onOpenJob }: {
+  group: HolderGroup;
+  office: any;
+  first: boolean;
+  lastOverdue: Record<string, any>;
+  onOpenJob: (job: Job) => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const chase = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/jobs/chase", {
+        jobOrderIds: group.jobs.map((j: Job) => j.orderId),
+        destinationId: group.destinationId,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      qc.invalidateQueries({ queryKey: ["/api/today/activity"] });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't log this chase", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const lab = group.kind === "lab" ? { id: group.destinationId!, label: group.label, phone: group.phone } : undefined;
+
+  return (
+    <div className={first ? "" : "border-t border-line-2"}>
+      <div className={`flex items-center gap-2 ${TODAY_DENSITY.header} bg-panel-2`}>
+        <span className="font-semibold text-xs text-ink">{group.label}</span>
+        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-full bg-warn-bg text-warn">{group.jobs.length}</span>
+        {group.kind === "lab" && (
+          <div className="ml-auto">
+            <CallLabButton
+              lab={lab}
+              id={group.key}
+              office={office}
+              onPhoneSaved={() => {}}
+              onCalled={() => chase.mutate()}
+            />
+          </div>
+        )}
+      </div>
+      {group.jobs.map((job: Job, i: number) => (
+        <ChaseRow
+          key={job.id}
+          job={job}
+          office={office}
+          first={i === 0}
+          lastComment={lastOverdue[job.id]}
+          onOpen={() => onOpenJob(job)}
         />
-        <div className="flex justify-end gap-2 mt-2.5">
-          <Button size="xs" variant="ghost" onClick={() => setOpen(false)} disabled={post.isPending}>Cancel</Button>
-          <Button size="xs" onClick={() => post.mutate()} disabled={post.isPending} data-testid={`stamp-log-${kind.toLowerCase()}-${jobId}`}>
-            Log {kind}
-          </Button>
+      ))}
+    </div>
+  );
+}
+
+function ChaseRow({ job, office, first, lastComment, onOpen }:
+  { job: Job; office: any; first: boolean; lastComment?: any; onOpen: () => void }) {
+  const typeStyle = getTypeBadgeStyle(job.jobType, office?.settings?.customJobTypes ?? []);
+  const typeLabel = getJobTypeLabel(job.jobType, office);
+  const statusLabel = (office?.settings?.customStatuses ?? []).find((s: any) => s.id === job.status)?.label ?? job.status;
+  const days = formatDaysInStatus(job.statusChangedAt as any);
+  return (
+    <div className={`flex items-center gap-4 ${TODAY_DENSITY.row} ${first ? "" : "border-t border-line-2"}`}>
+      <button className="flex-1 min-w-0 text-left" onClick={onOpen}>
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-sm text-ink leading-tight">{job.patientFirstName} {job.patientLastName}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded leading-tight" style={{ background: typeStyle.background, color: typeStyle.text }}>{typeLabel}</span>
         </div>
-      </PopoverContent>
-    </Popover>
+        <div className={`text-xs text-ink-mute leading-tight truncate ${TODAY_DENSITY.lineGap}`}>
+          {statusLabel} · {days} days
+        </div>
+        {lastComment && (
+          <div className={`text-xs text-ink-mute leading-tight truncate ${TODAY_DENSITY.lineGapTight}`}>"{lastComment.content}"</div>
+        )}
+      </button>
+      <div className="flex-none flex gap-2">
+        <Button size="xs" variant="outline" onClick={onOpen} data-testid={`chase-comments-${job.id}`}>Comments</Button>
+        <SnoozeButton jobId={job.id} />
+      </div>
+    </div>
+  );
+}
+
+function ContactButtons({ job }: { job: Job }) {
+  return (
+    <div className="flex-none flex gap-2">
+      <ContactButton job={job} kind="Call" />
+      <ContactButton job={job} kind="Text" />
+    </div>
+  );
+}
+
+// One present-tense contact action. Click fires the deep link (tel:/sms:)
+// immediately, then logs a structured attempt event server-side so the row's
+// summary line and job history carry attribution. Shows a brief "✓ Called" /
+// "✓ Texted" confirmation, then reverts to "Call"/"Text" so the button stays
+// usable for a repeat attempt (no claiming/assignment UI; attribution flows
+// through the attempt event alone).
+function ContactButton({ job, kind }: { job: Job; kind: "Call" | "Text" }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [confirmed, setConfirmed] = useState(false);
+
+  useEffect(() => {
+    if (!confirmed) return;
+    const t = setTimeout(() => setConfirmed(false), 2000);
+    return () => clearTimeout(t);
+  }, [confirmed]);
+
+  const attemptType = kind === "Call" ? "called" : "texted";
+
+  const logAttempt = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/jobs/${job.id}/attempts`, { type: attemptType });
+    },
+    onSuccess: () => {
+      setConfirmed(true);
+      qc.invalidateQueries({ queryKey: ["/api/jobs/attempt-summaries"] });
+      qc.invalidateQueries({ queryKey: ["/api/today/activity"] });
+    },
+    onError: (e: any) => {
+      toast({ title: `Couldn't log this ${kind.toLowerCase()}`, description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const hasPhone = !!job.phone?.trim();
+
+  const handleClick = () => {
+    if (!hasPhone) return;
+    window.location.href = kind === "Call" ? `tel:${job.phone}` : `sms:${job.phone}`;
+    logAttempt.mutate();
+  };
+
+  return (
+    <Button
+      size="xs"
+      variant={confirmed ? "secondary" : "outline"}
+      onClick={handleClick}
+      disabled={!hasPhone || logAttempt.isPending}
+      title={hasPhone ? undefined : "No phone on file"}
+      data-testid={`contact-${kind.toLowerCase()}-${job.id}`}
+    >
+      {confirmed ? `✓ ${kind === "Call" ? "Called" : "Texted"}` : kind}
+    </Button>
   );
 }

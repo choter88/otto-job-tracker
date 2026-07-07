@@ -3,12 +3,18 @@
 
 export type TileType = "queue" | "analytics" | "stats" | "team";
 export type QueueMode = "outreach" | "chase";
-export type ActivityType = "comment" | "status_change" | "overdue" | "star_note";
+export type ActivityType =
+  | "comment"
+  | "status_change"
+  | "overdue"
+  | "star_note"
+  | "attempt"
+  | "snooze";
 
 export interface SlotConfig {
   type: TileType;
   // queue-only fields:
-  mode?: QueueMode; // "outreach" = Call patients, "chase" = Chase the lab
+  mode?: QueueMode; // "outreach" = Call patients, "chase" = Needs attention
   title?: string;
   statusIds?: string[];
 }
@@ -27,14 +33,22 @@ export const ACTIVITY_CATALOG: { type: ActivityType; label: string }[] = [
 
 export const DEFAULT_ACTIVITY_FILTER: ActivityType[] = ["comment", "overdue", "star_note"];
 
+// req 8: the single Team activity feed (today.tsx right column) surfaces
+// these event types: reverse-chron, staff initials + relative time. Kept
+// separate from DEFAULT_ACTIVITY_FILTER/ACTIVITY_CATALOG (the user-editable
+// "Since last login" filter) since this feed isn't user-configurable.
+// chase_attempt is intentionally excluded; it's already surfaced on the
+// Needs attention (chase) card.
+export const TEAM_ACTIVITY_FILTER: ActivityType[] = ["status_change", "comment", "attempt", "snooze"];
+
 // Default queue statuses reference the seeded office customStatuses IDs; they are
 // validated against the office's actual list in resolveTodayConfig.
 export function defaultTodayConfig(): TodayConfig {
   return {
     slots: [
-      { type: "queue", mode: "outreach", title: "Call patients — ready for pickup",
+      { type: "queue", mode: "outreach", title: "Call patients ready for pickup",
         statusIds: ["ready_for_pickup"] },
-      { type: "queue", mode: "chase", title: "Chase the lab — sitting too long",
+      { type: "queue", mode: "chase", title: "Needs attention",
         statusIds: ["job_created", "ordered", "in_progress", "delayed"] },
     ],
     activityFilter: [...DEFAULT_ACTIVITY_FILTER],
@@ -75,8 +89,20 @@ export function resolveTodayConfig(
 
   const slots = stored.slots.map((slot, i): SlotConfig => {
     const fallback = base.slots[i] ?? defaultTodayConfig().slots[i];
+    // The owner "stats strip" (StatsTile / office snapshot) is cut: "stats"
+    // and legacy "analytics" never survive resolution, even if a user's
+    // preferences.todayConfig still has one persisted from before the cut.
+    // M8: the center owner-only "team" slot is cut too. Team activity now
+    // lives once, in the right column (see today.tsx), so "team" is coerced
+    // away the same way, even if still persisted from before the cut.
+    if (slot.type === "stats" || slot.type === "analytics" || slot.type === "team") {
+      return fallback;
+    }
     if (slot.type !== "queue") {
-      // Non-queue tiles are owner/manager only; coerce others to the base queue.
+      // Every current non-queue TileType ("stats", "analytics", "team") is
+      // already coerced away above; this only guards a future tile type
+      // added to TileType without a resolution rule yet; treat it as
+      // owner/manager-only same as the tiles above did.
       return privileged ? slot : fallback;
     }
     const validIds = (slot.statusIds ?? []).filter((id) => validSet.has(id));
@@ -93,19 +119,37 @@ export function resolveTodayConfig(
   return { slots, activityFilter: filter.length ? filter : [...DEFAULT_ACTIVITY_FILTER] };
 }
 
-function toMs(v: number | Date): number {
-  return v instanceof Date ? v.getTime() : Number(v) || 0;
+// Drizzle `mode: "timestamp_ms"` columns are JS `Date` objects server-side,
+// but `GET /api/jobs` serializes the response with `res.json(jobs)`: the
+// default Express/JSON serializer calls `Date.prototype.toJSON()`, turning
+// every Date into an ISO 8601 string over the wire. The client has no date
+// reviver, so by the time a job reaches this helper, `statusChangedAt` /
+// `snoozedUntil` are ISO strings, not Dates or numbers. Parse that shape
+// explicitly rather than falling through to `Number(v)` (NaN/0 for a string).
+function toMs(v: Date | number | string | null | undefined): number {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const t = new Date(v).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  }
+  return 0;
 }
 
 // Queue membership: jobs whose current status is in statusIds, oldest-first
-// (longest time since entering the current status).
-export function selectQueueJobs<T extends { status: string; statusChangedAt: number | Date }>(
-  jobs: T[],
-  statusIds: string[],
-): T[] {
+// (longest time since entering the current status). Jobs snoozed into the
+// future (snoozedUntil > nowMs) are excluded; null/past snooze is included.
+export function selectQueueJobs<
+  T extends {
+    status: string;
+    statusChangedAt: number | Date | string;
+    snoozedUntil?: number | Date | string | null;
+  },
+>(jobs: T[], statusIds: string[], nowMs: number = Date.now()): T[] {
   const set = new Set(statusIds);
   return jobs
     .filter((j) => set.has(j.status))
+    .filter((j) => !(j.snoozedUntil && toMs(j.snoozedUntil) > nowMs))
     .sort((a, b) => toMs(a.statusChangedAt) - toMs(b.statusChangedAt));
 }
 
@@ -138,4 +182,17 @@ export function mergeActivity(
 ): ActivityFeedItem[] {
   const allow = new Set(types);
   return items.filter((i) => i.at > sinceMs && allow.has(i.type)).sort((a, b) => b.at - a.at);
+}
+
+export const ACTIVITY_FEED_CAP = 10;
+
+// Pure: cap a (caller-sorted, newest-first) feed at `limit` items, reporting
+// how many were hidden so the caller can render a "view more" affordance.
+// Used by the Team activity feed (req 8): the feed itself can be arbitrarily
+// long over a 24h window, but the tile only ever shows the first page.
+export function capActivityFeed(
+  items: ActivityFeedItem[],
+  limit: number = ACTIVITY_FEED_CAP,
+): { shown: ActivityFeedItem[]; hiddenCount: number } {
+  return { shown: items.slice(0, limit), hiddenCount: Math.max(0, items.length - limit) };
 }

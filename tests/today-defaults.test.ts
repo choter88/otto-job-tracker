@@ -36,18 +36,19 @@ test("resolveTodayConfig: filters out unknown status IDs", () => {
 
 test("resolveTodayConfig: staff cannot keep a non-queue tile", () => {
   const prefs = { todayConfig: { slots: [
-    { type: "stats" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
+    { type: "team" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
   ], activityFilter: ["comment"] } };
   const cfg = resolveTodayConfig(prefs, "staff", VALID);
   assert.equal(cfg.slots[0].type, "queue");
 });
 
-test("resolveTodayConfig: manager (also privileged) may keep a non-queue tile", () => {
+test("resolveTodayConfig: M8 — a persisted 'team' slot is coerced away even for a privileged role (manager)", () => {
   const prefs = { todayConfig: { slots: [
-    { type: "stats" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
+    { type: "team" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
   ], activityFilter: ["comment"] } };
   const cfg = resolveTodayConfig(prefs, "manager", VALID);
-  assert.equal(cfg.slots[0].type, "stats");
+  assert.notEqual(cfg.slots[0].type, "team");
+  assert.equal(cfg.slots[0].type, "queue");
 });
 
 test("resolveTodayConfig: null/garbage slot entries fall back to role defaults", () => {
@@ -58,12 +59,13 @@ test("resolveTodayConfig: null/garbage slot entries fall back to role defaults",
   assert.deepEqual(cfg.activityFilter, ["comment", "overdue", "star_note"]);
 });
 
-test("resolveTodayConfig: owner may keep a non-queue tile", () => {
+test("resolveTodayConfig: M8 — a persisted 'team' slot is coerced away even for a privileged role (owner)", () => {
   const prefs = { todayConfig: { slots: [
-    { type: "stats" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
+    { type: "team" }, { type: "queue", mode: "chase", statusIds: ["ordered"] },
   ], activityFilter: ["comment"] } };
   const cfg = resolveTodayConfig(prefs, "owner", VALID);
-  assert.equal(cfg.slots[0].type, "stats");
+  assert.notEqual(cfg.slots[0].type, "team");
+  assert.equal(cfg.slots[0].type, "queue");
 });
 
 test("resolveTodayConfig: drops unknown activity types, never empty", () => {

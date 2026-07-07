@@ -22,6 +22,7 @@ import {
   orderSheetTemplates,
   jobAttachments,
   clientDevices,
+  jobEvents,
   type User,
   type InsertUser,
   type Office,
@@ -66,6 +67,8 @@ import { randomUUID } from "crypto";
 import { deriveLoginIdCandidates, normalizeLoginId } from "./auth-identifiers";
 import { defaultOnboardingForNewOffice } from "@shared/onboarding";
 import { getDefaultOfficeSettings } from "@shared/office-defaults";
+import { trackEvent } from "./usage-tracker";
+import { TODAY_EVENTS } from "@shared/today-telemetry";
 
 export class DatabaseStorage {
   async getUser(id: string): Promise<User | undefined> {
@@ -303,22 +306,238 @@ export class DatabaseStorage {
     throw new Error('Failed to create job after multiple attempts due to order ID conflicts');
   }
 
+  // ── Today Dashboard v2: job_events helpers ──────────────────────────
+  // job_events is the append-only "order event envelope" for staff actions
+  // (status changes, call/text attempts, snoozes). It is keyed by
+  // jobOrderId (the stable ORD-… handle), NOT jobs.id, so rows survive the
+  // archive+delete that happens when a job reaches a terminal status.
+
+  /** Two-letter initials from a user's first/last name, uppercased.
+   *  "" if neither name is present. */
+  actorInitialsFor(user: { firstName?: string | null; lastName?: string | null }): string {
+    return ((user.firstName?.[0] ?? "") + (user.lastName?.[0] ?? "")).toUpperCase();
+  }
+
+  /** Low-level insert into job_events. Callers pass jobId best-effort
+   *  (the current jobs.id snapshot) — it is not a foreign key. */
+  async appendJobEvent(input: {
+    jobOrderId: string;
+    jobId: string | null;
+    officeId: string;
+    eventType: string;
+    actorUserId: string | null;
+    actorInitials: string | null;
+    payload: Record<string, any> | null;
+  }): Promise<void> {
+    await db.insert(jobEvents).values({
+      id: randomUUID(),
+      jobOrderId: input.jobOrderId,
+      jobId: input.jobId,
+      officeId: input.officeId,
+      eventType: input.eventType,
+      actorUserId: input.actorUserId,
+      actorInitials: input.actorInitials,
+      payload: input.payload,
+    });
+  }
+
+  /** Batched per-jobOrderId attempt summary (attempt_called/attempt_texted).
+   *  One query, grouped in JS — mirrors the batched shape of
+   *  getLastOverdueCommentByJob above. jobOrderIds with zero attempts are
+   *  omitted from the returned map. */
+  async getAttemptSummaries(
+    officeId: string,
+    jobOrderIds: string[],
+  ): Promise<Record<string, { count: number; lastType: "called" | "texted"; lastActorInitials: string | null; lastAt: number }>> {
+    if (jobOrderIds.length === 0) return {};
+
+    const rows = await db
+      .select({
+        jobOrderId: jobEvents.jobOrderId,
+        eventType: jobEvents.eventType,
+        actorInitials: jobEvents.actorInitials,
+        createdAt: jobEvents.createdAt,
+      })
+      .from(jobEvents)
+      .where(
+        and(
+          eq(jobEvents.officeId, officeId),
+          inArray(jobEvents.jobOrderId, jobOrderIds),
+          inArray(jobEvents.eventType, ["attempt_called", "attempt_texted"]),
+        ),
+      );
+
+    const byJob: Record<string, { count: number; lastType: "called" | "texted"; lastActorInitials: string | null; lastAt: number }> = {};
+    for (const r of rows) {
+      const at = r.createdAt instanceof Date ? r.createdAt.getTime() : Number(r.createdAt) || 0;
+      const existing = byJob[r.jobOrderId];
+      const lastType: "called" | "texted" = r.eventType === "attempt_called" ? "called" : "texted";
+      if (!existing) {
+        byJob[r.jobOrderId] = { count: 1, lastType, lastActorInitials: r.actorInitials ?? null, lastAt: at };
+      } else {
+        existing.count += 1;
+        if (at > existing.lastAt) {
+          existing.lastType = lastType;
+          existing.lastActorInitials = r.actorInitials ?? null;
+          existing.lastAt = at;
+        }
+      }
+    }
+    return byJob;
+  }
+
+  /** Snooze a job: sets snoozedUntil/snoozeReason, logs a `snoozed` event,
+   *  and — only when a non-empty reason is given — writes a job comment so
+   *  the reason lands in the job's comment thread. */
+  async snoozeJob(
+    jobId: string,
+    untilMs: number,
+    reason: string | undefined,
+    actor: { userId: string; initials: string },
+  ): Promise<void> {
+    const job = await this.getJob(jobId);
+    if (!job) throw new Error("Job not found");
+
+    await db
+      .update(jobs)
+      .set({ snoozedUntil: new Date(untilMs), snoozeReason: reason ?? null, updatedAt: new Date() })
+      .where(eq(jobs.id, jobId));
+
+    await this.appendJobEvent({
+      jobOrderId: job.orderId,
+      jobId: job.id,
+      officeId: job.officeId,
+      eventType: "snoozed",
+      actorUserId: actor.userId,
+      actorInitials: actor.initials,
+      payload: { until: untilMs, reason: reason ?? null },
+    });
+
+    if (reason && reason.trim().length > 0) {
+      await this.createJobComment({
+        jobId: job.id,
+        authorId: actor.userId,
+        content: reason,
+      } as InsertJobComment);
+    }
+  }
+
+  /** Today v2 search: case-insensitive match of `q` against patient first/last/
+   *  full name over ACTIVE jobs (the `jobs` table only — archived jobs live in
+   *  `archivedJobs` and are never returned here) in a single office.
+   *  `jobs` is the capped list of matching active jobs; `patients` is the
+   *  distinct (firstName+lastName) group among those matches, each pointing
+   *  at that patient's MOST RECENT active job (there is no patient detail
+   *  screen — selecting a patient opens their latest job). */
+  async searchByPatientName(
+    officeId: string,
+    q: string,
+    limit = 20,
+  ): Promise<{
+    patients: { id: string; firstName: string; lastName: string; jobId: string }[];
+    jobs: { id: string; orderId: string; patientFirstName: string; patientLastName: string; status: string }[];
+  }> {
+    const trimmed = q.trim();
+    if (!trimmed) return { patients: [], jobs: [] };
+
+    const pattern = `%${trimmed}%`;
+    const matches = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.officeId, officeId),
+          sql`(LOWER(${jobs.patientFirstName}) LIKE LOWER(${pattern})
+               OR LOWER(${jobs.patientLastName}) LIKE LOWER(${pattern})
+               OR LOWER(${jobs.patientFirstName} || ' ' || ${jobs.patientLastName}) LIKE LOWER(${pattern}))`,
+        ),
+      )
+      .orderBy(desc(jobs.createdAt))
+      .limit(limit);
+
+    const jobResults = matches.map((j) => ({
+      id: j.id,
+      orderId: j.orderId,
+      patientFirstName: j.patientFirstName,
+      patientLastName: j.patientLastName,
+      status: j.status,
+    }));
+
+    // Group by (firstName, lastName); matches are already ordered newest-first
+    // so the first row seen per patient key is that patient's most recent job.
+    const patientsByKey = new Map<string, { id: string; firstName: string; lastName: string; jobId: string }>();
+    for (const j of matches) {
+      const key = `${j.patientFirstName} ${j.patientLastName}`;
+      if (!patientsByKey.has(key)) {
+        patientsByKey.set(key, {
+          id: key,
+          firstName: j.patientFirstName,
+          lastName: j.patientLastName,
+          jobId: j.id,
+        });
+      }
+    }
+
+    return { patients: Array.from(patientsByKey.values()), jobs: jobResults };
+  }
+
+  /** Today v2 chase: for each jobOrderId belonging to `officeId`, append a
+   *  `chase_attempt` job_events row (payload { destinationId }) with the
+   *  given actor. jobOrderIds that don't resolve to a job in this office are
+   *  skipped. Returns the number of events actually written. */
+  async logChaseAttempts(
+    officeId: string,
+    jobOrderIds: string[],
+    destinationId: string,
+    actor: { userId: string; initials: string },
+  ): Promise<{ count: number }> {
+    if (jobOrderIds.length === 0) return { count: 0 };
+
+    const matchingJobs = await db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.officeId, officeId), inArray(jobs.orderId, jobOrderIds)));
+
+    let count = 0;
+    for (const job of matchingJobs) {
+      await this.appendJobEvent({
+        jobOrderId: job.orderId,
+        jobId: job.id,
+        officeId,
+        eventType: "chase_attempt",
+        actorUserId: actor.userId,
+        actorInitials: actor.initials,
+        payload: { destinationId },
+      });
+      count += 1;
+    }
+
+    return { count };
+  }
+
   async updateJob(id: string, updates: Partial<Job>, userId: string): Promise<Job> {
     const oldJob = await this.getJob(id);
     if (!oldJob) throw new Error('Job not found');
 
+    // A manual status change un-snoozes the row (best-effort: only clear
+    // when the job was actually snoozed and status is actually changing).
+    const isStatusChanging = !!updates.status && updates.status !== oldJob.status;
+    const wasSnoozed = !!oldJob.snoozedUntil;
+    const clearingSnooze = isStatusChanging && wasSnoozed && updates.snoozedUntil === undefined;
+
     const [job] = await db
       .update(jobs)
-      .set({ 
-        ...updates, 
+      .set({
+        ...updates,
         updatedAt: new Date(),
-        statusChangedAt: updates.status ? new Date() : oldJob.statusChangedAt
+        statusChangedAt: updates.status ? new Date() : oldJob.statusChangedAt,
+        ...(clearingSnooze ? { snoozedUntil: null, snoozeReason: null } : {}),
       })
       .where(eq(jobs.id, id))
       .returning();
 
     // Log status change if status was updated
-    if (updates.status && updates.status !== oldJob.status) {
+    if (isStatusChanging) {
       await db.insert(jobStatusHistory).values({
         id: randomUUID(),
         jobId: job.id,
@@ -326,6 +545,39 @@ export class DatabaseStorage {
         newStatus: job.status,
         changedBy: userId
       });
+
+      // Today Dashboard v2: additive job_event dual-write. Kept AFTER the
+      // job_status_history write above (that write is untouched) and keyed
+      // by jobOrderId (not jobs.id) so it survives the archive+delete that
+      // follows for terminal statuses (see routes.ts PUT /api/jobs/:id).
+      const actingUser = await this.getUser(userId);
+      const actorInitials = actingUser ? this.actorInitialsFor(actingUser) : null;
+      await this.appendJobEvent({
+        jobOrderId: job.orderId,
+        jobId: job.id,
+        officeId: job.officeId,
+        eventType: "status_changed",
+        actorUserId: userId,
+        actorInitials,
+        payload: { oldStatus: oldJob.status, newStatus: job.status },
+      });
+
+      // Sole producer of today_pickup: counts only, no PHI in metadata.
+      if (job.status === "completed") {
+        trackEvent({ userId, officeId: job.officeId, eventType: TODAY_EVENTS.PICKUP, metadata: {} });
+      }
+
+      if (clearingSnooze) {
+        await this.appendJobEvent({
+          jobOrderId: job.orderId,
+          jobId: job.id,
+          officeId: job.officeId,
+          eventType: "snooze_cleared",
+          actorUserId: userId,
+          actorInitials,
+          payload: { reason: "manual" },
+        });
+      }
     }
 
     return job;
@@ -1572,7 +1824,11 @@ export class DatabaseStorage {
 
   async getOverdueJobs(officeId: string): Promise<any[]> {
     const rules = await this.getNotificationRulesByOffice(officeId);
-    const overdueJobs = [];
+    // Dedupe by job.id: a job whose status matches two enabled rules must
+    // appear once, not once per rule (previously double-counted the
+    // sidebar badge, the overdue page, and StatsTile). Keep the WORST rule
+    // per job — largest daysOverdue, tie-break smallest maxDays.
+    const byJobId = new Map<string, any>();
 
     for (const rule of rules) {
       if (!rule.enabled) continue;
@@ -1599,16 +1855,19 @@ export class DatabaseStorage {
         else if (daysOverdue > 3) severity = 'high';
         else if (daysOverdue > 1) severity = 'medium';
 
-        overdueJobs.push({
-          ...job,
-          daysOverdue,
-          severity,
-          rule
-        });
+        const candidate = { ...job, daysOverdue, severity, rule };
+        const existing = byJobId.get(job.id);
+        if (
+          !existing ||
+          candidate.daysOverdue > existing.daysOverdue ||
+          (candidate.daysOverdue === existing.daysOverdue && candidate.rule.maxDays < existing.rule.maxDays)
+        ) {
+          byJobId.set(job.id, candidate);
+        }
       }
     }
 
-    return overdueJobs.sort((a, b) => {
+    return Array.from(byJobId.values()).sort((a, b) => {
       const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
       return (severityOrder as any)[a.severity] - (severityOrder as any)[b.severity];
     });
@@ -2330,6 +2589,67 @@ export class DatabaseStorage {
           jobId: j.id, jobLabel: `${j.patientFirstName} ${j.patientLastName ?? ""}`.trim(),
           actor: null, verb: "became overdue",
         });
+      }
+    }
+
+    // Today Dashboard v2: attempt/snooze rows, sourced from job_events
+    // (NOT jobs.id-scoped history — job_events is the append-only "order
+    // event envelope" keyed by jobOrderId). This branch inner-joins `jobs`
+    // on orderId = jobEvents.jobOrderId, so it is ACTIVE-JOBS-ONLY BY
+    // DESIGN: events for jobs that have since been archived/dispensed
+    // silently drop out of this feed (acceptable — the feed is a "what's
+    // happening now" view, not a historical audit log).
+    //
+    // PHI / LAN-only: these rows carry patient names (jobLabel) and
+    // free-text notes (detail) and are the render payload for
+    // /api/today/activity. They must NEVER be referenced by
+    // server/usage-tracker.ts or server/license.ts (both of which ship
+    // data off the LAN) — PHI stays on the LAN.
+    if (types.includes("attempt") || types.includes("snooze")) {
+      const wantedEventTypes: string[] = [];
+      if (types.includes("attempt")) wantedEventTypes.push("attempt_called", "attempt_texted");
+      if (types.includes("snooze")) wantedEventTypes.push("snoozed");
+
+      const rows = await db
+        .select({
+          id: jobEvents.id, eventType: jobEvents.eventType, at: jobEvents.createdAt,
+          payload: jobEvents.payload,
+          actorUserId: jobEvents.actorUserId,
+          jobId: jobs.id, pfn: jobs.patientFirstName, pln: jobs.patientLastName, jobType: jobs.jobType,
+          aId: users.id, aFn: users.firstName, aLn: users.lastName,
+        })
+        .from(jobEvents)
+        .innerJoin(jobs, eq(jobs.orderId, jobEvents.jobOrderId))
+        .leftJoin(users, eq(users.id, jobEvents.actorUserId))
+        .where(and(
+          eq(jobEvents.officeId, officeId),
+          inArray(jobEvents.eventType, wantedEventTypes),
+          gt(jobEvents.createdAt, since),
+        ));
+
+      for (const r of rows) {
+        const at = r.at instanceof Date ? r.at.getTime() : Number(r.at) || 0;
+        const actor = r.aId ? { id: r.aId, firstName: r.aFn ?? "", lastName: r.aLn ?? "" } : null;
+        const jobLabel = label(r.pfn, r.pln, r.jobType);
+        const payload = (r.payload && typeof r.payload === "object" ? r.payload : {}) as Record<string, any>;
+
+        if (r.eventType === "attempt_called" || r.eventType === "attempt_texted") {
+          items.push({
+            id: `attempt:${r.id}`, type: "attempt", at,
+            jobId: r.jobId, jobLabel,
+            actor,
+            verb: r.eventType === "attempt_called" ? "called" : "texted",
+            detail: typeof payload.note === "string" ? payload.note : undefined,
+          });
+        } else if (r.eventType === "snoozed") {
+          items.push({
+            id: `snooze:${r.id}`, type: "snooze", at,
+            jobId: r.jobId, jobLabel,
+            actor,
+            verb: "snoozed",
+            detail: typeof payload.reason === "string" ? payload.reason : undefined,
+          });
+        }
       }
     }
 

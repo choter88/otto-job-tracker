@@ -70,6 +70,10 @@ export const jobs = sqliteTable(
     isRedoJob: integer("is_redo_job", { mode: "boolean" }).default(false).notNull(),
     originalJobId: text("original_job_id"), // self-reference FK handled at query level
     notes: text("notes"),
+    // Today v2 snooze: when set and in the future, tiles hide this row until the
+    // timestamp passes; a manual status change clears it. Additive + nullable.
+    snoozedUntil: integer("snoozed_until", { mode: "timestamp_ms" }),
+    snoozeReason: text("snooze_reason"),
     // How the job entered Otto. NULL = created by hand in the UI;
     // "order_sheet" = created by the order-sheet folder automation.
     // Drives the "Auto" badge in the worklist.
@@ -638,6 +642,32 @@ export const jobAttachments = sqliteTable(
   }),
 );
 
+// Today v2 "order event envelope": one append-only row per staff action on a job.
+// Keyed by the stable ORD-… handle (job_order_id), NOT jobs.id, so events survive
+// archive (same precedent as jobAttachments/orderSheetImports). job_id is a
+// best-effort snapshot of the current jobs.id and is NOT a foreign key.
+export const jobEvents = sqliteTable(
+  "job_events",
+  {
+    id: text("id").primaryKey(),
+    jobOrderId: text("job_order_id").notNull(),
+    jobId: text("job_id"),
+    officeId: text("office_id").references(() => offices.id).notNull(),
+    // snake_case vocabulary, all <= 50 chars: status_changed, attempt_called,
+    // attempt_texted, snoozed, snooze_cleared, chase_attempt.
+    eventType: text("event_type").notNull(),
+    actorUserId: text("actor_user_id").references(() => users.id),
+    actorInitials: text("actor_initials"),
+    payload: text("payload", { mode: "json" }).$type<Record<string, any> | null>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(tsMsNowSql()).notNull(),
+  },
+  (table) => ({
+    orderIdx: index("job_events_order_idx").on(table.jobOrderId),
+    officeCreatedIdx: index("job_events_office_created_idx").on(table.officeId, table.createdAt),
+    officeTypeIdx: index("job_events_office_type_idx").on(table.officeId, table.eventType),
+  }),
+);
+
 // Relations
 export const userRelations = relations(users, ({ one, many }) => ({
   office: one(offices, {
@@ -827,6 +857,8 @@ export type InsertOrderSheetImport = z.infer<typeof insertOrderSheetImportSchema
 export type OrderSheetWatcher = typeof orderSheetWatchers.$inferSelect;
 export type OrderSheetTemplate = typeof orderSheetTemplates.$inferSelect;
 export type JobAttachment = typeof jobAttachments.$inferSelect;
+export type JobEvent = typeof jobEvents.$inferSelect;
+export type InsertJobEvent = typeof jobEvents.$inferInsert;
 
 // Custom type for PIN reset request with user details (returned by API)
 export type PinResetRequestWithUser = {

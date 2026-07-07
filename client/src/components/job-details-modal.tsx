@@ -487,6 +487,20 @@ export default function JobDetailsModal({
     }
   };
 
+  // Today Dashboard v2 (M4): logs a structured "called" attempt event so the
+  // patient Call button here carries the same attribution as the Today tile's
+  // Call button. Fire-and-forget — the tel: deep link below is what the user
+  // is actually waiting on, so a slow/failed log shouldn't block or delay it.
+  const logCallAttemptMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      await apiRequest("POST", `/api/jobs/${jobId}/attempts`, { type: "called" });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/attempt-summaries"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/today/activity"] });
+    },
+  });
+
   const updateStatusMutation = useMutation({
     mutationFn: async (newStatus: string) => {
       if (!job?.id) return null;
@@ -771,7 +785,10 @@ export default function JobDetailsModal({
                     {job.phone && (
                       <button
                         type="button"
-                        onClick={() => { window.location.href = `tel:${job.phone}`; }}
+                        onClick={() => {
+                          window.location.href = `tel:${job.phone}`;
+                          logCallAttemptMutation.mutate(job.id);
+                        }}
                         className="w-6 h-6 rounded grid place-items-center text-otto-accent-ink hover:bg-otto-accent-soft hover:text-otto-accent-strong transition-colors"
                         aria-label="Call"
                         title="Call"

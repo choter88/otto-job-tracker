@@ -1,17 +1,35 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
-import { resolveTodayConfig, type TodayConfig } from "@shared/today-defaults";
+import { resolveTodayConfig, TEAM_ACTIVITY_FILTER, type TodayConfig } from "@shared/today-defaults";
 import type { Job } from "@shared/schema";
 import JobDetailsModal, { type JobDetailsTab } from "@/components/job-details-modal";
 import JobQueueTile from "@/components/today/job-queue-tile";
 import StarredTile from "@/components/today/starred-tile";
 import ActivityTile from "@/components/today/activity-tile";
-import StatsTile from "@/components/today/stats-tile";
 import TileEditDialog from "@/components/today/tile-edit-popover";
 import TodayIntroBanner from "@/components/today/today-intro-banner";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { TODAY_EVENTS } from "@shared/today-telemetry";
+
+// Thin wrapper around POST /api/track for Today Dashboard v2 client events,
+// same pattern as client/src/components/topbar.tsx and today/starred-tile.tsx
+// (not shared/exported from there; kept local to each file on purpose).
+// Fire-and-forget: telemetry failures must never break the UI. Metadata is
+// numbers/enums only so PHI can never be logged from the client.
+function trackTodayEvent(eventType: (typeof TODAY_EVENTS)[keyof typeof TODAY_EVENTS]) {
+  try {
+    fetch("/api/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ eventType, metadata: {} }),
+    }).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
 
 export default function Today() {
   const { user } = useAuth();
@@ -21,6 +39,11 @@ export default function Today() {
     queryKey: ["/api/offices", user?.officeId],
     enabled: !!user?.officeId,
   });
+
+  // M10: fire once per mount (empty dep array), not per render/re-fetch.
+  useEffect(() => {
+    trackTodayEvent(TODAY_EVENTS.VIEW_OPENED);
+  }, []);
 
   const customStatuses: Array<{ id: string; label: string; color?: string; order?: number }> =
     office?.settings?.customStatuses ?? [];
@@ -47,9 +70,11 @@ export default function Today() {
   // Lookup for activity rows → full Job (so a feed row can open the modal).
   const jobsById = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
 
-  // Edit dialog state (Task 13).
+  // Edit dialog state (Task 13). "activity" kind removed in M8: the Team
+  // activity feed's filter is fixed (TEAM_ACTIVITY_FILTER), not user-editable,
+  // so the old "Since last login" filter editor has no entry point anymore.
   const [editState, setEditState] = useState<
-    { kind: "queue"; slotIndex: number } | { kind: "activity" } | null
+    { kind: "queue"; slotIndex: number } | null
   >(null);
 
   const queryClient = useQueryClient();
@@ -63,7 +88,6 @@ export default function Today() {
   });
 
   const openEditFor = (i: number) => setEditState({ kind: "queue", slotIndex: i });
-  const openActivityEdit = () => setEditState({ kind: "activity" });
   const onSaveConfig = (next: TodayConfig) => {
     savePrefs.mutate(next);
     setEditState(null);
@@ -80,25 +104,6 @@ export default function Today() {
             <div key={i} className="flex-1 min-h-0 flex flex-col" data-testid={`today-slot-${i}`}>
               <JobQueueTile slot={slot} jobs={jobs} office={office} onOpenJob={openJob} onEdit={() => openEditFor(i)} />
             </div>
-          ) : slot.type === "stats" || slot.type === "analytics" || slot.type === "team" ? (
-            // Non-queue tiles (owner/manager). Wrapped so they keep an Edit
-            // affordance — otherwise switching a slot's type would be one-way.
-            <div key={i} className="flex-none relative group" data-testid={`today-slot-${i}`}>
-              <button
-                className="absolute top-1.5 right-1.5 z-10 text-xs text-ink-mute hover:text-ink opacity-0 group-hover:opacity-100 transition-opacity"
-                onClick={() => openEditFor(i)}
-                data-testid={`today-slot-edit-${i}`}
-              >
-                Edit
-              </button>
-              {slot.type === "team" ? (
-                <ActivityTile scope="office" title="Team activity"
-                  filter={["comment", "status_change", "star_note"]} jobsById={jobsById} onOpenJob={openJob} />
-              ) : (
-                // "stats" (and legacy "analytics", now merged) → office snapshot
-                <StatsTile jobs={jobs} />
-              )}
-            </div>
           ) : (
             <div key={i} data-testid={`today-slot-${i}`} />
           )
@@ -106,7 +111,13 @@ export default function Today() {
       </div>
       <div className="w-[360px] flex-none flex flex-col gap-4 min-h-0">
         <StarredTile office={office} onOpenJob={openJob} />
-        <ActivityTile filter={config.activityFilter} jobsById={jobsById} onOpenJob={openJob} onEdit={openActivityEdit} />
+        {/* req 8: the single Team activity feed, reverse-chron status
+            changes, comments, logged attempts, and snoozes across the
+            office. Replaces the old personal "Since last login" feed; the
+            center owner-only "team" slot above is cut so this is the only
+            Team activity surface left. */}
+        <ActivityTile scope="office" title="Team activity" filter={TEAM_ACTIVITY_FILTER}
+          jobsById={jobsById} onOpenJob={openJob} />
       </div>
       </div>
 
@@ -127,7 +138,7 @@ export default function Today() {
           open
           onOpenChange={(o) => { if (!o) setEditState(null); }}
           kind={editState.kind}
-          slotIndex={editState.kind === "queue" ? editState.slotIndex : undefined}
+          slotIndex={editState.slotIndex}
           config={config}
           customStatuses={customStatuses}
           role={user?.role ?? "staff"}
