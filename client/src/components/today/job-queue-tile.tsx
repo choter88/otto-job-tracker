@@ -1,15 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Phone, Clock } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatDistanceToNow, format } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { selectQueueJobs, type SlotConfig } from "@shared/today-defaults";
+import { formatAttemptSummary, type AttemptSummary } from "@shared/attempt-summary";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
 import CallLabButton from "@/components/today/call-lab-button";
@@ -39,6 +39,17 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
     enabled: isChase && queuedIds.length > 0,
   });
 
+  const queuedOrderIds = queued.map((j) => j.orderId).join(",");
+  const { data: attemptSummaries = {} } = useQuery<Record<string, AttemptSummary>>({
+    queryKey: ["/api/jobs/attempt-summaries", queuedOrderIds],
+    queryFn: async () => {
+      if (!queuedOrderIds) return {};
+      const res = await fetch(`/api/jobs/attempt-summaries?jobOrderIds=${encodeURIComponent(queuedOrderIds)}`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: !isChase && queuedOrderIds.length > 0,
+  });
+
   return (
     <section className="flex-1 min-h-0 rounded-xl border border-line bg-panel overflow-hidden flex flex-col">
       <header className="flex items-center gap-2 px-4 py-3 border-b border-line-2 flex-none">
@@ -66,7 +77,14 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
                 />
               ))
             : queued.map((job, i) => (
-                <OutreachRow key={job.id} job={job} office={office} first={i === 0} onOpen={() => onOpenJob(job, "comments")} />
+                <OutreachRow
+                  key={job.id}
+                  job={job}
+                  office={office}
+                  first={i === 0}
+                  summary={attemptSummaries[job.orderId]}
+                  onOpen={() => onOpenJob(job, "comments")}
+                />
               ))
           }
         </ScrollArea>
@@ -84,7 +102,8 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
   );
 }
 
-function OutreachRow({ job, office, first, onOpen }: { job: Job; office: any; first: boolean; onOpen: () => void }) {
+function OutreachRow({ job, office, first, summary, onOpen }:
+  { job: Job; office: any; first: boolean; summary?: AttemptSummary; onOpen: () => void }) {
   const typeStyle = getTypeBadgeStyle(job.jobType, office?.settings?.customJobTypes ?? []);
   const readyFor = formatDistanceToNow(new Date(job.statusChangedAt as any), { addSuffix: false });
   return (
@@ -95,8 +114,13 @@ function OutreachRow({ job, office, first, onOpen }: { job: Job; office: any; fi
           <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: typeStyle.background, color: typeStyle.text }}>{job.jobType}</span>
         </div>
         <div className="text-xs text-ink-mute mt-1">Ready {readyFor}</div>
+        {summary && summary.count > 0 && (
+          <div className="text-xs text-ink-mute mt-0.5" data-testid={`attempt-summary-${job.id}`}>
+            {formatAttemptSummary(summary)}
+          </div>
+        )}
       </button>
-      <StampButtons jobId={job.id} />
+      <ContactButtons job={job} />
       <PickedUpButton jobId={job.id} />
       <SnoozeButton jobId={job.id} />
     </div>
@@ -166,73 +190,64 @@ function ChaseRow({ job, office, first, lastComment, onOpen, onPhoneSaved }:
   );
 }
 
-function StampButtons({ jobId }: { jobId: string }) {
+function ContactButtons({ job }: { job: Job }) {
   return (
     <div className="flex-none flex gap-2">
-      <StampButton jobId={jobId} kind="Called" />
-      <StampButton jobId={jobId} kind="Texted" />
+      <ContactButton job={job} kind="Call" />
+      <ContactButton job={job} kind="Text" />
     </div>
   );
 }
 
-// One outreach action. Click opens a popover for an optional note, then logs a
-// comment. After logging, the button shows the date; clicking again opens the
-// popover for another note and logs a second instance (no undo — each tap is a
-// real, kept record).
-function StampButton({ jobId, kind }: { jobId: string; kind: "Called" | "Texted" }) {
+// One present-tense contact action. Click fires the deep link (tel:/sms:)
+// immediately, then logs a structured attempt event server-side so the row's
+// summary line and job history carry attribution. Shows a brief "✓ Called" /
+// "✓ Texted" confirmation, then reverts to "Call"/"Text" so the button stays
+// usable for a repeat attempt (no claiming/assignment UI — attribution flows
+// through the attempt event alone).
+function ContactButton({ job, kind }: { job: Job; kind: "Call" | "Text" }) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const [stampedAt, setStampedAt] = useState<Date | null>(null);
+  const { toast } = useToast();
+  const [confirmed, setConfirmed] = useState(false);
 
-  const post = useMutation({
+  useEffect(() => {
+    if (!confirmed) return;
+    const t = setTimeout(() => setConfirmed(false), 2000);
+    return () => clearTimeout(t);
+  }, [confirmed]);
+
+  const attemptType = kind === "Call" ? "called" : "texted";
+
+  const logAttempt = useMutation({
     mutationFn: async () => {
-      const now = new Date();
-      const id = `stamp-${jobId}-${kind}-${now.getTime()}`;
-      const time = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      const content = note.trim() ? `${kind} — ${time} · ${note.trim()}` : `${kind} — ${time}`;
-      await apiRequest("POST", `/api/jobs/${jobId}/comments`, { id, content });
-      return now;
+      await apiRequest("POST", `/api/jobs/${job.id}/attempts`, { type: attemptType });
     },
-    onSuccess: (now) => {
-      setStampedAt(now);
-      setNote("");
-      setOpen(false);
-      qc.invalidateQueries({ queryKey: ["/api/jobs", jobId, "comments"] });
-      qc.invalidateQueries({ queryKey: ["/api/jobs/comment-counts"] });
-      qc.invalidateQueries({ queryKey: ["/api/jobs/unread-comments"] });
+    onSuccess: () => {
+      setConfirmed(true);
+      qc.invalidateQueries({ queryKey: ["/api/jobs/attempt-summaries"] });
+      qc.invalidateQueries({ queryKey: ["/api/today/activity"] });
+    },
+    onError: (e: any) => {
+      toast({ title: `Couldn't log this ${kind.toLowerCase()}`, description: e?.message, variant: "destructive" });
     },
   });
 
+  const handleClick = () => {
+    if (job.phone) {
+      window.location.href = kind === "Call" ? `tel:${job.phone}` : `sms:${job.phone}`;
+    }
+    logAttempt.mutate();
+  };
+
   return (
-    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setNote(""); }}>
-      <PopoverTrigger asChild>
-        <Button
-          size="xs"
-          variant={stampedAt ? "secondary" : "outline"}
-          data-testid={`stamp-${kind.toLowerCase()}-${jobId}`}
-        >
-          {stampedAt ? `✓ ${kind} ${format(stampedAt, "MMM d")}` : kind}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-60 p-3" align="end" onOpenAutoFocus={(e) => e.preventDefault()}>
-        <div className="text-xs font-medium text-ink mb-2">Log {kind.toLowerCase()} — add a note?</div>
-        <input
-          autoFocus
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !post.isPending) post.mutate(); }}
-          placeholder="optional note…"
-          className="w-full text-xs px-2 py-1.5 rounded border border-line-2 bg-paper"
-          data-testid={`stamp-note-${kind.toLowerCase()}-${jobId}`}
-        />
-        <div className="flex justify-end gap-2 mt-2.5">
-          <Button size="xs" variant="ghost" onClick={() => setOpen(false)} disabled={post.isPending}>Cancel</Button>
-          <Button size="xs" onClick={() => post.mutate()} disabled={post.isPending} data-testid={`stamp-log-${kind.toLowerCase()}-${jobId}`}>
-            Log {kind}
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+    <Button
+      size="xs"
+      variant={confirmed ? "secondary" : "outline"}
+      onClick={handleClick}
+      disabled={logAttempt.isPending}
+      data-testid={`contact-${kind.toLowerCase()}-${job.id}`}
+    >
+      {confirmed ? `✓ ${kind === "Call" ? "Called" : "Texted"}` : kind}
+    </Button>
   );
 }
