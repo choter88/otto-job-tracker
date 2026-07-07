@@ -81,7 +81,7 @@ export default function SearchPalette({ open, onOpenChange, onSelectJob }: Searc
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog open={open} onOpenChange={onOpenChange} shouldFilter={false}>
       <CommandInput
         placeholder="Search patients and jobs"
         value={query}
