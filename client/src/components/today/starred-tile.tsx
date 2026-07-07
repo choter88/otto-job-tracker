@@ -8,10 +8,10 @@ import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
 import { TODAY_DENSITY } from "@/components/today/today-density";
 
-// Thin wrapper around POST /api/track for Today Dashboard v2 client events —
+// Thin wrapper around POST /api/track for Today Dashboard v2 client events,
 // same pattern as client/src/components/topbar.tsx (not shared/exported from
 // there; kept local so this tile has no import coupling to the topbar).
-// Fire-and-forget — telemetry failures must never break the UI. Metadata is
+// Fire-and-forget: telemetry failures must never break the UI. Metadata is
 // numbers/enums only so PHI can never be logged from the client.
 function trackTodayEvent(eventType: (typeof TODAY_EVENTS)[keyof typeof TODAY_EVENTS]) {
   try {
@@ -34,7 +34,7 @@ export default function StarredTile({ office, onOpenJob }:
 
   // req 7: the "done" action unstars the row (same endpoint the job-details
   // modal's unstar control uses) and fires the today_star_done client event.
-  // No job_event is created for this — the activity feed doesn't surface
+  // No job_event is created for this; the activity feed doesn't surface
   // star_done, so there's no consumer.
   const doneMutation = useMutation({
     mutationFn: async (jobId: string) => {

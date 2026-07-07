@@ -13,7 +13,7 @@ import {
   type TodayConfig,
 } from "@shared/today-defaults";
 
-// M8: the "Show this tile as" queue/team swap is removed — the center
+// M8: the "Show this tile as" queue/team swap is removed. The center
 // owner-only Team activity slot is cut (resolveTodayConfig now coerces any
 // persisted "team" slot back to a queue), so every queue slot is just a
 // queue now. Team activity lives once, in the right-column feed.

@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 // One-time notice the first time a user lands on the new Today tab, pointing
 // out they can switch their default view back to Worklist. Shown-once is
 // tracked per user in localStorage (set on first appearance), so it never
-// returns after the first visit. ponytail: no server flag — a per-device
+// returns after the first visit. ponytail: no server flag; a per-device
 // dismissal is the right weight for a gentle one-time hint.
 const seenKey = (userId: string) => `otto.today.intro.${userId}`;
 

@@ -270,7 +270,7 @@ function ContactButtons({ job }: { job: Job }) {
 // immediately, then logs a structured attempt event server-side so the row's
 // summary line and job history carry attribution. Shows a brief "✓ Called" /
 // "✓ Texted" confirmation, then reverts to "Call"/"Text" so the button stays
-// usable for a repeat attempt (no claiming/assignment UI — attribution flows
+// usable for a repeat attempt (no claiming/assignment UI; attribution flows
 // through the attempt event alone).
 function ContactButton({ job, kind }: { job: Job; kind: "Call" | "Text" }) {
   const qc = useQueryClient();

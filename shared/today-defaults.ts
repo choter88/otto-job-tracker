@@ -34,10 +34,10 @@ export const ACTIVITY_CATALOG: { type: ActivityType; label: string }[] = [
 export const DEFAULT_ACTIVITY_FILTER: ActivityType[] = ["comment", "overdue", "star_note"];
 
 // req 8: the single Team activity feed (today.tsx right column) surfaces
-// these event types — reverse-chron, staff initials + relative time. Kept
+// these event types: reverse-chron, staff initials + relative time. Kept
 // separate from DEFAULT_ACTIVITY_FILTER/ACTIVITY_CATALOG (the user-editable
 // "Since last login" filter) since this feed isn't user-configurable.
-// chase_attempt is intentionally excluded — it's already surfaced on the
+// chase_attempt is intentionally excluded; it's already surfaced on the
 // Needs attention (chase) card.
 export const TEAM_ACTIVITY_FILTER: ActivityType[] = ["status_change", "comment", "attempt", "snooze"];
 
@@ -92,8 +92,8 @@ export function resolveTodayConfig(
     // The owner "stats strip" (StatsTile / office snapshot) is cut: "stats"
     // and legacy "analytics" never survive resolution, even if a user's
     // preferences.todayConfig still has one persisted from before the cut.
-    // M8: the center owner-only "team" slot is cut too — Team activity now
-    // lives once, in the right column (see today.tsx) — so "team" is coerced
+    // M8: the center owner-only "team" slot is cut too. Team activity now
+    // lives once, in the right column (see today.tsx), so "team" is coerced
     // away the same way, even if still persisted from before the cut.
     if (slot.type === "stats" || slot.type === "analytics" || slot.type === "team") {
       return fallback;
@@ -101,7 +101,7 @@ export function resolveTodayConfig(
     if (slot.type !== "queue") {
       // Every current non-queue TileType ("stats", "analytics", "team") is
       // already coerced away above; this only guards a future tile type
-      // added to TileType without a resolution rule yet — treat it as
+      // added to TileType without a resolution rule yet; treat it as
       // owner/manager-only same as the tiles above did.
       return privileged ? slot : fallback;
     }
@@ -171,7 +171,7 @@ export const ACTIVITY_FEED_CAP = 10;
 
 // Pure: cap a (caller-sorted, newest-first) feed at `limit` items, reporting
 // how many were hidden so the caller can render a "view more" affordance.
-// Used by the Team activity feed (req 8) — the feed itself can be arbitrarily
+// Used by the Team activity feed (req 8): the feed itself can be arbitrarily
 // long over a 24h window, but the tile only ever shows the first page.
 export function capActivityFeed(
   items: ActivityFeedItem[],

@@ -9,7 +9,7 @@ import type { JobDetailsTab } from "@/components/job-details-modal";
 import { TODAY_DENSITY } from "@/components/today/today-density";
 
 // M8: the only remaining caller is today.tsx's single Team activity feed
-// (scope="office", no onEdit — the filter is fixed to TEAM_ACTIVITY_FILTER).
+// (scope="office", no onEdit; the filter is fixed to TEAM_ACTIVITY_FILTER).
 // scope="me" ("Since last login") is kept as a supported mode of this
 // component (server-side boundaryFor logic still exists for it) but has no
 // caller today; the personal feed slot was replaced by Team activity.
@@ -41,7 +41,7 @@ export default function ActivityTile({
   });
   const allItems = data?.items ?? [];
   // req 8: cap the feed at ~10 rows with a "view more" affordance rather than
-  // rendering an unbounded scroll — capActivityFeed is the same pure helper
+  // rendering an unbounded scroll; capActivityFeed is the same pure helper
   // both scopes share (see shared/today-defaults.ts).
   const [expanded, setExpanded] = useState(false);
   const { shown, hiddenCount } = capActivityFeed(allItems);

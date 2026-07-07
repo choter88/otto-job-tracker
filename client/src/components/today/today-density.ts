@@ -2,7 +2,7 @@
 // (job-queue-tile, starred-tile, activity-tile) so rows read as one
 // consistent, tighter rhythm instead of ad-hoc per-file spacing. Row chrome
 // (vertical padding, inter-line gaps) shrinks here; interactive controls
-// (buttons) are left at their existing tap-target size — density trims
+// (buttons) are left at their existing tap-target size; density trims
 // whitespace, not affordances.
 export const TODAY_DENSITY = {
   // Group/section header bar (tile <header>, chase-group holder header).

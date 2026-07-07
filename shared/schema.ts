@@ -654,7 +654,7 @@ export const jobEvents = sqliteTable(
     jobId: text("job_id"),
     officeId: text("office_id").references(() => offices.id).notNull(),
     // snake_case vocabulary, all <= 50 chars: status_changed, attempt_called,
-    // attempt_texted, snoozed, snooze_cleared, chase_attempt, star_done.
+    // attempt_texted, snoozed, snooze_cleared, chase_attempt.
     eventType: text("event_type").notNull(),
     actorUserId: text("actor_user_id").references(() => users.id),
     actorInitials: text("actor_initials"),

@@ -32,7 +32,7 @@ interface SearchResponse {
 interface SearchPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Fired when the user picks a result — carries the job id to open. */
+  /** Fired when the user picks a result; carries the job id to open. */
   onSelectJob: (jobId: string) => void;
 }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { resolveTodayConfig, TEAM_ACTIVITY_FILTER, type TodayConfig } from "@shared/today-defaults";
@@ -11,6 +11,25 @@ import TileEditDialog from "@/components/today/tile-edit-popover";
 import TodayIntroBanner from "@/components/today/today-intro-banner";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { TODAY_EVENTS } from "@shared/today-telemetry";
+
+// Thin wrapper around POST /api/track for Today Dashboard v2 client events,
+// same pattern as client/src/components/topbar.tsx and today/starred-tile.tsx
+// (not shared/exported from there; kept local to each file on purpose).
+// Fire-and-forget: telemetry failures must never break the UI. Metadata is
+// numbers/enums only so PHI can never be logged from the client.
+function trackTodayEvent(eventType: (typeof TODAY_EVENTS)[keyof typeof TODAY_EVENTS]) {
+  try {
+    fetch("/api/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ eventType, metadata: {} }),
+    }).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
 
 export default function Today() {
   const { user } = useAuth();
@@ -20,6 +39,11 @@ export default function Today() {
     queryKey: ["/api/offices", user?.officeId],
     enabled: !!user?.officeId,
   });
+
+  // M10: fire once per mount (empty dep array), not per render/re-fetch.
+  useEffect(() => {
+    trackTodayEvent(TODAY_EVENTS.VIEW_OPENED);
+  }, []);
 
   const customStatuses: Array<{ id: string; label: string; color?: string; order?: number }> =
     office?.settings?.customStatuses ?? [];
@@ -87,7 +111,7 @@ export default function Today() {
       </div>
       <div className="w-[360px] flex-none flex flex-col gap-4 min-h-0">
         <StarredTile office={office} onOpenJob={openJob} />
-        {/* req 8: the single Team activity feed — reverse-chron status
+        {/* req 8: the single Team activity feed, reverse-chron status
             changes, comments, logged attempts, and snoozes across the
             office. Replaces the old personal "Since last login" feed; the
             center owner-only "team" slot above is cut so this is the only
