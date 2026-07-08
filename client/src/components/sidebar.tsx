@@ -133,6 +133,9 @@ export default function Sidebar({
       icon: AlertTriangle,
       badge: overdueJobs.length || null,
       badgeStyle: "alert",
+      // The standalone Overdue page was removed; its card now lives on
+      // Today, so this item is a shortcut there instead of its own tab.
+      onClickOverride: () => onTabChange("today"),
     },
     {
       id: "past",
