@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Star, Check } from "lucide-react";
 import { getStatusBadgeStyle } from "@/lib/default-colors";
@@ -7,6 +8,8 @@ import { TODAY_EVENTS } from "@shared/today-telemetry";
 import type { Job } from "@shared/schema";
 import type { JobDetailsTab } from "@/components/job-details-modal";
 import { TODAY_DENSITY } from "@/components/today/today-density";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 
 // Thin wrapper around POST /api/track for Today Dashboard v2 client events,
 // same pattern as client/src/components/topbar.tsx (not shared/exported from
@@ -32,6 +35,10 @@ export default function StarredTile({ office, onOpenJob }:
   const customStatuses = office?.settings?.customStatuses ?? [];
   const queryClient = useQueryClient();
 
+  // Tracks which row's "Remove from Remember?" confirm popover is open, so
+  // an accidental click on Done can't unstar a job without a second click.
+  const [confirmJobId, setConfirmJobId] = useState<string | null>(null);
+
   // req 7: the "done" action unstars the row (same endpoint the job-details
   // modal's unstar control uses) and fires the today_star_done client event.
   // No job_event is created for this; the activity feed doesn't surface
@@ -45,10 +52,10 @@ export default function StarredTile({ office, onOpenJob }:
     },
   });
 
-  const handleDone = (e: React.MouseEvent, jobId: string) => {
-    e.stopPropagation();
+  const handleConfirmDone = (jobId: string) => {
     trackTodayEvent(TODAY_EVENTS.STAR_DONE);
     doneMutation.mutate(jobId);
+    setConfirmJobId(null);
   };
 
   return (
@@ -80,15 +87,47 @@ export default function StarredTile({ office, onOpenJob }:
                   </div>
                 </div>
               </button>
-              <button
-                className="flex-none flex items-center gap-1 text-[11px] text-ink-mute hover:text-ink px-1.5 py-1 rounded"
-                onClick={(e) => handleDone(e, job.id)}
-                data-testid={`starred-done-${job.id}`}
-                title="Done"
+              <Popover
+                open={confirmJobId === job.id}
+                onOpenChange={(open) => setConfirmJobId(open ? job.id : null)}
               >
-                <Check className="h-3 w-3" />
-                Done
-              </button>
+                <PopoverTrigger asChild>
+                  <button
+                    className="flex-none flex items-center gap-1 text-[11px] text-ink-mute hover:text-ink px-1.5 py-1 rounded"
+                    onClick={(e) => e.stopPropagation()}
+                    data-testid={`starred-done-${job.id}`}
+                    title="Done"
+                  >
+                    <Check className="h-3 w-3" />
+                    Done
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-56 p-3"
+                  align="end"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="text-xs font-medium text-ink mb-2">Remove from Remember?</div>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => setConfirmJobId(null)}
+                      data-testid={`starred-done-cancel-${job.id}`}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="destructive"
+                      onClick={() => handleConfirmDone(job.id)}
+                      data-testid={`starred-done-confirm-${job.id}`}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           );
         })}
