@@ -122,7 +122,18 @@ export default function JobQueueTile({ slot, jobs, office, onOpenJob, onEdit }: 
       {displayed.length > 0 && (
         <button
           className="flex-none border-t border-line-2 px-4 py-2 text-xs text-otto-accent hover:bg-panel-2 text-center"
-          onClick={() => setLocation(slot.mode === "chase" ? "/dashboard/overdue" : "/dashboard/all")}
+          onClick={() => {
+            // Overdue spans multiple statuses, so a single status filter
+            // doesn't apply there; send it to the unfiltered worklist.
+            // The outreach (ready-for-pickup) card filters to its slot's
+            // status so "View all" opens the worklist pre-filtered.
+            if (isChase) {
+              setLocation("/dashboard/all");
+              return;
+            }
+            const readyStatusId = slot.statusIds?.[0];
+            setLocation(readyStatusId ? `/dashboard/all?status=${encodeURIComponent(readyStatusId)}` : "/dashboard/all");
+          }}
           data-testid="today-view-all"
         >
           View all {displayed.length} {slot.mode === "chase" ? "overdue" : "ready for pickup"} →

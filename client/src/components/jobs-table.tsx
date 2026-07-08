@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useSearch } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,7 @@ import LifecycleTrack from "./lifecycle-track";
 import { sortByOrder } from "@/lib/custom-list-sort";
 import { useDynamicWindowMinWidth } from "@/hooks/use-dynamic-window-min-width";
 import type { Job, Office } from "@shared/schema";
+import { statusFromSearch } from "@shared/status-from-search";
 import { format } from "date-fns";
 import { getStatusBadgeStyle, getTypeBadgeStyle, getDestinationBadgeStyle } from "@/lib/default-colors";
 import { cn } from "@/lib/utils";
@@ -211,7 +213,10 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  
+  // Deep-link from Today's "View all N ready for pickup" footer
+  // (job-queue-tile.tsx): /dashboard/all?status=<id> pre-filters this table.
+  const urlSearch = useSearch();
+
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -598,6 +603,21 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const customStatuses = useMemo(() => sortByOrder((office?.settings?.customStatuses || []) as any[]), [office?.settings?.customStatuses]);
   const customJobTypes = useMemo(() => sortByOrder((office?.settings?.customJobTypes || []) as any[]), [office?.settings?.customJobTypes]);
   const customOrderDestinations = useMemo(() => sortByOrder((office?.settings?.customOrderDestinations || []) as any[]), [office?.settings?.customOrderDestinations]);
+
+  // Apply ?status=<id> from the URL (set by Today's "View all" footer) on
+  // mount and whenever the URL search string changes. Takes precedence over
+  // whatever statusFilter was already set. An id that isn't one of this
+  // office's statuses degrades to "all" instead of silently showing an
+  // empty table. Waits for office settings to load so the validity check
+  // has real data instead of racing the fallback list.
+  useEffect(() => {
+    const statusParam = statusFromSearch(urlSearch);
+    if (!statusParam) return;
+    if (!office) return;
+    const validStatuses = customStatuses.length > 0 ? customStatuses : DEFAULT_STATUSES_FALLBACK;
+    const isValid = validStatuses.some((s: any) => s.id === statusParam);
+    setStatusFilter(isValid ? statusParam : "all");
+  }, [urlSearch, office, customStatuses]);
   const customColumns = useMemo(() => sortByOrder((office?.settings?.customColumns || []) as any[]).filter((col: any) => col.active), [office?.settings?.customColumns]);
   
   // Get identifier mode from office settings
