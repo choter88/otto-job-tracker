@@ -244,13 +244,15 @@ function OverdueRow({ job, office, first, lastComment, onOpen }:
       </button>
       <div className="flex-none flex gap-2">
         <AdvanceButton job={job} office={office} />
-        <CallLabButton
-          lab={destination}
-          job={job}
-          office={office}
-          onPhoneSaved={() => {}}
-          onCalled={() => chase.mutate()}
-        />
+        {destination && (
+          <CallLabButton
+            lab={destination}
+            job={job}
+            office={office}
+            onPhoneSaved={() => {}}
+            onCalled={() => chase.mutate()}
+          />
+        )}
         <Button size="xs" variant="outline" onClick={onOpen} data-testid={`chase-comments-${job.id}`}>Comments</Button>
         <SnoozeButton jobId={job.id} />
       </div>
