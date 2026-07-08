@@ -6,6 +6,7 @@ import {
   selectQueueJobs,
   boundaryFor,
   ACTIVITY_CATALOG,
+  TEAM_ACTIVITY_FILTER,
 } from "../shared/today-defaults";
 
 const VALID = ["job_created", "ordered", "in_progress", "ready_for_pickup", "completed"];
@@ -93,6 +94,10 @@ test("boundaryFor: uses lastSignout when present, else now-24h", () => {
 test("ACTIVITY_CATALOG has the four agreed types", () => {
   assert.deepEqual(ACTIVITY_CATALOG.map((a) => a.type),
     ["comment", "status_change", "overdue", "star_note"]);
+});
+
+test("TEAM_ACTIVITY_FILTER: excludes 'attempt' (attempts now surface via their comment)", () => {
+  assert.deepEqual(TEAM_ACTIVITY_FILTER, ["status_change", "comment", "snooze"]);
 });
 
 test("resolveTodayConfig: queue slot titles always use the current default, ignoring a stale stored title", () => {

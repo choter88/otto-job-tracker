@@ -39,7 +39,10 @@ export const DEFAULT_ACTIVITY_FILTER: ActivityType[] = ["comment", "overdue", "s
 // "Since last login" filter) since this feed isn't user-configurable.
 // chase_attempt is intentionally excluded; it's already surfaced on the
 // Needs attention (chase) card.
-export const TEAM_ACTIVITY_FILTER: ActivityType[] = ["status_change", "comment", "attempt", "snooze"];
+// T3: "attempt" is intentionally excluded too; POST /api/jobs/:id/attempts
+// now also writes a job Comment (see server/routes.ts), so an attempt already
+// surfaces via its "comment" row, and including "attempt" here would double it.
+export const TEAM_ACTIVITY_FILTER: ActivityType[] = ["status_change", "comment", "snooze"];
 
 // Default queue statuses reference the seeded office customStatuses IDs; they are
 // validated against the office's actual list in resolveTodayConfig.
