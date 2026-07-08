@@ -50,3 +50,21 @@ function toMs(v: Date | number | string): number {
 export function formatDaysInStatus(statusChangedAt: Date | number | string, nowMs: number = Date.now()): number {
   return Math.floor((nowMs - toMs(statusChangedAt)) / 86400000);
 }
+
+// The customStatus with the smallest `order` strictly greater than the
+// current status's order (i.e. the next step in the state machine, reading
+// `order` rather than array position). Returns null when the current status
+// id is unknown or already the last (largest `order`) status. Used to drive
+// the Overdue card's per-row Advance action (see job-queue-tile.tsx).
+export function getNextStatus(currentStatusId: string, office: any): { id: string; label: string } | null {
+  const customStatuses = office?.settings?.customStatuses ?? [];
+  const current = customStatuses.find((s: any) => s.id === currentStatusId);
+  if (!current) return null;
+
+  let next: any = null;
+  for (const candidate of customStatuses) {
+    if (candidate.order <= current.order) continue;
+    if (!next || candidate.order < next.order) next = candidate;
+  }
+  return next ? { id: next.id, label: next.label } : null;
+}
