@@ -604,16 +604,20 @@ export default function JobsTable({ jobs, loading }: JobsTableProps) {
   const customJobTypes = useMemo(() => sortByOrder((office?.settings?.customJobTypes || []) as any[]), [office?.settings?.customJobTypes]);
   const customOrderDestinations = useMemo(() => sortByOrder((office?.settings?.customOrderDestinations || []) as any[]), [office?.settings?.customOrderDestinations]);
 
-  // Apply ?status=<id> from the URL (set by Today's "View all" footer) on
-  // mount and whenever the URL search string changes. Takes precedence over
-  // whatever statusFilter was already set. An id that isn't one of this
-  // office's statuses degrades to "all" instead of silently showing an
-  // empty table. Waits for office settings to load so the validity check
-  // has real data instead of racing the fallback list.
+  // Apply ?status=<id> from the URL (set by Today's "View all" footer) once,
+  // the first time office settings are available for this search string. An
+  // id that isn't one of this office's statuses degrades to "all" instead of
+  // silently showing an empty table. appliedStatusParamRef guards against a
+  // later re-run of this effect (e.g. the office query getting invalidated
+  // after saving a lab phone) silently clobbering a manual filter change the
+  // user made after the deep-link applied.
+  const appliedStatusParamRef = useRef<string | null>(null);
   useEffect(() => {
     const statusParam = statusFromSearch(urlSearch);
     if (!statusParam) return;
     if (!office) return;
+    if (appliedStatusParamRef.current === urlSearch) return;
+    appliedStatusParamRef.current = urlSearch;
     const validStatuses = customStatuses.length > 0 ? customStatuses : DEFAULT_STATUSES_FALLBACK;
     const isValid = validStatuses.some((s: any) => s.id === statusParam);
     setStatusFilter(isValid ? statusParam : "all");

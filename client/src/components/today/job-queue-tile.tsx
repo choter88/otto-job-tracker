@@ -255,7 +255,7 @@ function OverdueRow({ job, office, first, lastComment, onOpen }:
       </button>
       <div className="flex-none flex gap-2">
         <AdvanceButton job={job} office={office} />
-        {destination && (
+        {job.status !== "job_created" && destination && (
           <CallLabButton
             lab={destination}
             job={job}
