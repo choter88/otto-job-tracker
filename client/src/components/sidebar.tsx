@@ -27,6 +27,7 @@ import {
   Sparkles,
   ScanLine,
   Clock,
+  Search,
 } from "lucide-react";
 import { openSpotlightArchive } from "@/components/spotlight/feature-spotlight-host";
 import logoSymbol from "@/assets/logo-symbol.png";
@@ -110,6 +111,14 @@ export default function Sidebar({
 
   const jobsItems: NavItem[] = [
     {
+      id: "search",
+      label: "Search",
+      icon: Search,
+      // Opens the Cmd+K search palette, which lives in topbar.tsx; the two
+      // components aren't otherwise connected, so use a window event.
+      onClickOverride: () => window.dispatchEvent(new CustomEvent("otto:open-search")),
+    },
+    {
       id: "today",
       label: "Today",
       icon: Clock,
@@ -133,6 +142,9 @@ export default function Sidebar({
       icon: AlertTriangle,
       badge: overdueJobs.length || null,
       badgeStyle: "alert",
+      // The standalone Overdue page was removed; its card now lives on
+      // Today, so this item is a shortcut there instead of its own tab.
+      onClickOverride: () => onTabChange("today"),
     },
     {
       id: "past",

@@ -96,6 +96,14 @@ export default function Topbar({ activeTab, onHelpClick }: TopbarProps) {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Sidebar search control lives in a separate component tree, so it opens
+  // the palette via a decoupled window event instead of a prop/callback.
+  useEffect(() => {
+    const handler = () => setSearchOpen(true);
+    window.addEventListener("otto:open-search", handler);
+    return () => window.removeEventListener("otto:open-search", handler);
+  }, []);
+
   // Emit today_search_opened once per open, not per keystroke.
   useEffect(() => {
     if (searchOpen) trackTodayEvent(TODAY_EVENTS.SEARCH_OPENED);

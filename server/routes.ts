@@ -3005,6 +3005,18 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
         payload: { note: typeof note === "string" ? note : null },
       });
 
+      // T3: also land the attempt in the job's Comments thread, so the full
+      // contact history reads there (the structured attempt_* event above
+      // still drives the "3 attempts · last text · MK · Jul 3" summary line).
+      const attemptTime = new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      const attemptNote = typeof note === "string" ? note.trim() : "";
+      const commentContent = `${type === "called" ? "Called" : "Texted"} at ${attemptTime}${attemptNote ? ` · ${attemptNote}` : ""}`;
+      await storage.createJobComment(insertJobCommentSchema.parse({
+        jobId: job.id,
+        authorId: actor.userId,
+        content: commentContent,
+      }));
+
       trackEvent({
         userId: user.id,
         officeId: user.officeId,

@@ -5,7 +5,6 @@ import Sidebar from "@/components/sidebar";
 import Topbar from "@/components/topbar";
 import JobsTable from "@/components/jobs-table";
 import PastJobs from "@/components/past-jobs";
-import OverdueJobs from "@/components/overdue-jobs";
 import TeamPage from "@/components/team-page";
 import NotificationRules from "@/components/notification-rules";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
@@ -61,7 +60,12 @@ export default function Dashboard() {
   // Determine initial tab from URL or default to Today (unless user prefers Worklist)
   const getInitialTab = () => {
     if (importantParams) return "important";
-    if (dashboardParams && dashboardParams.tab) return dashboardParams.tab;
+    if (dashboardParams && dashboardParams.tab) {
+      // The standalone Overdue page was removed; its card now lives on
+      // Today. Old bookmarks/links to /dashboard/overdue fall through here.
+      if (dashboardParams.tab === "overdue") return "today";
+      return dashboardParams.tab;
+    }
     // No explicit tab in the URL → honor the user's saved default view.
     // Default is Today (the redesign's home); only an explicit "worklist" opts out.
     const dv = (user?.preferences as any)?.defaultView;
@@ -107,11 +111,6 @@ export default function Dashboard() {
     enabled: !!user?.officeId,
   });
 
-  const { data: overdueJobs = [] } = useQuery<any[]>({
-    queryKey: ["/api/jobs/overdue"],
-    enabled: !!user?.officeId,
-  });
-
   const { data: office } = useQuery<Office>({
     queryKey: ["/api/offices", user?.officeId],
     enabled: !!user?.officeId,
@@ -153,8 +152,6 @@ export default function Dashboard() {
         return <PastJobs />;
       case "orderSheets":
         return <OrderSheetsPage />;
-      case "overdue":
-        return <OverdueJobs jobs={overdueJobs} />;
       case "analytics":
         return <AnalyticsDashboard />;
       case "team":

@@ -6,6 +6,7 @@ import {
   selectQueueJobs,
   boundaryFor,
   ACTIVITY_CATALOG,
+  TEAM_ACTIVITY_FILTER,
 } from "../shared/today-defaults";
 
 const VALID = ["job_created", "ordered", "in_progress", "ready_for_pickup", "completed"];
@@ -93,4 +94,23 @@ test("boundaryFor: uses lastSignout when present, else now-24h", () => {
 test("ACTIVITY_CATALOG has the four agreed types", () => {
   assert.deepEqual(ACTIVITY_CATALOG.map((a) => a.type),
     ["comment", "status_change", "overdue", "star_note"]);
+});
+
+test("TEAM_ACTIVITY_FILTER: excludes 'attempt' (attempts now surface via their comment)", () => {
+  assert.deepEqual(TEAM_ACTIVITY_FILTER, ["status_change", "comment", "snooze"]);
+});
+
+test("resolveTodayConfig: queue slot titles always use the current default, ignoring a stale stored title", () => {
+  const prefs = { todayConfig: { slots: [
+    { type: "queue", mode: "outreach", title: "Call patients", statusIds: ["ready_for_pickup"] },
+    { type: "queue", mode: "chase", title: "Chase the lab — sitting too long", statusIds: ["ordered"] },
+  ], activityFilter: ["comment"] } };
+  const cfg = resolveTodayConfig(prefs, "staff", VALID);
+  assert.equal(cfg.slots[0].title, "Call patients ready for pickup");
+  assert.equal(cfg.slots[1].title, "Overdue");
+});
+
+test("resolveTodayConfig: chase slot with no stored title still resolves to the current default", () => {
+  const cfg = resolveTodayConfig(undefined, "staff", VALID);
+  assert.equal(cfg.slots[1].title, "Overdue");
 });

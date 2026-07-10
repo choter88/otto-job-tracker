@@ -39,7 +39,10 @@ export const DEFAULT_ACTIVITY_FILTER: ActivityType[] = ["comment", "overdue", "s
 // "Since last login" filter) since this feed isn't user-configurable.
 // chase_attempt is intentionally excluded; it's already surfaced on the
 // Needs attention (chase) card.
-export const TEAM_ACTIVITY_FILTER: ActivityType[] = ["status_change", "comment", "attempt", "snooze"];
+// T3: "attempt" is intentionally excluded too; POST /api/jobs/:id/attempts
+// now also writes a job Comment (see server/routes.ts), so an attempt already
+// surfaces via its "comment" row, and including "attempt" here would double it.
+export const TEAM_ACTIVITY_FILTER: ActivityType[] = ["status_change", "comment", "snooze"];
 
 // Default queue statuses reference the seeded office customStatuses IDs; they are
 // validated against the office's actual list in resolveTodayConfig.
@@ -48,7 +51,7 @@ export function defaultTodayConfig(): TodayConfig {
     slots: [
       { type: "queue", mode: "outreach", title: "Call patients ready for pickup",
         statusIds: ["ready_for_pickup"] },
-      { type: "queue", mode: "chase", title: "Needs attention",
+      { type: "queue", mode: "chase", title: "Overdue",
         statusIds: ["job_created", "ordered", "in_progress", "delayed"] },
     ],
     activityFilter: [...DEFAULT_ACTIVITY_FILTER],
@@ -109,7 +112,15 @@ export function resolveTodayConfig(
     const safeIds = validIds.length
       ? validIds
       : (fallback.statusIds ?? []).filter((id) => validSet.has(id));
-    return { type: "queue", mode: slot.mode ?? fallback.mode, title: slot.title ?? fallback.title, statusIds: safeIds };
+    // Queue slot titles are canonical now (outreach = "Call patients ready
+    // for pickup", chase = "Overdue"), so always use the current default
+    // title for this mode rather than any stored slot.title. This fixes
+    // existing users whose persisted preferences.todayConfig still carries
+    // a stale title from an earlier copy revision; the stored value is
+    // never surfaced.
+    const mode = slot.mode ?? fallback.mode;
+    const canonicalTitle = defaultTodayConfig().slots.find((s) => s.mode === mode)?.title ?? fallback.title;
+    return { type: "queue", mode, title: canonicalTitle, statusIds: safeIds };
   }) as [SlotConfig, SlotConfig];
 
   const filter = (stored.activityFilter ?? DEFAULT_ACTIVITY_FILTER).filter(
