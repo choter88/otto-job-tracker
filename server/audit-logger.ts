@@ -19,14 +19,18 @@ export interface AuditLogEntry {
 }
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
-const DEFAULT_RETENTION_DAYS = 30;
-const COMPACTION_INTERVAL_WRITES = 100;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function getAuditLogFilePath(): string {
   if (process.env.OTTO_AUDIT_LOG_PATH) return process.env.OTTO_AUDIT_LOG_PATH;
   const dataDir = process.env.OTTO_DATA_DIR || path.join(os.homedir(), ".otto-job-tracker");
   return path.join(dataDir, "audit_log.jsonl");
+}
+
+function getMaxBytes(): number {
+  // Floor is just large enough to hold one log line, not a production
+  // recommendation — it only exists to reject 0/negative values that would
+  // roll the log over on every single write.
+  return parseIntegerEnv("OTTO_AUDIT_LOG_MAX_BYTES", DEFAULT_MAX_BYTES, 100);
 }
 
 function parseIntegerEnv(name: string, fallback: number, min: number): number {
@@ -86,72 +90,41 @@ function sanitizeEntry(entry: AuditLogEntry): AuditLogEntry {
   };
 }
 
-const LOG_FILE = getAuditLogFilePath();
-const MAX_BYTES = parseIntegerEnv("OTTO_AUDIT_LOG_MAX_BYTES", DEFAULT_MAX_BYTES, 1024);
-const RETENTION_DAYS = parseIntegerEnv("OTTO_AUDIT_LOG_RETENTION_DAYS", DEFAULT_RETENTION_DAYS, 0);
-
-let writesSinceCompaction = 0;
 let writeQueue: Promise<void> = Promise.resolve();
 
-async function compactAuditLogFile(): Promise<void> {
-  let content = "";
+// Monotonic tie-breaker so two rollovers within the same millisecond never
+// collide on the archive filename.
+let rolloverSequence = 0;
+
+function archiveFilePath(logFile: string): string {
+  // ISO-basic timestamp (no colons/dots) so the name is safe on every
+  // filesystem: 20260714T153045123Z
+  const isoBasic = new Date().toISOString().replace(/[-:]/g, "").replace(/\.(\d+)Z$/, "$1Z");
+  rolloverSequence += 1;
+  return path.join(path.dirname(logFile), `audit_log.${isoBasic}-${rolloverSequence}.jsonl`);
+}
+
+// HIPAA requires 6 years of audit retention. Audit entries are never
+// dropped: once the active log exceeds the size cap it is renamed into a
+// timestamped archive file that is kept forever, and writes continue into a
+// fresh audit_log.jsonl.
+async function rolloverAuditLog(logFile: string): Promise<void> {
   try {
-    content = await fs.promises.readFile(LOG_FILE, "utf-8");
+    await fs.promises.rename(logFile, archiveFilePath(logFile));
   } catch (error: any) {
-    if (error?.code === "ENOENT") return;
+    if (error?.code === "ENOENT") return; // nothing to roll over
     throw error;
   }
-
-  const cutoffMs = RETENTION_DAYS > 0 ? Date.now() - RETENTION_DAYS * DAY_MS : null;
-  const parsedEntries: AuditLogEntry[] = [];
-
-  for (const rawLine of content.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
-
-    try {
-      const parsed = sanitizeEntry(JSON.parse(line) as AuditLogEntry);
-      const parsedMs = Date.parse(parsed.timestamp);
-      if (!Number.isFinite(parsedMs)) continue;
-      if (cutoffMs !== null && parsedMs < cutoffMs) continue;
-      parsedEntries.push(parsed);
-    } catch {
-      // Skip malformed lines.
-    }
-  }
-
-  const keptLines: string[] = [];
-  let runningBytes = 0;
-  for (let i = parsedEntries.length - 1; i >= 0; i -= 1) {
-    const line = JSON.stringify(parsedEntries[i]);
-    const lineBytes = Buffer.byteLength(line) + 1;
-    if (lineBytes > MAX_BYTES) continue;
-    if (runningBytes + lineBytes > MAX_BYTES) break;
-    keptLines.push(line);
-    runningBytes += lineBytes;
-  }
-
-  keptLines.reverse();
-  const nextContent = keptLines.length > 0 ? `${keptLines.join("\n")}\n` : "";
-  await fs.promises.writeFile(LOG_FILE, nextContent, { encoding: "utf-8", mode: 0o600 });
 }
 
 async function appendAuditLogEntry(entry: AuditLogEntry): Promise<void> {
-  await fs.promises.mkdir(path.dirname(LOG_FILE), { recursive: true, mode: 0o700 });
-  await fs.promises.appendFile(LOG_FILE, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 });
+  const logFile = getAuditLogFilePath();
+  await fs.promises.mkdir(path.dirname(logFile), { recursive: true, mode: 0o700 });
+  await fs.promises.appendFile(logFile, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 });
 
-  writesSinceCompaction += 1;
-
-  const stats = await fs.promises.stat(LOG_FILE).catch(() => null);
-  if (stats && stats.size > MAX_BYTES) {
-    writesSinceCompaction = 0;
-    await compactAuditLogFile();
-    return;
-  }
-
-  if (writesSinceCompaction >= COMPACTION_INTERVAL_WRITES) {
-    writesSinceCompaction = 0;
-    await compactAuditLogFile();
+  const stats = await fs.promises.stat(logFile).catch(() => null);
+  if (stats && stats.size > getMaxBytes()) {
+    await rolloverAuditLog(logFile);
   }
 }
 
@@ -162,4 +135,14 @@ export function logAudit(entry: AuditLogEntry): void {
     .catch((error) => {
       console.error("Failed to write audit log:", error);
     });
+}
+
+/**
+ * Awaits every queued write issued so far. `logAudit` is fire-and-forget by
+ * design (callers must not block on disk I/O), so tests that need to assert
+ * on file contents immediately after logging should `await flushAuditLog()`
+ * first to avoid racing the write queue.
+ */
+export function flushAuditLog(): Promise<void> {
+  return writeQueue;
 }
