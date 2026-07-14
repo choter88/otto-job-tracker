@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
 import Database from "better-sqlite3";
+import { preserveAuditLogs } from "./audit-preserve.js";
 
 // Cadence + retention tuning. Snapshots are single-digit MB for a small
 // practice; a tight cadence is essentially free. Retention is tiered so the
@@ -305,6 +306,37 @@ export function removeAttachmentSidecar(backupFilePath) {
   }
 }
 
+// Audit logs (audit_log*.jsonl — see server/audit-logger.ts) live as flat
+// files directly under the data dir, not in a subdirectory, so they don't
+// fit the directory-restore model ATTACHMENT_CATEGORIES uses. They get
+// their own sidecar next to the .sqlite instead, reusing the same copy
+// helper the client-release wipe uses to preserve them
+// (desktop/lib/audit-preserve.js) so a Host backup/restore also carries
+// the audit trail — not just the sidecar. This is a disaster-recovery
+// convenience, not the source of truth: HIPAA's 6-year retention lives in
+// the audit files themselves (rolled over, never deleted) and in the
+// client-release preservation step.
+const AUDIT_LOG_SUFFIX = "audit";
+
+export function getAuditLogSidecarPath(backupFilePath) {
+  return getAttachmentSidecarPath(backupFilePath, AUDIT_LOG_SUFFIX);
+}
+
+/**
+ * Snapshot the current audit_log*.jsonl files into the sidecar next to the
+ * just-written .sqlite. Best-effort, mirrors copyAttachmentsForBackup:
+ * a failed copy leaves the sqlite backup valid and the next run refreshes
+ * the sidecar.
+ */
+export function copyAuditLogsForBackup(backupFilePath, sourceDataDir) {
+  try {
+    return preserveAuditLogs(sourceDataDir, getAuditLogSidecarPath(backupFilePath));
+  } catch (err) {
+    console.error(`[backup] failed to copy audit log sidecar:`, err?.message || err);
+    return [];
+  }
+}
+
 // Sweep .tmp files left behind by a crashed/killed backup. The 1-hour age
 // guard keeps us safely clear of any in-progress write.
 const ORPHAN_TMP_MAX_AGE_MS = 1000 * 60 * 60;
@@ -453,6 +485,11 @@ export async function runBackupToLocalFolder({ interactive, reason }, { dialog, 
       // valid and the dialog will fall back to "no preview saved".
       copyAttachmentsForBackup(finalPath, path.dirname(sqlitePath));
 
+      // Carry the audit trail into the backup too — see
+      // copyAuditLogsForBackup's comment for why this is a sidecar, not
+      // folded into ATTACHMENT_CATEGORIES.
+      copyAuditLogsForBackup(finalPath, path.dirname(sqlitePath));
+
       const updated = readConfig();
       writeConfig({
         ...updated,
@@ -549,6 +586,9 @@ export async function runBackupToNetworkFolder({ interactive, reason }, { dialog
       // Same attachments sidecar as the local-backup path — without it,
       // recovering from a Host disaster would lose every PDF preview.
       copyAttachmentsForBackup(finalPath, path.dirname(sqlitePath));
+
+      // Same audit-log sidecar as the local-backup path.
+      copyAuditLogsForBackup(finalPath, path.dirname(sqlitePath));
 
       const updated = readConfig();
       writeConfig({

@@ -76,10 +76,11 @@ Each entry captures:
 - `userId`, `officeId`, `role`
 - `ipAddress`, `userAgent` (included on failures)
 
-Auto-pruning:
-- Retention: 30 days by default (`OTTO_AUDIT_LOG_RETENTION_DAYS`)
-- Max file size: 5 MB by default (`OTTO_AUDIT_LOG_MAX_BYTES`)
-- Compaction runs every 100 writes or when file size exceeds the maximum
+Retention: HIPAA requires 6 years of audit retention, so entries are never deleted. Once the active log exceeds the size cap (5 MB by default, `OTTO_AUDIT_LOG_MAX_BYTES`), it is rolled over — renamed into a timestamped archive file (`audit_log.<timestamp>.jsonl`) that is kept forever — and logging continues into a fresh `audit_log.jsonl`. Archive files are never rewritten or pruned.
+
+These archives are treated as durable records outside the app's own lifecycle:
+- **Client uninstall/reset:** the `otto:client:release` handler wipes the app's data dir, but first copies every `audit_log*.jsonl` file to `<userData>/preserved-audit-logs/`, which the wipe skips. See `desktop/lib/audit-preserve.js`, wired in `desktop/main.js`.
+- **Backups:** every scheduled/manual backup copies the current `audit_log*.jsonl` files into a sidecar next to the `.sqlite` snapshot, the same way order-sheet/job attachments are carried. See `copyAuditLogsForBackup` in `desktop/lib/backup.js`.
 
 File permissions: `0o600` (owner read/write only), directory permissions: `0o700`.
 
