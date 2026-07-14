@@ -294,7 +294,15 @@ export function restoreAttachmentsFromBackup(backupFilePath, destDataDir) {
   return total;
 }
 
-/** Remove both attachment sidecars when the paired .sqlite is pruned. */
+/**
+ * Remove every sidecar (both attachment categories, plus the audit-log
+ * sidecar — see AUDIT_LOG_SUFFIX below) when the paired .sqlite is pruned.
+ * The audit sidecar is a bounded, redundant backup snapshot, not the HIPAA
+ * system of record — that's the live rolled audit_log*.jsonl files (+
+ * archives) on the Host, which are never deleted. Pruning an old backup's
+ * audit sidecar alongside its .sqlite is correct and required to keep this
+ * bounded instead of growing forever.
+ */
 export function removeAttachmentSidecar(backupFilePath) {
   for (const { suffix } of ATTACHMENT_CATEGORIES) {
     const sidecar = getAttachmentSidecarPath(backupFilePath, suffix);
@@ -304,6 +312,11 @@ export function removeAttachmentSidecar(backupFilePath) {
       // best-effort
     }
   }
+  try {
+    fs.rmSync(getAuditLogSidecarPath(backupFilePath), { recursive: true, force: true });
+  } catch {
+    // best-effort
+  }
 }
 
 // Audit logs (audit_log*.jsonl — see server/audit-logger.ts) live as flat
@@ -311,11 +324,26 @@ export function removeAttachmentSidecar(backupFilePath) {
 // fit the directory-restore model ATTACHMENT_CATEGORIES uses. They get
 // their own sidecar next to the .sqlite instead, reusing the same copy
 // helper the client-release wipe uses to preserve them
-// (desktop/lib/audit-preserve.js) so a Host backup/restore also carries
-// the audit trail — not just the sidecar. This is a disaster-recovery
-// convenience, not the source of truth: HIPAA's 6-year retention lives in
-// the audit files themselves (rolled over, never deleted) and in the
-// client-release preservation step.
+// (desktop/lib/audit-preserve.js).
+//
+// IMPORTANT — this sidecar is WRITE-ONLY / one-way. Backup writes it;
+// nothing reads it back automatically. Restore (maybeRestoreDatabaseFromArgs
+// / restoreAttachmentsFromBackup in desktop/main.js) does NOT touch the
+// audit sidecar and never will: auto-restoring audit logs on top of a
+// target machine's own live logs would risk clobbering them or require a
+// non-trivial merge, which could itself lose audit records — a worse
+// outcome than just leaving the sidecar as a forensic snapshot. If audit
+// history genuinely needs to be recovered from a backup, that's a manual,
+// deliberate operation an operator performs by hand, not something this
+// code does for them.
+//
+// The system of record is, and remains, the live rolled audit_log*.jsonl
+// files (+ archives) on the Host itself — those are never deleted and
+// satisfy HIPAA's 6-year retention on their own, independent of backups.
+// This sidecar (and the client-release preservation step in
+// audit-preserve.js) are redundant disaster-recovery snapshots on top of
+// that, retained and pruned the same way the .sqlite itself is (see
+// removeAttachmentSidecar above) — not an alternate restore path.
 const AUDIT_LOG_SUFFIX = "audit";
 
 export function getAuditLogSidecarPath(backupFilePath) {
@@ -326,7 +354,9 @@ export function getAuditLogSidecarPath(backupFilePath) {
  * Snapshot the current audit_log*.jsonl files into the sidecar next to the
  * just-written .sqlite. Best-effort, mirrors copyAttachmentsForBackup:
  * a failed copy leaves the sqlite backup valid and the next run refreshes
- * the sidecar.
+ * the sidecar. This is a retained forensic snapshot for MANUAL disaster
+ * recovery only — see the comment above AUDIT_LOG_SUFFIX for why it is
+ * never auto-restored.
  */
 export function copyAuditLogsForBackup(backupFilePath, sourceDataDir) {
   try {

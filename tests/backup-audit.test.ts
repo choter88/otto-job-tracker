@@ -1,14 +1,26 @@
 /**
- * Audit logs (audit_log*.jsonl — see server/audit-logger.ts) must ride
- * along with every backup, the same way order-sheet/job attachments do
- * (tests/backup-attachments.test.ts). HIPAA requires 6 years of audit
- * retention; a Host disaster-recovery restore that drops the audit trail
- * would defeat that guarantee just as surely as losing the sqlite would.
+ * Audit logs (audit_log*.jsonl — see server/audit-logger.ts) ride along
+ * with every backup as a retained forensic snapshot, the same way
+ * order-sheet/job attachments do (tests/backup-attachments.test.ts).
  *
  * copyAuditLogsForBackup gives audit_log*.jsonl its own sidecar next to
  * the .sqlite (parallel to the attachments sidecar) rather than folding
  * into ATTACHMENT_CATEGORIES, because audit logs are flat files directly
  * under the data dir, not a subdirectory restore expects to wipe/replace.
+ *
+ * Two things this sidecar is NOT:
+ *  - It is not the HIPAA system of record. That's the live rolled
+ *    audit_log*.jsonl files (+ archives) on the Host, which are never
+ *    deleted and independently satisfy the 6-year retention requirement.
+ *  - It is not auto-restored. Restore only reads back the .sqlite and
+ *    attachment sidecars; the audit sidecar is a manual disaster-recovery
+ *    artifact only (see the comment above AUDIT_LOG_SUFFIX in
+ *    desktop/lib/backup.js).
+ *
+ * What IS pinned here: the sidecar is created correctly, and — like the
+ * attachment sidecars — it is pruned by enforceBackupRetention alongside
+ * its paired .sqlite, so the per-cycle sidecars don't grow disk usage
+ * without bound.
  */
 
 import test from "node:test";
@@ -18,7 +30,9 @@ import os from "os";
 import path from "path";
 import {
   copyAuditLogsForBackup,
+  enforceBackupRetention,
   getAuditLogSidecarPath,
+  removeAttachmentSidecar,
 } from "../desktop/lib/backup.js";
 
 function makeTmpDir(prefix: string): string {
@@ -63,6 +77,55 @@ test("no audit logs in the data dir means no sidecar is created", () => {
   const copied = copyAuditLogsForBackup(backupFile, dataDir);
   assert.deepEqual(copied, []);
   assert.equal(fs.existsSync(getAuditLogSidecarPath(backupFile)), false);
+
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  fs.rmSync(backupDir, { recursive: true, force: true });
+});
+
+test("removeAttachmentSidecar also prunes the audit sidecar", () => {
+  const dataDir = makeTmpDir("otto-data-");
+  const backupDir = makeTmpDir("otto-backup-dir-");
+  const backupFile = path.join(backupDir, "otto-backup-2026-07-14-080000-003.sqlite");
+  fs.writeFileSync(backupFile, "sqlite");
+
+  fs.writeFileSync(path.join(dataDir, "audit_log.jsonl"), '{"a":1}\n');
+  copyAuditLogsForBackup(backupFile, dataDir);
+  assert.equal(fs.existsSync(getAuditLogSidecarPath(backupFile)), true);
+
+  removeAttachmentSidecar(backupFile);
+  assert.equal(fs.existsSync(getAuditLogSidecarPath(backupFile)), false);
+
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  fs.rmSync(backupDir, { recursive: true, force: true });
+});
+
+test("retention prunes the audit sidecar alongside an old .sqlite (no unbounded growth)", () => {
+  const dataDir = makeTmpDir("otto-data-");
+  const backupDir = makeTmpDir("otto-backup-dir-");
+
+  // Mirrors tests/backup-attachments.test.ts "retention prunes the sidecar
+  // alongside the .sqlite" — one ancient (~90 days old) backup, one recent.
+  // Retention must delete the ancient audit sidecar with its .sqlite, or
+  // the per-cycle otto-backup-<ts>-audit/ sidecars leak disk forever.
+  const ancient = path.join(backupDir, "otto-backup-2026-04-12-080000-001.sqlite");
+  const recent = path.join(backupDir, "otto-backup-2026-07-14-080000-001.sqlite");
+  fs.writeFileSync(ancient, "old sqlite");
+  fs.writeFileSync(recent, "new sqlite");
+
+  fs.writeFileSync(path.join(dataDir, "audit_log.jsonl"), '{"a":1}\n');
+  copyAuditLogsForBackup(ancient, dataDir);
+  copyAuditLogsForBackup(recent, dataDir);
+
+  assert.equal(fs.existsSync(getAuditLogSidecarPath(ancient)), true);
+  assert.equal(fs.existsSync(getAuditLogSidecarPath(recent)), true);
+
+  enforceBackupRetention(backupDir);
+
+  // Ancient sqlite AND its audit sidecar are gone; recent pair survives.
+  assert.equal(fs.existsSync(ancient), false, "ancient .sqlite should be pruned");
+  assert.equal(fs.existsSync(getAuditLogSidecarPath(ancient)), false, "ancient audit sidecar should be pruned");
+  assert.equal(fs.existsSync(recent), true, "recent .sqlite must survive");
+  assert.equal(fs.existsSync(getAuditLogSidecarPath(recent)), true, "recent audit sidecar must survive");
 
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(backupDir, { recursive: true, force: true });
