@@ -130,72 +130,59 @@ export function getRequestIp(req: Request): string {
   return normalizeIpForAudit(remote);
 }
 
-// Known non-id path words (sub-resources and action verbs) used by the
-// /api and /tablet/api routes. Anything NOT in this set, appearing right
-// after the resource name, is treated as an id segment. Deliberately a
-// simple denylist rather than a route table — see extractAuditEntity().
-const NON_ID_PATH_SEGMENTS = new Set([
-  "jobs", "patients", "comments", "comment-reads", "comment-counts",
-  "attempts", "attempt-summaries", "snooze", "chase", "summary",
-  "flag", "flagged", "flagged-by", "link", "linked-ids", "archived",
-  "overdue", "overdue-comments", "restore", "related", "status-history",
-  "status", "notes", "track", "poll", "login", "logout", "heartbeat",
-  "config", "users", "office-info", "qr-setup", "sessions", "health",
-  "bulk-update", "bulk-delete", "check-tray-number", "by-order-id",
-  "order-sheet-file", "attachments", "unread-comments", "new-auto-created",
-  "new", "unread", "order-sheets", "link-groups", "search",
-]);
+// Same id-shape regexes normalizeAuditPath() uses to collapse path
+// segments to ":id" — reused here (whole-segment match) so a segment only
+// counts as an id if the normalizer would also treat it as one.
+const UUID_SEGMENT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DIGITS_SEGMENT_RE = /^\d+$/;
+const HEX24_SEGMENT_RE = /^[a-f0-9]{24,}$/i;
+const OPAQUE20_SEGMENT_RE = /^[A-Za-z0-9_-]{20,}$/;
 
-function isIdLikeSegment(segment: string): boolean {
-  return segment.length > 0 && !NON_ID_PATH_SEGMENTS.has(segment);
-}
-
-function singularize(word: string): string {
-  if (word.endsWith("ies")) return `${word.slice(0, -3)}y`;
-  if (word.endsWith("ses")) return word.slice(0, -2);
-  if (word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
-  return word;
+function isIdShapedSegment(segment: string): boolean {
+  return (
+    UUID_SEGMENT_RE.test(segment) ||
+    DIGITS_SEGMENT_RE.test(segment) ||
+    HEX24_SEGMENT_RE.test(segment) ||
+    OPAQUE20_SEGMENT_RE.test(segment)
+  );
 }
 
 /**
  * Pulls a coarse {entityType, entityId} out of the RAW (pre-normalization)
- * request path. Examples:
- *   /api/jobs                -> {entityType: "job"}
- *   /api/jobs/abc-123        -> {entityType: "job", entityId: "abc-123"}
- *   /api/jobs/abc-123/comments -> {entityType: "comment", entityId: "abc-123"}
- *   /tablet/api/jobs/j9      -> {entityType: "job", entityId: "j9"}
- * Deliberately simple (not a full route table): the segment right after
- * "api" is the resource; the next segment is the id if it isn't a known
- * non-id word; a further non-id segment after that overrides entityType
- * (covers the nested-comments-under-a-job shape).
+ * request path. entityId is the first id-shaped segment (same shapes as
+ * normalizeAuditPath's ":id" collapse), so it is always a real identifier,
+ * never a literal resource word. entityType is the raw segment right
+ * before it (the resource collection), taken as-is with no singularization.
+ * Examples:
+ *   /api/jobs                          -> {entityType: "jobs"}
+ *   /api/jobs/<uuid>                   -> {entityType: "jobs", entityId: "<uuid>"}
+ *   /api/jobs/<uuid>/comments          -> {entityType: "jobs", entityId: "<uuid>"}
+ *   /tablet/api/jobs/<id>/status       -> {entityType: "jobs", entityId: "<id>"}
+ *   /api/admin/offices/<id>/status     -> {entityType: "offices", entityId: "<id>"}
+ * If no segment is id-shaped, entityType falls back to the last non-empty
+ * segment (the resource itself) and entityId is undefined.
  */
 function extractAuditEntity(rawPath: string): { entityType?: string; entityId?: string } {
   const clean = (rawPath || "/").split("?")[0];
   const segments = clean.split("/").filter(Boolean);
-  const apiIndex = segments.lastIndexOf("api");
-  if (apiIndex === -1) return {};
+  if (segments.length === 0) return {};
 
-  const resourceSegments = segments.slice(apiIndex + 1);
-  if (resourceSegments.length === 0) return {};
-
-  const resource = resourceSegments[0];
-  let entityType = singularize(resource);
-  let entityId: string | undefined;
-
-  if (resourceSegments.length >= 2 && isIdLikeSegment(resourceSegments[1])) {
-    entityId = resourceSegments[1];
-    if (resourceSegments.length >= 3 && !isIdLikeSegment(resourceSegments[2])) {
-      entityType = singularize(resourceSegments[2]);
-    }
+  const idIndex = segments.findIndex(isIdShapedSegment);
+  if (idIndex === -1) {
+    return { entityType: segments[segments.length - 1] };
   }
 
-  return { entityType, entityId };
+  return {
+    entityType: idIndex > 0 ? segments[idIndex - 1] : undefined,
+    entityId: segments[idIndex],
+  };
 }
 
 // PHI-bearing route prefixes. Successful reads (GET/HEAD < 400) against
 // these are audited even though they aren't mutations, per HIPAA
-// 164.312(b). Pure health/config/heartbeat endpoints are excluded — they
-// carry no PHI and firing on every poll would just be noise.
+// 164.312(b). Pure health/config/heartbeat/poll endpoints are excluded —
+// they carry no PHI (e.g. /tablet/api/poll returns only {lastModified})
+// and firing on every ~5s poll would just be noise.
 const PHI_AUDIT_PATH_PREFIXES = [
   "/api/jobs",
   "/api/patients",
@@ -204,7 +191,6 @@ const PHI_AUDIT_PATH_PREFIXES = [
   "/api/search",
   "/tablet/api/jobs",
   "/tablet/api/track",
-  "/tablet/api/poll",
 ];
 
 export function isPhiAuditPath(requestPath: string): boolean {
