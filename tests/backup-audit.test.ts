@@ -31,9 +31,12 @@ import path from "path";
 import {
   copyAuditLogsForBackup,
   enforceBackupRetention,
+  formatBackupTimestamp,
   getAuditLogSidecarPath,
   removeAttachmentSidecar,
 } from "../desktop/lib/backup.js";
+
+const ONE_DAY_MS = 1000 * 60 * 60 * 24;
 
 function makeTmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -104,11 +107,16 @@ test("retention prunes the audit sidecar alongside an old .sqlite (no unbounded 
   const backupDir = makeTmpDir("otto-backup-dir-");
 
   // Mirrors tests/backup-attachments.test.ts "retention prunes the sidecar
-  // alongside the .sqlite" — one ancient (~90 days old) backup, one recent.
-  // Retention must delete the ancient audit sidecar with its .sqlite, or
-  // the per-cycle otto-backup-<ts>-audit/ sidecars leak disk forever.
-  const ancient = path.join(backupDir, "otto-backup-2026-04-12-080000-001.sqlite");
-  const recent = path.join(backupDir, "otto-backup-2026-07-14-080000-001.sqlite");
+  // alongside the .sqlite" — one ancient (well past the 30-day archive
+  // window) backup, one recent (well inside it). Retention must delete the
+  // ancient audit sidecar with its .sqlite, or the per-cycle
+  // otto-backup-<ts>-audit/ sidecars leak disk forever. Timestamps are
+  // relative to "now" (not hardcoded calendar dates) so this doesn't flake
+  // as the current date advances.
+  const ancientTs = formatBackupTimestamp(new Date(Date.now() - 40 * ONE_DAY_MS));
+  const recentTs = formatBackupTimestamp(new Date(Date.now() - 2 * ONE_DAY_MS));
+  const ancient = path.join(backupDir, `otto-backup-${ancientTs}.sqlite`);
+  const recent = path.join(backupDir, `otto-backup-${recentTs}.sqlite`);
   fs.writeFileSync(ancient, "old sqlite");
   fs.writeFileSync(recent, "new sqlite");
 

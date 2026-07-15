@@ -22,10 +22,13 @@ import path from "path";
 import {
   copyAttachmentsForBackup,
   enforceBackupRetention,
+  formatBackupTimestamp,
   getAttachmentSidecarPath,
   removeAttachmentSidecar,
   restoreAttachmentsFromBackup,
 } from "../desktop/lib/backup.js";
+
+const ONE_DAY_MS = 1000 * 60 * 60 * 24;
 
 function makeTmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -159,11 +162,15 @@ test("retention prunes the sidecar alongside the .sqlite (no dangling folder)", 
   const dataDir = makeTmpDir("otto-data-");
   const backupDir = makeTmpDir("otto-backup-dir-");
 
-  // Two backups: one ancient (~60 days old), one fresh. Retention keeps
-  // the recent one and prunes the old. The ancient sidecar must go with
-  // its .sqlite or we leak attachment bytes forever.
-  const ancient = path.join(backupDir, "otto-backup-2026-04-12-080000-001.sqlite");
-  const recent = path.join(backupDir, "otto-backup-2026-06-11-080000-001.sqlite");
+  // Two backups: one ancient (well past the 30-day archive window), one
+  // recent (well inside it). Retention keeps the recent one and prunes the
+  // old. The ancient sidecar must go with its .sqlite or we leak attachment
+  // bytes forever. Timestamps are relative to "now" (not hardcoded calendar
+  // dates) so this doesn't flake as the current date advances.
+  const ancientTs = formatBackupTimestamp(new Date(Date.now() - 40 * ONE_DAY_MS));
+  const recentTs = formatBackupTimestamp(new Date(Date.now() - 2 * ONE_DAY_MS));
+  const ancient = path.join(backupDir, `otto-backup-${ancientTs}.sqlite`);
+  const recent = path.join(backupDir, `otto-backup-${recentTs}.sqlite`);
   fs.writeFileSync(ancient, "old sqlite");
   fs.writeFileSync(recent, "new sqlite");
   writePdf(path.join(dataDir, "order-sheet-attachments", "a.pdf"), "a");
