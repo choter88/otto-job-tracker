@@ -80,6 +80,10 @@ export function registerTabletRoutes(app: Express): void {
   });
 
   // List users for login screen (names only, no credentials)
+  // Pre-login user picker: intentionally unauthenticated (chicken-and-egg: need roster
+  // to pick who logs in). Tablet session not available yet. Returns names only (no hashes).
+  // Brute-force mitigated by sqlite login lockout (server/login-lockout.ts) + LAN-only.
+  // Accepted residual risk.
   app.get("/tablet/api/users", async (req, res) => {
     try {
       const officeId = typeof req.query.officeId === "string" ? req.query.officeId : "";
@@ -446,7 +450,7 @@ export function registerTabletRoutes(app: Express): void {
   // ── Desktop-authed endpoints (for settings panel) ──
 
   // QR code setup endpoint
-  app.get("/tablet/api/qr-setup", async (_req, res) => {
+  app.get("/tablet/api/qr-setup", requireAuth, async (_req, res) => {
     try {
       const url = getTabletLanUrl();
       const svg = await generateQrSvg(url);
