@@ -28,7 +28,6 @@ import {
   insertSmsOptInSchema,
   insertAdminAuditLogSchema,
 } from "@shared/schema";
-import { sendSMS } from "./twilioClient";
 import { requireAdmin, requireAuth, requireNotViewOnly, requireOffice, requireRole, requireSameOfficeParam } from "./middleware";
 import { notifyJobStatusChange, notifyNewComment, notifyOverdueJob, notifyJobStarred, notifyJobAutoCreated } from "./notification-service";
 import {
@@ -4259,55 +4258,6 @@ export function registerRoutes(app: Express): { server: AppServer; sessionMiddle
       res.status(201).json(optIn);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/sms/send", requireOffice, requireNotViewOnly, async (req, res) => {
-    try {
-      const { phone, message, jobId } = req.body;
-
-      if (!phone || typeof phone !== "string") {
-        return res.status(400).json({ error: "phone is required" });
-      }
-
-      if (!message || typeof message !== "string" || !message.trim()) {
-        return res.status(400).json({ error: "message is required" });
-      }
-
-      if (jobId && typeof jobId === "string") {
-        const job = await storage.getJob(jobId);
-        if (!job || job.officeId !== getAuthUser(req).officeId) {
-          return res.status(404).json({ error: "Job not found" });
-        }
-      }
-      
-      // Check if patient has opted in
-      const optIn = await storage.getSmsOptIn(phone, getOfficeUser(req).officeId);
-      if (!optIn) {
-        return res.status(400).json({ error: "Patient has not opted in to SMS notifications" });
-      }
-      
-      // Send SMS
-      const result = await sendSMS(phone, message.trim());
-      
-      // Log the attempt
-      await storage.logSms({
-        jobId: jobId || null,
-        phone,
-        message: message.trim(),
-        status: result.success ? 'sent' : 'failed',
-        messageSid: result.messageSid,
-        errorCode: result.errorCode,
-        errorMessage: result.error
-      });
-      
-      if (result.success) {
-        res.json({ success: true, messageSid: result.messageSid });
-      } else {
-        res.status(400).json({ error: result.error });
-      }
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
     }
   });
 

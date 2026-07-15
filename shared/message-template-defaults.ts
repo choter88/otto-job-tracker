@@ -1,5 +1,5 @@
 export const DEFAULT_READY_FOR_PICKUP_TEMPLATE =
-  "Hi {patient_first_name}, your order #{order_id} is ready for pickup at {office_name}.";
+  "Hi! Your order #{order_id} is ready for pickup at {office_name}.";
 
 function normalizeStatusToken(value: unknown): string {
   return String(value || "")
