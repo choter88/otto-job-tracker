@@ -6,6 +6,7 @@ import { storage } from "./storage";
 import { jobs, jobComments, jobStatusHistory, jobLinkGroups, linkGroupNotes, notificationRules } from "@shared/schema";
 import { eq, and, desc, sql, max } from "drizzle-orm";
 import { verifySecret } from "./secret-hash";
+import { checkLockout, recordFailure, clearFailures } from "./login-lockout";
 import { broadcastToOffice } from "./sync-websocket";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { insertJobSchema } from "@shared/schema";
@@ -117,11 +118,22 @@ export function registerTabletRoutes(app: Express): void {
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
+      const lockKey = `tablet:${user.officeId}:${userId}`;
+      const lockCheck = checkLockout(lockKey);
+      if (lockCheck.locked) {
+        const mins = Math.ceil(lockCheck.remainingMs / 60000);
+        return res.status(429).json({
+          error: `Too many failed attempts. Try again in ${mins} minute(s).`,
+        });
+      }
+
       const pinValid = await verifySecret(pin, user.pinHash);
       if (!pinValid) {
+        recordFailure(lockKey);
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
+      clearFailures(lockKey);
       const userAgent = req.headers["user-agent"] || undefined;
       const token = await createTabletSession(user.id, user.officeId!, userAgent);
 
