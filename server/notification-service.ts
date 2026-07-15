@@ -8,6 +8,44 @@ function debugLog(message: string): void {
   }
 }
 
+// D14 minimum-necessary (164.502(b)): notification titles are stored in the
+// notifications table (cloud-resident under the GCP pivot) and shown in OS
+// desktop notifications, which can be glanced at by anyone near the screen.
+// They must never embed the patient's name — only the order id, which the
+// client bell already has (jobId / metadata.orderId) and uses to resolve the
+// display name locally from the job it already shows.
+export type NotificationTitleKind =
+  | "status_change"
+  | "comment"
+  | "starred"
+  | "job_created"
+  | "overdue";
+
+interface NotificationTitleJob {
+  orderId?: string | null;
+  trayNumber?: string | null;
+}
+
+function orderRef(job: NotificationTitleJob): string {
+  return job.orderId || job.trayNumber || "(no order id)";
+}
+
+export function notificationTitle(kind: NotificationTitleKind, job: NotificationTitleJob): string {
+  const ref = orderRef(job);
+  switch (kind) {
+    case "status_change":
+      return `Order ${ref} — status changed`;
+    case "comment":
+      return `Order ${ref} — new comment`;
+    case "starred":
+      return `Order ${ref} — starred`;
+    case "job_created":
+      return `New job — Order ${ref}`;
+    case "overdue":
+      return `Order ${ref} — overdue`;
+  }
+}
+
 export async function notifyJobStatusChange(
   job: Job,
   oldStatus: string,
@@ -29,14 +67,12 @@ export async function notifyJobStatusChange(
       return;
     }
 
-    const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
-
     const notifications = await Promise.all(
       recipientIds.map(async (userId) => {
         return storage.createNotification({
           userId,
           type: "status_change",
-          title: `${patientName} — status changed`,
+          title: notificationTitle("status_change", job),
           message: `${changedBy.firstName} changed: ${oldStatus} → ${job.status}`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
@@ -90,7 +126,6 @@ export async function notifyNewComment(
 
     if (recipientSet.size === 0) return;
 
-    const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
     const truncatedContent = comment.content.length > 100
       ? `${comment.content.substring(0, 100)}...`
       : comment.content;
@@ -100,7 +135,7 @@ export async function notifyNewComment(
         storage.createNotification({
           userId,
           type: "comment",
-          title: `${patientName} — new comment`,
+          title: notificationTitle("comment", job),
           message: `${author.firstName}: ${truncatedContent}`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
@@ -145,7 +180,6 @@ export async function notifyJobStarred(
     );
     if (recipients.length === 0) return;
 
-    const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
     const noteSnippet = importantNote && importantNote.trim()
       ? importantNote.trim().length > 100
         ? `${importantNote.trim().substring(0, 100)}…`
@@ -160,7 +194,7 @@ export async function notifyJobStarred(
         storage.createNotification({
           userId: user.id,
           type: "team_update",
-          title: `${patientName} — starred`,
+          title: notificationTitle("starred", job),
           message,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
@@ -196,9 +230,6 @@ export async function notifyJobAutoCreated(
     const officeUsers = await storage.getUsersInOffice(job.officeId);
     if (officeUsers.length === 0) return;
 
-    const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim()
-      || job.trayNumber
-      || "Unnamed patient";
     const safeFileName = fileName.length > 80 ? `${fileName.slice(0, 77)}…` : fileName;
 
     const created = await Promise.all(
@@ -206,7 +237,7 @@ export async function notifyJobAutoCreated(
         storage.createNotification({
           userId: user.id,
           type: "job_auto_created",
-          title: `New job: ${patientName}`,
+          title: notificationTitle("job_created", job),
           message: `Created automatically from ${safeFileName}`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
@@ -237,7 +268,7 @@ export async function notifyOverdueJob(
         storage.createNotification({
           userId: user.id,
           type: "overdue_alert",
-          title: `${`${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient"} — overdue`,
+          title: notificationTitle("overdue", job),
           message: `In ${job.status} for ${rule.maxDays} days`,
           jobId: job.id,
           linkTo: `/jobs/${job.id}`,
