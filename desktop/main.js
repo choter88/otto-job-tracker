@@ -83,6 +83,8 @@ import {
   restoreAttachmentsFromBackup,
 } from "./lib/backup.js";
 
+import { preserveAuditLogs } from "./lib/audit-preserve.js";
+
 import {
   getDisplayWorkAreaForBounds,
   getMainWindowBaselineSize,
@@ -3170,12 +3172,24 @@ ipcMain.handle("otto:client:release", async (_event) => {
     //    before exit; everything inside it is fair game.
     try {
       const userData = app.getPath("userData");
+
+      // Audit logs (audit_log*.jsonl) live nested under <userData>/data/,
+      // not as a top-level userData entry — the wipe below is recursive,
+      // so leaving "data" alone wouldn't be enough to save them anyway.
+      // HIPAA requires 6 years of audit retention, so copy them out to a
+      // skip-listed folder BEFORE the wipe destroys the data dir.
+      try {
+        preserveAuditLogs(_getDataDir(), path.join(userData, "preserved-audit-logs"));
+      } catch { /* non-critical — the wipe must still proceed */ }
+
       const entries = fs.readdirSync(userData);
       for (const name of entries) {
         // Leave the auto-updater's pending cache alone — if there's
         // a downloaded update mid-install, deleting it would leave
         // the user with a half-installed binary on next launch.
-        if (name === "pending") continue;
+        // Leave the preserved audit logs alone too — that's the whole
+        // point of copying them out above.
+        if (name === "pending" || name === "preserved-audit-logs") continue;
         const p = path.join(userData, name);
         try {
           const stat = fs.lstatSync(p);

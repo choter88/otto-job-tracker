@@ -2,7 +2,7 @@ import "./local-env";
 import * as Sentry from "@sentry/node";
 import express, { type Request, Response, NextFunction } from "express";
 import { enforceAirgap } from "./airgap";
-import { logAudit } from "./audit-logger";
+import { logAudit, buildAuditEntry, isPhiAuditPath } from "./audit-logger";
 import { getLicenseSnapshot, startLicenseScheduler, onLicenseStateChange } from "./license";
 import { broadcastToOffice, setupSyncWebSocket, getConnectedClientCount } from "./sync-websocket";
 import { registerRoutes } from "./routes";
@@ -10,6 +10,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
 import { createServer as createPlainHttpServer } from "http";
 import { OTTO_DEFAULT_PORT, OTTO_DEFAULT_TABLET_PORT } from "@shared/constants";
+import { tabletHttpEnabled, makeTabletOnlyHandler } from "./tablet-listener";
 
 // ── PHI scrubbing helpers ──
 // Ensures no Protected Health Information leaves the device via Sentry.
@@ -208,25 +209,6 @@ function isPrivateIp(ip: string): boolean {
   return false;
 }
 
-function normalizeAuditPath(requestPath: string): string {
-  return (requestPath || "/")
-    .split("?")[0]
-    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi, "/:id")
-    .replace(/\/\d+(?=\/|$)/g, "/:id")
-    .replace(/\/[a-f0-9]{24,}(?=\/|$)/gi, "/:id")
-    .replace(/\/[A-Za-z0-9_-]{20,}(?=\/|$)/g, "/:id");
-}
-
-function getRequestIp(req: Request): string {
-  const trustProxy = process.env.OTTO_TRUST_PROXY === "true";
-  const forwardedFor = trustProxy
-    ? (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
-    : undefined;
-
-  const remote = forwardedFor || req.socket.remoteAddress || req.ip || "unknown";
-  return normalizeIp(remote);
-}
-
 // ── Security headers (F-03) ──
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -324,7 +306,11 @@ app.use((req, res, next) => {
 
   res.on("finish", () => {
     const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
+    // Covers both the portal/app surface (/api/*) and the tablet surface
+    // (/tablet/api/*) — tablet requests carry PHI too (job/patient data)
+    // and previously fell through this middleware entirely (B8).
+    const isAuditableSurface = path.startsWith("/api") || path.startsWith("/tablet/api");
+    if (isAuditableSurface) {
       let logLine = `${method} ${path} ${res.statusCode} in ${duration}ms`;
 
       if (logLine.length > 80) {
@@ -351,24 +337,9 @@ app.use((req, res, next) => {
       const isMutating = method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
       const isAccessFailure = res.statusCode === 401 || res.statusCode === 403;
       const isServerFailure = res.statusCode >= 500;
-      if (isMutating || isAccessFailure || isServerFailure) {
-        const user = req.user;
-        logAudit({
-          timestamp: new Date().toISOString(),
-          method,
-          path: normalizeAuditPath(path),
-          statusCode: res.statusCode,
-          durationMs: duration,
-          outcome: res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "denied" : "success",
-          userId: typeof user?.id === "string" ? user.id : undefined,
-          officeId: typeof user?.officeId === "string" ? user.officeId : undefined,
-          role: typeof user?.role === "string" ? user.role : undefined,
-          ipAddress: getRequestIp(req),
-          userAgent:
-            res.statusCode >= 400 && typeof req.headers["user-agent"] === "string"
-              ? req.headers["user-agent"]
-              : undefined,
-        });
+      const isSuccessfulRead = (method === "GET" || method === "HEAD") && res.statusCode < 400;
+      if (isMutating || isAccessFailure || isServerFailure || (isSuccessfulRead && isPhiAuditPath(path))) {
+        logAudit(buildAuditEntry(req, res, duration));
       }
     }
   });
@@ -493,9 +464,12 @@ function logStartupProgress(msg: string) {
     // When the main server uses HTTPS (self-signed certs), Safari on iOS
     // refuses to connect.  Start a plain HTTP server on a second port so
     // tablets can reach /tablet/* without certificate issues.
-    if (process.env.OTTO_TLS === "true") {
+    // Off by default — operators must opt in with OTTO_TABLET_HTTP=1.
+    // The listener is scoped to /tablet/* only (see tablet-listener.ts) so
+    // PHI, PIN login, and session routes are never served in cleartext.
+    if (process.env.OTTO_TLS === "true" && tabletHttpEnabled()) {
       const tabletPort = parseInt(process.env.OTTO_TABLET_PORT || String(OTTO_DEFAULT_TABLET_PORT), 10);
-      const tabletHttp = createPlainHttpServer(app);
+      const tabletHttp = createPlainHttpServer(makeTabletOnlyHandler(app));
       const tabletConns = new Set<import("net").Socket>();
       tabletHttp.on("connection", (socket) => {
         tabletConns.add(socket);

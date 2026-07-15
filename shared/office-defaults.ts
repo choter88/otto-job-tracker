@@ -71,7 +71,7 @@ export function getDefaultOfficeSettings(): DefaultOfficeSettings {
     onboarding: defaultOnboardingForNewOffice(),
     smsEnabled: false,
     smsTemplates: {
-      job_created: "Hi {patient_first_name}, we received your {job_type} order #{order_id}.",
+      job_created: "Hi! We received your {job_type} order #{order_id}.",
       ordered: "Your {job_type} order #{order_id} has been placed and is being processed.",
       in_progress: "Update: Your {job_type} order #{order_id} is now being processed at the lab.",
       delayed: "Update: Your {job_type} order #{order_id} is delayed. We'll reach out with more details soon.",

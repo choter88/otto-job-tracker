@@ -12,6 +12,7 @@ import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
 import { hashSecret, verifySecret } from "./secret-hash";
 import { isValidSixDigitPin, normalizeLoginId } from "./auth-identifiers";
+import { checkLockout, recordFailure, clearFailures } from "./login-lockout";
 
 /**
  * Track session IDs that originated from localhost (the Host's own browser).
@@ -28,41 +29,6 @@ declare global {
   namespace Express {
     interface User extends SelectUser {}
   }
-}
-
-// ── Login rate limiting / lockout ──
-// After MAX_LOGIN_ATTEMPTS failed attempts, the account is locked for LOCKOUT_DURATION_MS.
-// In-memory only — cleared on server restart (acceptable for LAN-first desktop app).
-const MAX_LOGIN_ATTEMPTS = 5;
-const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
-
-const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
-
-function checkLockout(key: string): { locked: boolean; remainingMs: number } {
-  const now = Date.now();
-  const entry = loginAttempts.get(key);
-  if (!entry) return { locked: false, remainingMs: 0 };
-  if (entry.lockedUntil > 0 && entry.lockedUntil <= now) {
-    loginAttempts.delete(key);
-    return { locked: false, remainingMs: 0 };
-  }
-  if (entry.lockedUntil > now) {
-    return { locked: true, remainingMs: entry.lockedUntil - now };
-  }
-  return { locked: false, remainingMs: 0 };
-}
-
-function recordFailure(key: string): void {
-  const entry = loginAttempts.get(key) || { count: 0, lockedUntil: 0 };
-  entry.count += 1;
-  if (entry.count >= MAX_LOGIN_ATTEMPTS) {
-    entry.lockedUntil = Date.now() + LOCKOUT_DURATION_MS;
-  }
-  loginAttempts.set(key, entry);
-}
-
-function clearFailures(key: string): void {
-  loginAttempts.delete(key);
 }
 
 function withoutPassword(user: SelectUser) {

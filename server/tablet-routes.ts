@@ -6,6 +6,7 @@ import { storage } from "./storage";
 import { jobs, jobComments, jobStatusHistory, jobLinkGroups, linkGroupNotes, notificationRules } from "@shared/schema";
 import { eq, and, desc, sql, max } from "drizzle-orm";
 import { verifySecret } from "./secret-hash";
+import { checkLockout, recordFailure, clearFailures } from "./login-lockout";
 import { broadcastToOffice } from "./sync-websocket";
 import { normalizePatientNamePart } from "@shared/name-format";
 import { insertJobSchema } from "@shared/schema";
@@ -79,6 +80,10 @@ export function registerTabletRoutes(app: Express): void {
   });
 
   // List users for login screen (names only, no credentials)
+  // Pre-login user picker: intentionally unauthenticated (chicken-and-egg: need roster
+  // to pick who logs in). Tablet session not available yet. Returns names only (no hashes).
+  // Brute-force mitigated by sqlite login lockout (server/login-lockout.ts) + LAN-only.
+  // Accepted residual risk.
   app.get("/tablet/api/users", async (req, res) => {
     try {
       const officeId = typeof req.query.officeId === "string" ? req.query.officeId : "";
@@ -117,11 +122,22 @@ export function registerTabletRoutes(app: Express): void {
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
+      const lockKey = `tablet:${user.officeId}:${userId}`;
+      const lockCheck = checkLockout(lockKey);
+      if (lockCheck.locked) {
+        const mins = Math.ceil(lockCheck.remainingMs / 60000);
+        return res.status(429).json({
+          error: `Too many failed attempts. Try again in ${mins} minute(s).`,
+        });
+      }
+
       const pinValid = await verifySecret(pin, user.pinHash);
       if (!pinValid) {
+        recordFailure(lockKey);
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
+      clearFailures(lockKey);
       const userAgent = req.headers["user-agent"] || undefined;
       const token = await createTabletSession(user.id, user.officeId!, userAgent);
 
@@ -434,7 +450,7 @@ export function registerTabletRoutes(app: Express): void {
   // ── Desktop-authed endpoints (for settings panel) ──
 
   // QR code setup endpoint
-  app.get("/tablet/api/qr-setup", async (_req, res) => {
+  app.get("/tablet/api/qr-setup", requireAuth, async (_req, res) => {
     try {
       const url = getTabletLanUrl();
       const svg = await generateQrSvg(url);

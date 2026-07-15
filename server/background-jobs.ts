@@ -17,6 +17,7 @@ import { sendSMS } from './twilioClient';
 import { storage } from './storage';
 import { randomUUID } from "crypto";
 import { broadcastToOffice } from "./sync-websocket";
+import { notificationTitle } from "./notification-service";
 
 function substituteTemplate(template: string, variables: Record<string, any>): string {
   return template.replace(/\{(\w+)\}/g, (match, key) => {
@@ -99,7 +100,6 @@ cron.schedule('0 0 * * *', async () => {
         
         recipients = Array.from(new Set(recipients));
         
-        const patientName = `${job.patientFirstName || ""} ${job.patientLastName || ""}`.trim() || "Unnamed patient";
         for (const userId of recipients) {
           const dedupKey = `${userId}:${job.id}`;
           if (recentlyNotified.has(dedupKey)) continue;
@@ -107,7 +107,7 @@ cron.schedule('0 0 * * *', async () => {
           await storage.createNotification({
             userId,
             type: "overdue_alert",
-            title: `${patientName} — overdue`,
+            title: notificationTitle("overdue", job),
             message: `In ${job.status} for ${daysOverdue} days (max ${rule.maxDays})`,
             jobId: job.id,
             linkTo: `/jobs/${job.id}`,
