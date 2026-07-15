@@ -10,6 +10,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { logError } from "./error-logger";
 import { createServer as createPlainHttpServer } from "http";
 import { OTTO_DEFAULT_PORT, OTTO_DEFAULT_TABLET_PORT } from "@shared/constants";
+import { tabletHttpEnabled, makeTabletOnlyHandler } from "./tablet-listener";
 
 // ── PHI scrubbing helpers ──
 // Ensures no Protected Health Information leaves the device via Sentry.
@@ -493,9 +494,12 @@ function logStartupProgress(msg: string) {
     // When the main server uses HTTPS (self-signed certs), Safari on iOS
     // refuses to connect.  Start a plain HTTP server on a second port so
     // tablets can reach /tablet/* without certificate issues.
-    if (process.env.OTTO_TLS === "true") {
+    // Off by default — operators must opt in with OTTO_TABLET_HTTP=1.
+    // The listener is scoped to /tablet/* only (see tablet-listener.ts) so
+    // PHI, PIN login, and session routes are never served in cleartext.
+    if (process.env.OTTO_TLS === "true" && tabletHttpEnabled()) {
       const tabletPort = parseInt(process.env.OTTO_TABLET_PORT || String(OTTO_DEFAULT_TABLET_PORT), 10);
-      const tabletHttp = createPlainHttpServer(app);
+      const tabletHttp = createPlainHttpServer(makeTabletOnlyHandler(app));
       const tabletConns = new Set<import("net").Socket>();
       tabletHttp.on("connection", (socket) => {
         tabletConns.add(socket);
